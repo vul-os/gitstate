@@ -8,6 +8,8 @@ import Projects from './pages/Projects.jsx'
 import Settings from './pages/Settings.jsx'
 import Members from './pages/Members.jsx'
 import InviteAccept from './pages/InviteAccept.jsx'
+import Repos from './pages/Repos.jsx'
+import Board from './pages/Board.jsx'
 
 export default function App() {
   return (
@@ -25,6 +27,8 @@ export default function App() {
           <Route element={<AppShell />}>
             <Route index element={<Home />} />
             <Route path="/projects" element={<Projects />} />
+            <Route path="/board" element={<Board />} />
+            <Route path="/repos" element={<Repos />} />
             <Route path="/settings" element={<Settings />} />
             <Route path="/settings/members" element={<Members />} />
           </Route>

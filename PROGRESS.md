@@ -15,8 +15,8 @@ avoid parallel git-index races). Waves & scope: see [`roadmap.md` §4](./roadmap
 | 1 | Backbone (Go: config/db-RLS/router) + Web shell (Tailwind/routing/auth UI) | ✅ done |
 | 2 | Auth (JWT+refresh+argon2) · Exchange (USD↔ZAR) · Web auth flows | ✅ done |
 | 2b | Identity/tenancy: oauth (google/ms) · orgs/members/invites · web org UX | ✅ done |
-| 3 | Git engine (read, sync, llm, work UI) | ⏳ dispatched |
-| 4 | Metrics & reporting | ⬜ |
+| 3 | Git engine (read, sync, llm, work UI) | ✅ done |
+| 4 | Metrics & reporting | ⏳ dispatched |
 | 5 | Billing (EE): Paystack, USD→ZAR, billsim | ⬜ |
 | 6 | Super admin (EE) + security pass | ⬜ |
 | 7 | Deploy & OSS hygiene | ⬜ |
@@ -73,3 +73,19 @@ avoid parallel git-index races). Waves & scope: see [`roadmap.md` §4](./roadmap
   Org-scoped feature routes should wrap RequireAuth→OrgScope and run reads in `db.WithOrg(ctx, orgID, ...)`.
 - `store` org helpers: ListOrgsForUser, CreateOrg, GetOrg, GetMemberRole, ListMembers, Add/Remove/UpdateMemberRole,
   CreateInvite, GetInviteByTokenHash, AcceptInvite. oauth: FindOrCreateOAuthUser, GetOAuthAccount, LinkOAuthAccount.
+- W3: git engine. `internal/git` (Clone/Fetch/WalkCommits/Diff/DiffRange/Blame/LeadTime; is_agent heuristic;
+  input-sanitized exec). `internal/sync` (GitHub go-github + GitLab client; SyncRepo; parseIssueRefs; auto-progress:
+  open PR→issue in_progress, merged PR→done, merged-wins, never overwrites canonical state). `internal/llm`
+  (Provider iface + Anthropic via net/http, model claude-sonnet-4-6; EstimateDifficulty 1–10 + rationale;
+  SynthesizeStatus; ErrLLMNotConfigured no-op). Stores: commits, pull_requests, repos, issues, estimates.
+  `RegisterSyncRoutes` (/api/repos connect/list/sync, /api/issues list/create-native/patch). Web: /repos connect,
+  Board/List/Table, IssueDrawer w/ LLM estimate, two-truth-modes badges, native-issue modal, /projects.
+  Orchestrator added minimal /api/projects (store+handler) + wired RegisterProjectRoutes+RegisterSyncRoutes→router.
+  Integrated green (build/vet/tidy, web build+lint, boot-smoke). Committed.
+  NOTE: repo tokens are NOT persisted — clients re-supply on sync/patch (a Wave 6 security item: encrypted token store).
+
+## Wave 3 contracts (for 4+)
+- git: `git.WalkCommits/Diff/DiffRange/Blame/LeadTime`, store `UpsertCommit/ListCommits(Tx)`, `UpsertPR/ListPRs(Tx)/GetPR`.
+- sync: `RegisterSyncRoutes`; issues store `UpsertIssue/ListIssues/SetDerivedState/CreateNativeIssue/GetIssue`.
+- llm: `llm.New(cfg)`, `EstimateDifficulty(ctx,diff,meta)`, `SynthesizeStatus`; estimates store `SaveEstimate/GetEstimateForPR|Issue`.
+- projects: `RegisterProjectRoutes`, store `ListProjects/CreateProject` (org-scoped via WithOrg).
