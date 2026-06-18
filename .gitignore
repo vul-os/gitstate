@@ -39,3 +39,6 @@ internal/web/embed/*
 .idea
 .DS_Store
 *.sw?
+
+# Local Claude settings
+.claude/
