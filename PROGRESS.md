@@ -14,8 +14,8 @@ avoid parallel git-index races). Waves & scope: see [`roadmap.md` §4](./roadmap
 | 0 | Foundation: skeleton, docs, logo, env/config, migration tool, base schema | ✅ done |
 | 1 | Backbone (Go: config/db-RLS/router) + Web shell (Tailwind/routing/auth UI) | ✅ done |
 | 2 | Auth (JWT+refresh+argon2) · Exchange (USD↔ZAR) · Web auth flows | ✅ done |
-| 2b | Identity/tenancy: oauth (google/ms) · orgs/members/invites · web org UX | ⏳ dispatched |
-| 3 | Git engine (read, sync, llm, work UI) | ⬜ |
+| 2b | Identity/tenancy: oauth (google/ms) · orgs/members/invites · web org UX | ✅ done |
+| 3 | Git engine (read, sync, llm, work UI) | ⏳ dispatched |
 | 4 | Metrics & reporting | ⬜ |
 | 5 | Billing (EE): Paystack, USD→ZAR, billsim | ⬜ |
 | 6 | Super admin (EE) + security pass | ⬜ |
@@ -62,3 +62,14 @@ avoid parallel git-index races). Waves & scope: see [`roadmap.md` §4](./roadmap
   `NewExchangeStore(pool)`. Feature pkgs expose `Register<Feature>Routes(mux, db, cfg)`; orchestrator wires router.go.
 - HTTP auth: signup/login → `{accessToken,refreshToken,user{id,email,name}}`; refresh rotates; logout 204.
   Web stores `gs_access_token`/`gs_refresh_token`; access JWT carries sub/email/name (+org_id/role when present).
+- W2b: oauth (google+ms, config-gated, CSRF state cookie, find-or-create+link, callback redirect
+  `${PublicURL}/login#access=&refresh=`) · orgs/members/invites (`RegisterOrgRoutes`, `OrgScope(pool)` mw reading
+  `X-Org-ID`, `OrgFromContext`; free stakeholders) · web org UX (OrgSwitcher, Members page, invite accept,
+  oauth-fragment parse, X-Org-ID header on /api/*). Orchestrator wired RegisterOAuthRoutes+RegisterOrgRoutes→router
+  (DB-guarded). Integrated green (go build+vet+tidy, npm build+lint clean). Committed.
+
+## Wave 2b contracts (for 3+)
+- `middleware.OrgScope(pool)` + `middleware.OrgFromContext(ctx) string`; active org via header `X-Org-ID`.
+  Org-scoped feature routes should wrap RequireAuth→OrgScope and run reads in `db.WithOrg(ctx, orgID, ...)`.
+- `store` org helpers: ListOrgsForUser, CreateOrg, GetOrg, GetMemberRole, ListMembers, Add/Remove/UpdateMemberRole,
+  CreateInvite, GetInviteByTokenHash, AcceptInvite. oauth: FindOrCreateOAuthUser, GetOAuthAccount, LinkOAuthAccount.

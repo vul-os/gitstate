@@ -1,5 +1,6 @@
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, Link } from 'react-router-dom'
 import { useAuth } from '../lib/useAuth.js'
+import { useOrg } from '../lib/useOrg.js'
 
 function Section({ title, description, children }) {
   return (
@@ -45,6 +46,7 @@ function Avatar({ user }) {
 
 export default function Settings() {
   const { user, logout } = useAuth()
+  const { activeOrg, orgRole } = useOrg()
   const navigate = useNavigate()
 
   async function handleSignOut() {
@@ -104,10 +106,42 @@ export default function Settings() {
         />
       </Section>
 
-      <Section title="Organization" description="Your workspace settings. (Wave B2)">
-        <FieldRow label="Name" value="—" hint="Shown to team members and clients" />
-        <FieldRow label="Slug" value="—" hint="URL prefix for your workspace" />
-        <FieldRow label="Plan" value="Free" hint="Billing available in Wave E" />
+      <Section
+        title="Organization"
+        description={activeOrg ? `Active workspace: ${activeOrg.name}` : 'Your workspace settings.'}
+      >
+        <FieldRow
+          label="Name"
+          value={activeOrg?.name ?? '—'}
+          hint="Shown to team members and clients"
+        />
+        <FieldRow
+          label="Slug"
+          value={activeOrg?.slug ?? '—'}
+          hint="URL prefix for your workspace"
+        />
+        <FieldRow
+          label="Plan"
+          value={activeOrg?.planKey ? activeOrg.planKey.charAt(0).toUpperCase() + activeOrg.planKey.slice(1) : 'Free'}
+          hint="Billing available in Wave E"
+        />
+        <FieldRow
+          label="Your role"
+          value={orgRole ?? '—'}
+          hint="Your permission level in this org"
+        />
+        <div className="flex items-center justify-between py-3">
+          <div>
+            <p className="text-xs font-medium text-[#94a3b8]">Members</p>
+            <p className="text-xs text-[#334155] mt-0.5">Invite teammates and clients (stakeholders are free)</p>
+          </div>
+          <Link
+            to="/settings/members"
+            className="text-xs font-medium px-3 py-1.5 rounded-lg border border-[#1e2d45] text-[#94a3b8] hover:border-[#2DD4BF]/40 hover:text-[#2DD4BF] transition-all duration-150 shrink-0"
+          >
+            Manage members
+          </Link>
+        </div>
       </Section>
 
       <Section title="Integrations" description="Connected git platforms. (Wave C1)">

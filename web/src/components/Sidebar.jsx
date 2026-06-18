@@ -1,6 +1,7 @@
 import { NavLink, useNavigate } from 'react-router-dom'
 import { LogoMark } from './Logo.jsx'
 import { useAuth } from '../lib/useAuth.js'
+import { OrgSwitcher } from './OrgSwitcher.jsx'
 
 const NAV = [
   {
@@ -69,6 +70,9 @@ export function Sidebar() {
           git<span style={{ color: '#2DD4BF' }}>state</span>
         </span>
       </div>
+
+      {/* Org switcher */}
+      <OrgSwitcher />
 
       {/* Nav */}
       <nav className="flex-1 py-4 px-3 space-y-0.5 overflow-y-auto">

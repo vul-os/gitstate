@@ -1,9 +1,19 @@
 /**
  * gitstate API client
  * Token storage, refresh-token rotation with 401 retry, auth helpers.
+ * Org scoping: X-Org-ID header is injected on all /api/* requests (not /auth/*).
  */
 
 const BASE = import.meta.env.VITE_API_BASE_URL ?? ''
+
+// ── Org storage ───────────────────────────────────────────────────────────────
+
+const ACTIVE_ORG_KEY = 'gs_active_org'
+
+/** Returns the stored active org id, or null. */
+export function getActiveOrgId() {
+  return localStorage.getItem(ACTIVE_ORG_KEY) ?? null
+}
 
 // ── Token storage ─────────────────────────────────────────────────────────────
 
@@ -117,6 +127,14 @@ async function rawRequest(method, path, body, options = {}, overrideToken = null
     headers['Authorization'] = `Bearer ${token}`
   }
 
+  // Inject active org on all /api/* paths (not /auth/*)
+  if (path.startsWith('/api/')) {
+    const orgId = getActiveOrgId()
+    if (orgId) {
+      headers['X-Org-ID'] = orgId
+    }
+  }
+
   const res = await fetch(`${BASE}${path}`, {
     method,
     headers,
@@ -189,6 +207,10 @@ export function post(path, body, options) {
 
 export function put(path, body, options) {
   return request('PUT', path, body, options)
+}
+
+export function patch(path, body, options) {
+  return request('PATCH', path, body, options)
 }
 
 export function del(path, options) {

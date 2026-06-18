@@ -55,6 +55,23 @@ export default function Login() {
   const [config, setConfig] = useState(null)
   const [configLoading, setConfigLoading] = useState(true)
 
+  // Handle OAuth redirect: backend sends back #access=...&refresh=...
+  useEffect(() => {
+    const hash = window.location.hash
+    if (!hash) return
+    // Parse fragment as query-string-style key=value pairs
+    const params = new URLSearchParams(hash.replace(/^#/, ''))
+    const accessToken = params.get('access')
+    const refreshToken = params.get('refresh')
+    if (accessToken) {
+      // Store tokens and clear the fragment before redirecting
+      setToken(accessToken, refreshToken ?? undefined)
+      // Clear fragment without adding a history entry
+      window.history.replaceState(null, '', window.location.pathname + window.location.search)
+      navigate('/', { replace: true })
+    }
+  }, [setToken, navigate])
+
   // Already logged in — redirect
   useEffect(() => {
     if (isAuthed) navigate('/', { replace: true })

@@ -21,9 +21,11 @@ func NewRouter(cfg *config.Config, database *db.DB) http.Handler {
 	mux.HandleFunc("GET /api/config", handleAPIConfig(cfg))
 
 	// Feature route registration (orchestrator-wired; see PROGRESS.md route-wiring rule).
-	// Auth needs the DB; in dev-without-DB boots we skip it rather than nil-panic.
+	// These need the DB; in dev-without-DB boots we skip them rather than nil-panic.
 	if database != nil {
 		RegisterAuthRoutes(mux, database, cfg)
+		RegisterOAuthRoutes(mux, database, cfg)
+		RegisterOrgRoutes(mux, database, cfg)
 	}
 
 	// Apply middleware chain.

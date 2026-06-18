@@ -1,5 +1,6 @@
 import { useState, useCallback } from 'react'
 import { AuthCtx } from './useAuth.js'
+import { OrgProvider } from './org.jsx'
 import {
   getToken,
   setTokenPair as storeTokenPair,
@@ -55,6 +56,8 @@ export function AuthProvider({ children }) {
     setAccessToken(null)
   }, [])
 
+  const isAuthed = !!accessToken
+
   return (
     <AuthCtx.Provider
       value={{
@@ -62,10 +65,12 @@ export function AuthProvider({ children }) {
         user,
         setToken,
         logout,
-        isAuthed: !!accessToken,
+        isAuthed,
       }}
     >
-      {children}
+      <OrgProvider isAuthed={isAuthed}>
+        {children}
+      </OrgProvider>
     </AuthCtx.Provider>
   )
 }
