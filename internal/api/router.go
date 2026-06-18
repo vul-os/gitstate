@@ -25,9 +25,13 @@ func NewRouter(cfg *config.Config, database *db.DB) http.Handler {
 	mux.HandleFunc("GET /healthz", handleHealthz)
 	mux.HandleFunc("GET /api/config", handleAPIConfig(cfg))
 
+	// Public docs API (embedded markdown; no DB required).
+	RegisterDocsRoutes(mux)
+
 	// Feature route registration (orchestrator-wired; see PROGRESS.md route-wiring rule).
 	// These need the DB; in dev-without-DB boots we skip them rather than nil-panic.
 	if database != nil {
+		RegisterPublicPlans(mux, database, cfg) // public pricing data
 		RegisterAuthRoutes(mux, database, cfg)
 		RegisterOAuthRoutes(mux, database, cfg)
 		RegisterOrgRoutes(mux, database, cfg)
