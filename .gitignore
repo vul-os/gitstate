@@ -3,22 +3,39 @@ logs
 *.log
 npm-debug.log*
 yarn-debug.log*
-yarn-error.log*
 pnpm-debug.log*
-lerna-debug.log*
 
+# Node / Vite
 node_modules
 dist
 dist-ssr
 *.local
+web/node_modules
+web/dist
 
-# Editor directories and files
+# Go
+/bin/
+/gitstate
+*.test
+*.out
+coverage.*
+
+# Env & secrets — commit only *.example
+.env
+.env.*
+!.env.example
+config.yaml
+!config.example.yaml
+*.pem
+*.key
+
+# Build artifacts
+internal/web/embed/*
+!internal/web/embed/.gitkeep
+
+# Editor / OS
 .vscode/*
 !.vscode/extensions.json
 .idea
 .DS_Store
-*.suo
-*.ntvs*
-*.njsproj
-*.sln
 *.sw?

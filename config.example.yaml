@@ -1,0 +1,69 @@
+# gitstate config — structure & feature flags. Secrets come from env (env wins).
+# Copy to config.yaml. OAuth providers render on the login page ONLY when their
+# client id + secret are present in env (see auth.providers below).
+
+app:
+  name: gitstate
+  env: ${GITSTATE_ENV}          # dev | prod
+  public_url: ${PUBLIC_URL}
+  http_addr: ${HTTP_ADDR}
+
+database:
+  url: ${DATABASE_URL}
+  max_conns: ${DATABASE_MAX_CONNS}
+  # RLS: every request runs inside a tx with SET LOCAL app.current_org = <org_id>
+  rls: true
+
+auth:
+  jwt_signing_key: ${JWT_SIGNING_KEY}
+  access_token_ttl: ${ACCESS_TOKEN_TTL}
+  refresh_token_ttl: ${REFRESH_TOKEN_TTL}
+  password: true                # internal email+password login
+  providers:
+    google:
+      # enabled is auto-derived: true iff client_id AND client_secret are set
+      client_id: ${OAUTH_GOOGLE_CLIENT_ID}
+      client_secret: ${OAUTH_GOOGLE_CLIENT_SECRET}
+    microsoft:
+      client_id: ${OAUTH_MICROSOFT_CLIENT_ID}
+      client_secret: ${OAUTH_MICROSOFT_CLIENT_SECRET}
+      tenant: ${OAUTH_MICROSOFT_TENANT}
+
+git:
+  github:
+    oauth_client_id: ${GITHUB_OAUTH_CLIENT_ID}
+    oauth_client_secret: ${GITHUB_OAUTH_CLIENT_SECRET}
+  gitlab:
+    oauth_client_id: ${GITLAB_OAUTH_CLIENT_ID}
+    oauth_client_secret: ${GITLAB_OAUTH_CLIENT_SECRET}
+
+llm:
+  provider: ${LLM_PROVIDER}
+  model: ${LLM_MODEL}
+  anthropic_api_key: ${ANTHROPIC_API_KEY}
+
+billing:                        # EE — only active in ee builds
+  enabled: false
+  bill_currency: ${BILLING_CURRENCY_BILL}      # USD
+  charge_currency: ${BILLING_CURRENCY_CHARGE}  # ZAR
+  paystack:
+    secret_key: ${PAYSTACK_SECRET_KEY}
+    public_key: ${PAYSTACK_PUBLIC_KEY}
+    webhook_secret: ${PAYSTACK_WEBHOOK_SECRET}
+  exchange:
+    provider: ${EXCHANGE_PROVIDER}
+    api_key: ${EXCHANGE_API_KEY}
+    ttl: ${EXCHANGE_TTL}
+  # Plan ladder — prices in USD; charged in ZAR at capture-time rate.
+  # max_conns is a CEILING (not a reservation). stakeholders are free.
+  plans:
+    - { key: free,   name: Free,   usd: 0,   builders: 2,  max_conns: 10  }
+    - { key: hobby,  name: Hobby,  usd: 9,   builders: 5,  max_conns: 25  }
+    - { key: pro,    name: Pro,    usd: 39,  builders: 15, max_conns: 75  }
+    - { key: team,   name: Team,   usd: 199, builders: 50, max_conns: 200 }
+    - { key: scale,  name: Scale,  usd: 249, builders: 100, max_conns: 400 }
+    - { key: ent,    name: Enterprise, usd: 0, builders: 0, max_conns: 0 }  # custom
+
+admin:
+  super_admin_emails: ${SUPER_ADMIN_EMAILS}
+  realtime: true                # SSE-backed live dashboards
