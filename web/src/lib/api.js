@@ -269,6 +269,38 @@ export async function logout() {
   clearTokens()
 }
 
+// ── Platform connection (OAuth-app) helpers ────────────────────────────────────
+
+/**
+ * Build the top-level navigation URL that starts the GitHub/GitLab OAuth-app
+ * connect flow. The /start endpoint self-authenticates from these query params
+ * because a browser navigation can't send Bearer/X-Org-ID headers.
+ * @param {string} platform 'github' | 'gitlab'
+ * @returns {string|null} the URL, or null if not authenticated / no active org
+ */
+export function connectStartUrl(platform) {
+  const token = getToken()
+  const orgId = getActiveOrgId()
+  if (!token || !orgId) return null
+  const qs = new URLSearchParams({ token, org: orgId })
+  return `${BASE}/api/connect/${platform}/start?${qs.toString()}`
+}
+
+/** Fetch the org's connection status: [{platform, connected, login, configured}]. */
+export function fetchConnectStatus() {
+  return get('/api/connect/status')
+}
+
+/** List repos available to the stored connection token for a platform. */
+export function fetchConnectRepos(platform) {
+  return get(`/api/connect/${platform}/repos`)
+}
+
+/** Disconnect a platform (deletes the stored encrypted token). */
+export function disconnectPlatform(platform) {
+  return del(`/api/connect/${platform}`)
+}
+
 /**
  * Fetch public config — used by login page to discover enabled OAuth providers.
  * Shape: { publicUrl, auth: { password, providers: { google, microsoft } }, billing: { chargeCurrency } }

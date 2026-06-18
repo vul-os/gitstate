@@ -2,12 +2,16 @@
  * Repos page — connected integrations + connect form + trigger sync.
  * Premium integrations surface: platform identity, sync health, derived-state legend.
  */
-import { useState, useCallback, useMemo } from 'react'
+import { useState, useCallback, useMemo, useEffect } from 'react'
 import {
   GitBranch, Plus, RefreshCw, Loader2, X, Check,
   CircleDot, GitPullRequest, AlertCircle, Clock, ArrowRight,
+  Link2, Unlink, KeyRound, Download,
 } from 'lucide-react'
 import { useRepos } from '../lib/useRepos.js'
+import {
+  connectStartUrl, fetchConnectStatus, fetchConnectRepos, disconnectPlatform,
+} from '../lib/api.js'
 import { Card, Badge, Button } from '../components/ui/index.js'
 import { Reveal, RevealList } from '../components/Reveal.jsx'
 
@@ -238,9 +242,233 @@ function RepoRow({ repo, onSync }) {
   )
 }
 
+/**
+ * ConnectSection — per-org GitHub/GitLab OAuth-app connections.
+ * Authorize once; sync uses a stored encrypted token (no per-sync PAT).
+ * Shows status, connect/disconnect buttons, an import picker for stored-token
+ * repos, and a PAT-fallback escape hatch (the existing ConnectForm).
+ */
+function ConnectSection({ onImport, onUsePat }) {
+  const [status, setStatus] = useState(null) // [{platform, connected, login, configured}]
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(null)
+  const [picker, setPicker] = useState(null) // platform currently picking repos for
+  const [pickerRepos, setPickerRepos] = useState([])
+  const [pickerLoading, setPickerLoading] = useState(false)
+  const [importing, setImporting] = useState(null) // fullName being imported
+
+  const refresh = useCallback(() => {
+    return fetchConnectStatus()
+      .then(s => {
+        setStatus(Array.isArray(s) ? s : [])
+        setError(null)
+        setLoading(false)
+      })
+      .catch(e => {
+        setError(e.message ?? 'Failed to load connection status')
+        setLoading(false)
+      })
+  }, [])
+
+  useEffect(() => {
+    let cancelled = false
+    fetchConnectStatus()
+      .then(s => { if (!cancelled) { setStatus(Array.isArray(s) ? s : []); setLoading(false) } })
+      .catch(e => { if (!cancelled) { setError(e.message ?? 'Failed to load connection status'); setLoading(false) } })
+    return () => { cancelled = true }
+  }, [])
+
+  const handleConnect = useCallback((platform) => {
+    const url = connectStartUrl(platform)
+    if (!url) {
+      setError('Sign in and select an org before connecting.')
+      return
+    }
+    window.location.href = url // top-level nav → provider consent → callback → /repos
+  }, [])
+
+  const handleDisconnect = useCallback(async (platform) => {
+    try {
+      await disconnectPlatform(platform)
+      if (picker === platform) { setPicker(null); setPickerRepos([]) }
+      await refresh()
+    } catch (e) {
+      setError(e.message ?? 'Failed to disconnect')
+    }
+  }, [picker, refresh])
+
+  const openPicker = useCallback(async (platform) => {
+    if (picker === platform) { setPicker(null); return }
+    setPicker(platform)
+    setPickerLoading(true)
+    setPickerRepos([])
+    try {
+      const repos = await fetchConnectRepos(platform)
+      setPickerRepos(Array.isArray(repos) ? repos : [])
+    } catch (e) {
+      setError(e.message ?? 'Failed to list repos for import')
+    } finally {
+      setPickerLoading(false)
+    }
+  }, [picker])
+
+  const importRepo = useCallback(async (platform, fullName) => {
+    setImporting(fullName)
+    try {
+      // No token in body → server uses the stored connection token.
+      await onImport({ platform, fullName })
+    } catch (e) {
+      setError(e.message ?? 'Failed to import repo')
+    } finally {
+      setImporting(null)
+    }
+  }, [onImport])
+
+  return (
+    <Reveal delay={0.04}>
+      <Card padding="lg" className="mb-6">
+        <div className="flex items-center justify-between mb-4">
+          <div>
+            <h3 className="text-sm font-semibold text-[var(--text)] font-display flex items-center gap-2">
+              <Link2 size={15} className="text-[var(--brand-teal)]" /> Connect a platform
+            </h3>
+            <p className="text-xs text-[var(--text-faint)] mt-0.5">
+              Authorize once — gitstate stores an encrypted token and syncs without re-entering a PAT.
+            </p>
+          </div>
+          <button
+            onClick={onUsePat}
+            className="flex items-center gap-1.5 text-[11px] font-medium text-[var(--text-faint)] hover:text-[var(--text)] transition-colors"
+            title="Use a personal access token instead"
+          >
+            <KeyRound size={13} /> Use a token instead
+          </button>
+        </div>
+
+        {error && (
+          <p className="flex items-center gap-2 text-xs text-red-400 bg-red-500/[0.08] border border-red-500/20 rounded-[var(--radius-btn)] px-3 py-2 mb-3">
+            <AlertCircle size={13} className="shrink-0" /> {error}
+          </p>
+        )}
+
+        <div className="space-y-2.5">
+          {loading && !status && (
+            <div className="h-14 rounded-[var(--radius-btn)] bg-[var(--bg-surface3)] animate-pulse" />
+          )}
+          {(status ?? []).map(s => {
+            const meta = platformMeta(s.platform)
+            const Icon = meta.icon
+            const isPicking = picker === s.platform
+            return (
+              <div key={s.platform} className="rounded-[var(--radius-btn)] border border-[var(--border)] overflow-hidden">
+                <div className="flex items-center gap-3 px-4 py-3 bg-[var(--bg)]">
+                  <div
+                    className="w-8 h-8 rounded-[var(--radius-badge)] flex items-center justify-center shrink-0 border border-[var(--border)]"
+                    style={{ boxShadow: `inset 0 0 0 1px ${meta.accent}22` }}
+                  >
+                    <Icon size={15} style={{ color: meta.accent }} />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-semibold text-[var(--text)]">{meta.label}</p>
+                    {!s.configured ? (
+                      <p className="text-[11px] text-[var(--text-faint)]">OAuth app not configured on this server</p>
+                    ) : s.connected ? (
+                      <p className="text-[11px] text-[var(--text-faint)] flex items-center gap-1">
+                        <Check size={11} className="text-[var(--brand-teal)]" />
+                        Connected{s.login ? <> as <span className="font-mono text-[var(--text-dim)]">{s.login}</span></> : null}
+                      </p>
+                    ) : (
+                      <p className="text-[11px] text-[var(--text-faint)]">Not connected</p>
+                    )}
+                  </div>
+
+                  {!s.configured ? (
+                    <Badge color="gray">unavailable</Badge>
+                  ) : s.connected ? (
+                    <div className="flex items-center gap-2 shrink-0">
+                      <button
+                        onClick={() => openPicker(s.platform)}
+                        className="flex items-center gap-1.5 text-xs font-medium px-2.5 py-1.5 rounded-[var(--radius-badge)] text-[var(--text-faint)] hover:text-[var(--brand-teal)] hover:bg-[var(--brand-teal)]/[0.08] transition-colors"
+                      >
+                        <Download size={13} /> {isPicking ? 'Hide' : 'Import repos'}
+                      </button>
+                      <button
+                        onClick={() => handleDisconnect(s.platform)}
+                        className="flex items-center gap-1.5 text-xs font-medium px-2.5 py-1.5 rounded-[var(--radius-badge)] text-[var(--text-faint)] hover:text-red-400 hover:bg-red-500/[0.08] transition-colors"
+                      >
+                        <Unlink size={13} /> Disconnect
+                      </button>
+                    </div>
+                  ) : (
+                    <Button variant="outline" onClick={() => handleConnect(s.platform)} leftIcon={<Link2 size={13} />}>
+                      Connect {meta.label}
+                    </Button>
+                  )}
+                </div>
+
+                {/* Import picker */}
+                {isPicking && (
+                  <div className="border-t border-[var(--border)] bg-[var(--bg-surface2)]/40 max-h-72 overflow-auto">
+                    {pickerLoading && (
+                      <div className="px-4 py-6 flex items-center justify-center text-xs text-[var(--text-faint)]">
+                        <Loader2 size={14} className="animate-spin mr-2" /> Loading repositories…
+                      </div>
+                    )}
+                    {!pickerLoading && pickerRepos.length === 0 && (
+                      <p className="px-4 py-6 text-center text-xs text-[var(--text-faint)]">No repositories available to this token.</p>
+                    )}
+                    {!pickerLoading && pickerRepos.map(rp => (
+                      <div key={rp.externalId || rp.fullName} className="flex items-center gap-3 px-4 py-2.5 border-b border-[var(--border)] last:border-0">
+                        <GitBranch size={13} className="text-[var(--text-faint)] shrink-0" />
+                        <span className="flex-1 min-w-0 text-xs font-mono text-[var(--text-dim)] truncate">{rp.fullName}</span>
+                        <button
+                          onClick={() => importRepo(s.platform, rp.fullName)}
+                          disabled={importing === rp.fullName}
+                          className="flex items-center gap-1.5 text-[11px] font-medium px-2 py-1 rounded-[var(--radius-badge)] text-[var(--brand-teal)] hover:bg-[var(--brand-teal)]/[0.1] transition-colors disabled:opacity-60 shrink-0"
+                        >
+                          {importing === rp.fullName ? <Loader2 size={12} className="animate-spin" /> : <Plus size={12} strokeWidth={2.5} />}
+                          Import
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )
+          })}
+        </div>
+      </Card>
+    </Reveal>
+  )
+}
+
 export default function Repos() {
-  const { repos, loading, error, connectRepo, syncRepo } = useRepos()
+  const { repos, loading, error, connectRepo, syncRepo, refetch } = useRepos()
   const [showForm, setShowForm] = useState(false)
+
+  // Surface the ?connected=<platform> / ?error= redirect outcome from the OAuth
+  // callback. Computed once from the URL via a lazy initializer (not an effect).
+  const [banner, setBanner] = useState(() => {
+    const params = new URLSearchParams(window.location.search)
+    const connected = params.get('connected')
+    const err = params.get('error')
+    if (connected) return { kind: 'ok', text: `Connected ${connected}. Pick repos to import below.` }
+    if (err) return { kind: 'err', text: `Connection failed: ${err}` }
+    return null
+  })
+
+  // Clean the query string so a refresh doesn't re-show the banner (no setState).
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    if (params.get('connected') || params.get('error')) {
+      window.history.replaceState({}, '', window.location.pathname)
+    }
+  }, [])
+
+  const importRepo = useCallback(async ({ platform, fullName }) => {
+    await connectRepo({ platform, fullName }) // no token → server uses stored connection token
+    refetch?.().catch(() => {})
+  }, [connectRepo, refetch])
 
   const stats = useMemo(() => {
     const total = repos.length
@@ -268,6 +496,27 @@ export default function Repos() {
           )}
         </div>
       </Reveal>
+
+      {/* Redirect outcome banner */}
+      {banner && (
+        <Reveal>
+          <div className={[
+            'flex items-center gap-2 text-xs rounded-[var(--radius-btn)] px-3 py-2.5 mb-4 border',
+            banner.kind === 'ok'
+              ? 'text-[var(--brand-teal)] bg-[var(--brand-teal)]/[0.08] border-[var(--brand-teal)]/25'
+              : 'text-red-400 bg-red-500/[0.08] border-red-500/20',
+          ].join(' ')}>
+            {banner.kind === 'ok' ? <Check size={14} className="shrink-0" /> : <AlertCircle size={14} className="shrink-0" />}
+            {banner.text}
+            <button onClick={() => setBanner(null)} className="ml-auto opacity-60 hover:opacity-100" aria-label="Dismiss">
+              <X size={14} />
+            </button>
+          </div>
+        </Reveal>
+      )}
+
+      {/* Platform connections (OAuth-app) */}
+      <ConnectSection onImport={importRepo} onUsePat={() => setShowForm(true)} />
 
       {/* Summary strip */}
       {!loading && repos.length > 0 && (

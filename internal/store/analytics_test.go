@@ -56,6 +56,13 @@ func TestAnalyticsAggregates(t *testing.T) {
 		t.Fatalf("create org: %v", err)
 	}
 
+	// Activate the org RLS context BEFORE inserting org-scoped rows — under enforced
+	// RLS the WITH CHECK policy requires app.current_org to match. set_config(...,true)
+	// is the parameterized, transaction-local equivalent of SET LOCAL (matches db.WithOrg).
+	if _, err := tx.Exec(ctx, "SELECT set_config('app.current_org', $1, true)", orgID); err != nil {
+		t.Fatalf("set org: %v", err)
+	}
+
 	var repoA, repoB string
 	if err := tx.QueryRow(ctx,
 		`INSERT INTO repos (org_id, platform, external_id, full_name)

@@ -169,13 +169,33 @@ func (h *syncHandlers) connectRepo(w http.ResponseWriter, r *http.Request) {
 		writeSyncError(w, "invalid request body", err)
 		return
 	}
-	if req.Platform == "" || req.FullName == "" || req.Token == "" {
-		http.Error(w, `{"error":"platform, fullName, and token are required"}`, http.StatusBadRequest)
+	if req.Platform == "" || req.FullName == "" {
+		http.Error(w, `{"error":"platform and fullName are required"}`, http.StatusBadRequest)
 		return
 	}
 	if req.Platform != "github" && req.Platform != "gitlab" {
 		http.Error(w, `{"error":"platform must be github or gitlab"}`, http.StatusBadRequest)
 		return
+	}
+
+	// Resolve the token: explicit PAT in the body wins; otherwise fall back to
+	// the org's stored OAuth-app connection token (decrypt).
+	token := req.Token
+	baseURL := req.BaseURL
+	if token == "" {
+		stored, storedBase, err := resolveStoredToken(r.Context(), h.db, orgID, req.Platform)
+		if err != nil {
+			if errors.Is(err, store.ErrNotFound) {
+				http.Error(w, `{"error":"no token: connect this platform first or supply a token"}`, http.StatusBadRequest)
+				return
+			}
+			writeSyncError(w, "resolve stored token", err)
+			return
+		}
+		token = stored
+		if baseURL == "" {
+			baseURL = storedBase
+		}
 	}
 
 	// Resolve externalId, defaultBranch, cloneURL from the platform if not supplied.
@@ -187,7 +207,7 @@ func (h *syncHandlers) connectRepo(w http.ResponseWriter, r *http.Request) {
 		ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 		defer cancel()
 
-		provider, err := gitSync.NewProvider(ctx, req.Platform, req.Token, req.BaseURL)
+		provider, err := gitSync.NewProvider(ctx, req.Platform, token, baseURL)
 		if err != nil {
 			writeSyncError(w, "build provider", err)
 			return
@@ -252,9 +272,21 @@ func (h *syncHandlers) triggerSync(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if body.Token == "" {
-		slog.Warn("sync trigger: no token in body; sync may fail without a valid token",
-			"org_id", orgID, "repo_id", repoID)
+	// Resolve the sync token: explicit body token wins; otherwise fall back to
+	// the org's stored OAuth-app connection token (decrypt).
+	token := body.Token
+	baseURL := body.BaseURL
+	if token == "" {
+		stored, storedBase, err := resolveStoredToken(r.Context(), h.db, orgID, repo.Platform)
+		if err != nil {
+			slog.Warn("sync trigger: no token in body and no stored connection; sync may fail",
+				"org_id", orgID, "repo_id", repoID, "platform", repo.Platform)
+		} else {
+			token = stored
+			if baseURL == "" {
+				baseURL = storedBase
+			}
+		}
 	}
 
 	// Respond 202 immediately.
@@ -266,7 +298,7 @@ func (h *syncHandlers) triggerSync(w http.ResponseWriter, r *http.Request) {
 	// Run sync in background with a detached context.
 	bgCtx := context.Background()
 	go func() {
-		provider, err := gitSync.NewProvider(bgCtx, repo.Platform, body.Token, body.BaseURL)
+		provider, err := gitSync.NewProvider(bgCtx, repo.Platform, token, baseURL)
 		if err != nil {
 			slog.Error("sync: build provider", "repo_id", repoID, "err", err)
 			return
@@ -397,13 +429,24 @@ func (h *syncHandlers) patchIssue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Write-back to platform for git-sourced issues when a token is provided.
-	if updated.Source == "git" && req.Token != "" && updated.Number > 0 && updated.RepoID != "" {
+	// Write-back to platform for git-sourced issues. Use an explicit token if
+	// supplied, else fall back to the org's stored OAuth-app connection token.
+	if updated.Source == "git" && updated.Number > 0 && updated.RepoID != "" {
 		repo, err := store.GetRepoByIDPool(r.Context(), h.db.Pool(), orgID, updated.RepoID)
-		if err == nil {
+		writeBackToken := req.Token
+		writeBackBase := req.BaseURL
+		if err == nil && writeBackToken == "" {
+			if stored, storedBase, terr := resolveStoredToken(r.Context(), h.db, orgID, repo.Platform); terr == nil {
+				writeBackToken = stored
+				if writeBackBase == "" {
+					writeBackBase = storedBase
+				}
+			}
+		}
+		if err == nil && writeBackToken != "" {
 			go func() {
 				bgCtx := context.Background()
-				provider, err := gitSync.NewProvider(bgCtx, repo.Platform, req.Token, req.BaseURL)
+				provider, err := gitSync.NewProvider(bgCtx, repo.Platform, writeBackToken, writeBackBase)
 				if err != nil {
 					slog.Error("sync: write-back provider", "issue_id", issueID, "err", err)
 					return

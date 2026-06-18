@@ -68,13 +68,20 @@ func TestRLSCrossOrgIsolation(t *testing.T) {
 		t.Fatalf("create org B: %v", err)
 	}
 
-	// Insert a project for each org (org_id set directly, bypassing RLS via
-	// the outer transaction that has no app.current_org set yet).
+	// Insert a project for each org. Under enforced RLS the WITH CHECK policy
+	// requires app.current_org to match the row's org_id, so set the context
+	// to each org before inserting its row.
 	var projA, projB string
+	if _, err := tx.Exec(ctx, "SELECT set_config('app.current_org', $1, true)", orgA); err != nil {
+		t.Fatalf("set ctx A: %v", err)
+	}
 	if err := tx.QueryRow(ctx,
 		`INSERT INTO projects (org_id, name) VALUES ($1, 'Proj A') RETURNING id`, orgA,
 	).Scan(&projA); err != nil {
 		t.Fatalf("create proj A: %v", err)
+	}
+	if _, err := tx.Exec(ctx, "SELECT set_config('app.current_org', $1, true)", orgB); err != nil {
+		t.Fatalf("set ctx B: %v", err)
 	}
 	if err := tx.QueryRow(ctx,
 		`INSERT INTO projects (org_id, name) VALUES ($1, 'Proj B') RETURNING id`, orgB,
@@ -88,7 +95,8 @@ func TestRLSCrossOrgIsolation(t *testing.T) {
 	if _, err := tx.Exec(ctx, "SAVEPOINT rls_check"); err != nil {
 		t.Fatalf("savepoint: %v", err)
 	}
-	if _, err := tx.Exec(ctx, "SET LOCAL app.current_org = $1", orgA); err != nil {
+	// SET LOCAL can't bind params; set_config(...,true) is the parameterized equivalent (matches db.WithOrg).
+	if _, err := tx.Exec(ctx, "SELECT set_config('app.current_org', $1, true)", orgA); err != nil {
 		t.Fatalf("set org A: %v", err)
 	}
 

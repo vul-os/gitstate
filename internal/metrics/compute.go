@@ -310,7 +310,20 @@ func (s *Service) EstimateForPR(ctx context.Context, orgID, prID, diff string) (
 		PRTitle: pr.Title,
 	}
 
-	summary, err := s.llm.EstimateDifficulty(ctx, diff, meta)
+	// Resolve the org's LLM mode: BYOK (org's own key, $0 managed cost) vs managed
+	// (platform key, metered + billed as overage). Falls back to the platform
+	// Service when no BYOK key is configured.
+	llmSvc, managed := s.llm, true
+	if s.llm != nil {
+		if resolved, m, rerr := s.llm.ForOrg(ctx, s.db, orgID); rerr == nil {
+			llmSvc, managed = resolved, m
+		} else {
+			slog.Warn("metrics: llm ForOrg resolution failed; using platform service",
+				"org_id", orgID, "err", rerr)
+		}
+	}
+
+	summary, err := llmSvc.EstimateDifficulty(ctx, diff, meta)
 	if err != nil {
 		return nil, fmt.Errorf("metrics.EstimateForPR: llm estimate: %w", err)
 	}
@@ -330,10 +343,38 @@ func (s *Service) EstimateForPR(ctx context.Context, orgID, prID, diff string) (
 			return err
 		}
 		saved = est
+
+		// Meter managed LLM usage so it flows into billing overage (decisions P4,
+		// billing.GenerateInvoice aggregates kind="llm_tokens"). BYOK records $0 —
+		// the org pays its provider directly, we incur no managed cost.
+		qty, costUSD := llmEstimateUsage(diff)
+		if !managed {
+			costUSD = 0
+		}
+		if err := store.RecordUsage(ctx, tx, orgID, "llm_tokens", qty, costUSD); err != nil {
+			// Non-fatal: the estimate is saved; a missed usage row only under-bills.
+			slog.Warn("metrics: record llm usage failed",
+				"org_id", orgID, "managed", managed, "err", err)
+		}
 		return nil
 	}); err != nil {
 		return nil, fmt.Errorf("metrics.EstimateForPR: persist estimate: %w", err)
 	}
 
 	return saved, nil
+}
+
+// llmEstimateUsage produces an approximate (token-quantity, managed-cost-USD)
+// pair for one difficulty estimate, derived from the diff size. Quantity is an
+// estimated input-token count (~4 chars/token plus the structured output budget);
+// cost uses a blended Anthropic per-token rate so managed orgs accrue overage
+// proportional to real work. The figure is intentionally conservative — billing
+// under-counts rather than fabricates (decisions P4).
+func llmEstimateUsage(diff string) (qty, costUSD float64) {
+	inputTokens := float64(len(diff))/4 + 600 // + system prompt overhead
+	const outputTokenBudget = 1024            // mirrors llm.maxOutputTokens response ceiling
+	totalTokens := inputTokens + outputTokenBudget
+	// Blended rate ≈ $4 / 1M tokens (Sonnet-class input+output average), in USD.
+	const blendedUSDPerToken = 4.0 / 1_000_000
+	return totalTokens, totalTokens * blendedUSDPerToken
 }

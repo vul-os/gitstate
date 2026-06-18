@@ -1,12 +1,14 @@
+import { useState, useEffect } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 import {
   User, Building2, Plug, AlertTriangle, LogOut, Users, CreditCard,
-  ChevronRight, Pencil,
+  ChevronRight, Pencil, Sparkles, KeyRound, Server, Check, Loader2,
 } from 'lucide-react'
 import { useAuth } from '../lib/useAuth.js'
 import { useOrg } from '../lib/useOrg.js'
 import { Card, Badge, Button } from '../components/ui/index.js'
 import { Reveal } from '../components/Reveal.jsx'
+import { get, put } from '../lib/api.js'
 
 function SectionCard({ icon: Icon, title, description, children, delay = 0, tone = 'default' }) {
   const iconColor = tone === 'danger' ? 'text-red-400' : 'text-[var(--text-faint)]'
@@ -51,6 +53,182 @@ function Avatar({ user }) {
     <div className="w-12 h-12 rounded-full bg-gradient-to-br from-[var(--brand-teal)] to-[var(--brand-indigo)] flex items-center justify-center text-sm font-bold text-[#0B1120] select-none shrink-0">
       {initials}
     </div>
+  )
+}
+
+// ModeOption — a selectable BYOK-vs-managed card.
+function ModeOption({ icon: Icon, title, blurb, selected, disabled, onSelect }) {
+  return (
+    <button
+      type="button"
+      onClick={disabled ? undefined : onSelect}
+      disabled={disabled}
+      className={[
+        'flex-1 text-left rounded-[var(--radius-btn)] border p-4 transition-all duration-150',
+        disabled ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer',
+        selected
+          ? 'border-[var(--brand-teal)] bg-[var(--brand-teal)]/5 shadow-[0_0_18px_rgba(45,212,191,0.12)]'
+          : 'border-[var(--border)] hover:border-[var(--border2)]',
+      ].join(' ')}
+    >
+      <div className="flex items-center gap-2">
+        <Icon size={15} className={selected ? 'text-[var(--brand-teal)]' : 'text-[var(--text-faint)]'} />
+        <span className="text-sm font-semibold text-[var(--text)]">{title}</span>
+        {selected && <Check size={14} className="ml-auto text-[var(--brand-teal)]" />}
+      </div>
+      <p className="text-xs text-[var(--text-faint)] mt-2 leading-relaxed">{blurb}</p>
+    </button>
+  )
+}
+
+// LLMSettingsSection — choose BYOK (bring your own provider key → $0 managed
+// cost) vs managed (platform key, billed as overage on the per-builder plan).
+function LLMSettingsSection({ delay }) {
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState(null)
+  const [saved, setSaved] = useState(false)
+
+  const [mode, setMode] = useState('managed')
+  const [provider, setProvider] = useState('anthropic')
+  const [model, setModel] = useState('')
+  const [apiKey, setApiKey] = useState('')
+  const [hasKey, setHasKey] = useState(false)
+  const [managedAvailable, setManagedAvailable] = useState(true)
+
+  useEffect(() => {
+    let active = true
+    get('/api/settings/llm')
+      .then((s) => {
+        if (!active) return
+        setMode(s.mode ?? 'managed')
+        setProvider(s.provider ?? 'anthropic')
+        setModel(s.model ?? '')
+        setHasKey(Boolean(s.hasKey))
+        setManagedAvailable(Boolean(s.managedAvailable))
+      })
+      .catch((e) => active && setError(e.message ?? 'Failed to load LLM settings'))
+      .finally(() => active && setLoading(false))
+    return () => { active = false }
+  }, [])
+
+  async function save() {
+    setSaving(true)
+    setError(null)
+    setSaved(false)
+    try {
+      const body = { mode, provider, model: model.trim() || undefined }
+      if (mode === 'byok' && apiKey.trim()) body.apiKey = apiKey.trim()
+      const s = await put('/api/settings/llm', body)
+      setMode(s.mode)
+      setProvider(s.provider)
+      setModel(s.model ?? '')
+      setHasKey(Boolean(s.hasKey))
+      setApiKey('')
+      setSaved(true)
+      setTimeout(() => setSaved(false), 2500)
+    } catch (e) {
+      setError(e.message ?? 'Failed to save')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <SectionCard
+      icon={Sparkles}
+      title="AI & LLM"
+      description="How effort estimates and status summaries are powered."
+      delay={delay}
+    >
+      {loading ? (
+        <div className="flex items-center gap-2 py-4 text-xs text-[var(--text-faint)]">
+          <Loader2 size={14} className="animate-spin" /> Loading…
+        </div>
+      ) : (
+        <div className="space-y-4">
+          <div className="flex flex-col sm:flex-row gap-3">
+            <ModeOption
+              icon={Server}
+              title="Managed"
+              selected={mode === 'managed'}
+              disabled={!managedAvailable}
+              onSelect={() => setMode('managed')}
+              blurb={
+                managedAvailable
+                  ? 'Use the gitstate platform key. Usage is metered and billed as overage on your per-builder plan, beyond the included AI credits each builder gets.'
+                  : 'Unavailable — this server has no platform LLM key. Bring your own key instead.'
+              }
+            />
+            <ModeOption
+              icon={KeyRound}
+              title="Bring your own key"
+              selected={mode === 'byok'}
+              onSelect={() => setMode('byok')}
+              blurb="Use your own provider API key. We incur no LLM cost on your behalf, so there is no managed AI overage on your invoice."
+            />
+          </div>
+
+          {mode === 'byok' && (
+            <div className="space-y-3 rounded-[var(--radius-btn)] border border-[var(--border)] bg-[var(--bg)] p-4">
+              <div>
+                <label className="block text-xs font-medium text-[var(--text-muted)] mb-1.5">Provider</label>
+                <select
+                  value={provider}
+                  onChange={(e) => setProvider(e.target.value)}
+                  className="w-full rounded-[var(--radius-btn)] border border-[var(--border2)] bg-[var(--bg-surface2)] px-3 py-2 text-sm text-[var(--text)] focus:border-[var(--brand-teal)] focus:outline-none"
+                >
+                  <option value="anthropic">Anthropic (Claude)</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-[var(--text-muted)] mb-1.5">
+                  API key {hasKey && <span className="text-[var(--brand-teal)]">•••• saved</span>}
+                </label>
+                <input
+                  type="password"
+                  value={apiKey}
+                  onChange={(e) => setApiKey(e.target.value)}
+                  placeholder={hasKey ? 'Enter a new key to replace the saved one' : 'sk-ant-…'}
+                  autoComplete="off"
+                  className="w-full font-mono rounded-[var(--radius-btn)] border border-[var(--border2)] bg-[var(--bg-surface2)] px-3 py-2 text-sm text-[var(--text)] placeholder:text-[var(--text-faint)] focus:border-[var(--brand-teal)] focus:outline-none"
+                />
+                <p className="text-xs text-[var(--text-faint)] mt-1">Write-only. Stored encrypted; never shown again.</p>
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-[var(--text-muted)] mb-1.5">Model <span className="text-[var(--text-faint)]">(optional)</span></label>
+                <input
+                  type="text"
+                  value={model}
+                  onChange={(e) => setModel(e.target.value)}
+                  placeholder="claude-sonnet-4-6"
+                  className="w-full font-mono rounded-[var(--radius-btn)] border border-[var(--border2)] bg-[var(--bg-surface2)] px-3 py-2 text-sm text-[var(--text)] placeholder:text-[var(--text-faint)] focus:border-[var(--brand-teal)] focus:outline-none"
+                />
+              </div>
+            </div>
+          )}
+
+          {error && <p className="text-xs text-red-400">{error}</p>}
+
+          <div className="flex items-center gap-3">
+            <Button
+              variant="primary"
+              size="sm"
+              onClick={save}
+              disabled={saving || (mode === 'byok' && !hasKey && !apiKey.trim())}
+              leftIcon={saving ? <Loader2 size={13} className="animate-spin" /> : saved ? <Check size={13} /> : undefined}
+            >
+              {saving ? 'Saving…' : saved ? 'Saved' : 'Save AI settings'}
+            </Button>
+            {mode === 'managed' && managedAvailable && (
+              <span className="text-xs text-[var(--text-faint)]">Overage applies only beyond your included AI credits.</span>
+            )}
+          </div>
+        </div>
+      )}
+    </SectionCard>
   )
 }
 
@@ -131,7 +309,9 @@ export default function Settings() {
         </div>
       </SectionCard>
 
-      <SectionCard icon={Plug} title="Integrations" description="Connected git platforms." delay={0.15}>
+      <LLMSettingsSection delay={0.15} />
+
+      <SectionCard icon={Plug} title="Integrations" description="Connected git platforms." delay={0.2}>
         <div className="flex items-center gap-3 py-3">
           <div className="w-9 h-9 rounded-[var(--radius-btn)] bg-[var(--bg)] border border-[var(--border)] flex items-center justify-center shrink-0">
             <svg width="17" height="17" viewBox="0 0 24 24" fill="var(--text)" aria-hidden>
@@ -165,7 +345,7 @@ export default function Settings() {
         </div>
       </SectionCard>
 
-      <SectionCard icon={AlertTriangle} title="Danger zone" description="Irreversible actions." delay={0.2} tone="danger">
+      <SectionCard icon={AlertTriangle} title="Danger zone" description="Irreversible actions." delay={0.25} tone="danger">
         <div className="flex items-center justify-between py-2">
           <div>
             <p className="text-sm text-[var(--text)]">Delete organization</p>
