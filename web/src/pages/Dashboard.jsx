@@ -4,12 +4,15 @@
  * cycle-time trend sparkline, and the LLM-synthesized status block.
  * Data from GET /api/reports/dashboard
  */
-import { useState } from 'react'
+import { useState, useMemo } from 'react'
+import { Link } from 'react-router-dom'
 import { useDashboard } from '../lib/useDashboard.js'
+import { useHeatmap, useContributors } from '../lib/useAnalytics.js'
 import { LineChart } from '../components/LineChart.jsx'
 import { post } from '../lib/api.js'
 import { useOrg } from '../lib/useOrg.js'
 import { Card, Badge, Button, Stat } from '../components/ui/index.js'
+import { ArrowUpRight, Bot } from 'lucide-react'
 
 function Spinner() {
   return (
@@ -191,6 +194,123 @@ function NLQueryBox() {
   )
 }
 
+// ── Analytics preview widgets (link through to /analytics) ────────────────────
+
+const MINI_WEEKS = 26
+const MINI_COLORS = ['#14b8a6', '#22b8bf', '#3aa6d4', '#5a8ee6', '#6366F1']
+
+function miniColor(count, max) {
+  if (!count) return 'var(--bg-surface3)'
+  const t = max <= 1 ? 1 : Math.log(count + 1) / Math.log(max + 1)
+  return MINI_COLORS[Math.min(MINI_COLORS.length - 1, Math.floor(t * MINI_COLORS.length))]
+}
+
+function MiniHeatmap() {
+  const { data: heatmap, loading } = useHeatmap({})
+  const { weeks, max, total } = useMemo(() => {
+    const map = new Map()
+    let mx = 0, tot = 0
+    for (const d of heatmap || []) {
+      if (d?.date) { const c = d.count || 0; map.set(d.date.slice(0, 10), c); tot += c; if (c > mx) mx = c }
+    }
+    const end = new Date(); end.setHours(0, 0, 0, 0)
+    end.setDate(end.getDate() + (6 - end.getDay()))
+    const start = new Date(end); start.setDate(end.getDate() - (MINI_WEEKS * 7 - 1))
+    const cols = []
+    const cur = new Date(start)
+    const today = new Date(); today.setHours(0, 0, 0, 0)
+    for (let w = 0; w < MINI_WEEKS; w++) {
+      const col = []
+      for (let dow = 0; dow < 7; dow++) {
+        const iso = cur.toISOString().slice(0, 10)
+        col.push({ iso, count: map.get(iso) || 0, future: cur > today })
+        cur.setDate(cur.getDate() + 1)
+      }
+      cols.push(col)
+    }
+    return { weeks: cols, max: mx, total: tot }
+  }, [heatmap])
+
+  return (
+    <Card padding="lg">
+      <div className="flex items-center justify-between mb-3">
+        <h2 className="text-sm font-semibold text-[var(--text)]">Recent activity</h2>
+        <Link to="/analytics" className="inline-flex items-center gap-1 text-[11px] font-mono text-[var(--text-faint)] hover:text-[var(--brand-teal)] transition-colors">
+          full analytics <ArrowUpRight size={12} />
+        </Link>
+      </div>
+      {loading ? (
+        <div className="h-[100px] rounded bg-[var(--bg-surface2)] animate-pulse" />
+      ) : total === 0 ? (
+        <p className="text-sm text-[var(--text-faint)] py-6 text-center">No recent commit activity.</p>
+      ) : (
+        <Link to="/analytics" className="block">
+          <div className="flex gap-[3px] overflow-x-auto pb-1">
+            {weeks.map((col, wi) => (
+              <div key={wi} className="flex flex-col gap-[3px] shrink-0">
+                {col.map(cell => (
+                  <div
+                    key={cell.iso}
+                    title={`${cell.iso}: ${cell.count} commits`}
+                    className="w-[9px] h-[9px] rounded-[2px]"
+                    style={{ background: cell.future ? 'transparent' : miniColor(cell.count, max) }}
+                  />
+                ))}
+              </div>
+            ))}
+          </div>
+          <p className="text-[11px] font-mono text-[var(--text-faint)] mt-2">{total.toLocaleString()} commits · last {MINI_WEEKS} weeks</p>
+        </Link>
+      )}
+    </Card>
+  )
+}
+
+function TopContributors() {
+  const { data: contributors, loading } = useContributors({})
+  const top = useMemo(
+    () => [...(contributors || [])].sort((a, b) => (b.commits || 0) - (a.commits || 0)).slice(0, 5),
+    [contributors]
+  )
+  const max = top.reduce((m, c) => Math.max(m, c.commits || 0), 0) || 1
+
+  return (
+    <Card padding="lg">
+      <div className="flex items-center justify-between mb-3">
+        <h2 className="text-sm font-semibold text-[var(--text)]">Top contributors</h2>
+        <Link to="/analytics#leaderboard" className="inline-flex items-center gap-1 text-[11px] font-mono text-[var(--text-faint)] hover:text-[var(--brand-teal)] transition-colors">
+          leaderboard <ArrowUpRight size={12} />
+        </Link>
+      </div>
+      {loading ? (
+        <div className="space-y-2">{Array.from({ length: 4 }).map((_, i) => <div key={i} className="h-7 rounded bg-[var(--bg-surface2)] animate-pulse" />)}</div>
+      ) : top.length === 0 ? (
+        <p className="text-sm text-[var(--text-faint)] py-6 text-center">No contributors yet.</p>
+      ) : (
+        <div className="space-y-2.5">
+          {top.map((c, i) => {
+            const name = c.name || c.login || c.email || 'unknown'
+            const pct = ((c.commits || 0) / max) * 100
+            return (
+              <div key={c.login || c.email || i} className="flex items-center gap-2.5">
+                <span className="font-mono text-[11px] text-[var(--text-faint)] w-4 tabular-nums">{i + 1}</span>
+                <span className="text-xs text-[var(--text-dim)] truncate w-28 flex items-center gap-1">
+                  {name}
+                  {c.isAgent && <Bot size={11} className="text-[#818cf8] shrink-0" />}
+                </span>
+                <div className="flex-1 h-1.5 rounded-full bg-[var(--bg-surface3)] overflow-hidden">
+                  <div className="h-full rounded-full" style={{ width: `${pct}%`, background: 'linear-gradient(90deg,#2DD4BF,#6366F1)' }} />
+                </div>
+                <span className="font-mono text-[11px] text-[var(--text-muted)] tabular-nums w-10 text-right">{(c.commits || 0).toLocaleString()}</span>
+              </div>
+            )
+          })}
+        </div>
+      )}
+    </Card>
+  )
+}
+
 export default function Dashboard() {
   const { data, loading, error, refetch } = useDashboard()
 
@@ -286,6 +406,12 @@ export default function Dashboard() {
           />
         </div>
       </Card>
+
+      {/* Analytics preview — links through to /analytics */}
+      <div className="grid md:grid-cols-2 gap-4">
+        <MiniHeatmap />
+        <TopContributors />
+      </div>
 
       {/* LLM status synthesis */}
       {data?.status && <StatusBlock status={data.status} />}

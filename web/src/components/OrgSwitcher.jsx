@@ -3,31 +3,8 @@
  * Rendered inside the Sidebar below the logo.
  */
 import { useState, useRef, useEffect } from 'react'
+import { ChevronsUpDown, Check, Plus, Loader2 } from 'lucide-react'
 import { useOrg } from '../lib/useOrg.js'
-
-function ChevronIcon() {
-  return (
-    <svg width="12" height="12" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
-      <path strokeLinecap="round" strokeLinejoin="round" d="m19 9-7 7-7-7" />
-    </svg>
-  )
-}
-
-function CheckIcon() {
-  return (
-    <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
-      <path strokeLinecap="round" strokeLinejoin="round" d="m5 13 4 4L19 7" />
-    </svg>
-  )
-}
-
-function PlusIcon() {
-  return (
-    <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
-      <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
-    </svg>
-  )
-}
 
 function OrgAvatar({ name, size = 22 }) {
   const letter = name ? name[0].toUpperCase() : '?'
@@ -102,12 +79,12 @@ export function OrgSwitcher() {
           )}
         </div>
         <span className="text-[var(--text-faint)] group-hover:text-[var(--text-muted)] transition-colors">
-          <ChevronIcon />
+          <ChevronsUpDown size={13} />
         </span>
       </button>
 
       {open && (
-        <div className="absolute left-3 right-3 top-full mt-1 z-50 bg-[var(--bg-surface)] border border-[var(--border)] rounded-[var(--radius-card)] shadow-2xl overflow-hidden">
+        <div className="absolute left-3 right-3 top-full mt-1 z-50 bg-[var(--bg-surface)] border border-[var(--border)] rounded-[var(--radius-card)] shadow-[var(--shadow-float)] overflow-hidden">
           {/* Org list */}
           {orgs.length > 0 && (
             <div className="p-1.5 border-b border-[var(--border)]">
@@ -126,7 +103,7 @@ export function OrgSwitcher() {
                   </div>
                   {activeOrg?.id === org.id && (
                     <span className="text-[var(--brand-teal)] shrink-0">
-                      <CheckIcon />
+                      <Check size={14} strokeWidth={2.5} />
                     </span>
                   )}
                 </button>
@@ -141,7 +118,7 @@ export function OrgSwitcher() {
                 onClick={() => { setCreating(true) }}
                 className="w-full flex items-center gap-2 px-2.5 py-2 rounded-[var(--radius-btn)] text-xs text-[var(--text-faint)] hover:text-[var(--text)] hover:bg-[var(--bg-surface2)] transition-colors duration-150"
               >
-                <PlusIcon />
+                <Plus size={14} strokeWidth={2.5} />
                 New organization
               </button>
             ) : (
@@ -162,8 +139,9 @@ export function OrgSwitcher() {
                   <button
                     type="submit"
                     disabled={createLoading || !newName.trim()}
-                    className="flex-1 py-1.5 rounded-[var(--radius-btn)] text-[11px] font-semibold text-[#0B1120] disabled:opacity-50 transition-all bg-gradient-to-r from-[var(--brand-teal)] to-[var(--brand-indigo)]"
+                    className="flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-[var(--radius-btn)] text-[11px] font-semibold text-[#0B1120] disabled:opacity-50 transition-all bg-gradient-to-r from-[var(--brand-teal)] to-[var(--brand-indigo)] hover:opacity-90"
                   >
+                    {createLoading && <Loader2 size={11} className="animate-spin" />}
                     {createLoading ? 'Creating…' : 'Create'}
                   </button>
                   <button

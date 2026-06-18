@@ -3,6 +3,7 @@
  * Makes the "manually tracked, not derived from git" distinction visible and tasteful.
  */
 import { useState, useCallback, useEffect } from 'react'
+import { PencilLine, X, Info, Loader2, AlertCircle } from 'lucide-react'
 import { Badge, Button } from './ui/index.js'
 
 export function CreateIssueModal({ projects, onClose, onCreate }) {
@@ -43,15 +44,13 @@ export function CreateIssueModal({ projects, onClose, onCreate }) {
         onClick={onClose}
       />
       <div
-        className="fixed left-1/2 top-1/2 z-50 w-full max-w-lg -translate-x-1/2 -translate-y-1/2 rounded-[var(--radius-card)] bg-[var(--bg-surface)] border border-[var(--border)] shadow-2xl"
+        className="fixed left-1/2 top-1/2 z-50 w-full max-w-lg -translate-x-1/2 -translate-y-1/2 rounded-[var(--radius-card)] bg-[var(--bg-surface)] border border-[var(--border)] shadow-[var(--shadow-float)]"
       >
         {/* Header */}
         <div className="px-6 pt-6 pb-4 border-b border-[var(--border)]">
           <div className="flex items-start gap-3">
-            <div className="w-8 h-8 rounded-[var(--radius-badge)] flex items-center justify-center shrink-0 bg-[var(--bg-surface3)] border border-[var(--border)]">
-              <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="var(--text-muted)" strokeWidth="2">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487 18.5 2.85a1.5 1.5 0 0 1 2.12 2.12l-9.56 9.56a4.5 4.5 0 0 1-1.897 1.13L6 16.5l.719-3.263a4.5 4.5 0 0 1 1.13-1.897l8.01-8.01-.994-.994Z" />
-              </svg>
+            <div className="w-9 h-9 rounded-[var(--radius-btn)] flex items-center justify-center shrink-0 bg-[var(--bg-surface3)] border border-[var(--border)]">
+              <PencilLine size={16} className="text-[var(--text-muted)]" />
             </div>
             <div>
               <h2 className="text-base font-semibold text-[var(--text)] font-display">New manual task</h2>
@@ -59,19 +58,19 @@ export function CreateIssueModal({ projects, onClose, onCreate }) {
                 Tracked here · not derived from git · for non-dev work
               </p>
             </div>
-            <button onClick={onClose} className="ml-auto text-[var(--text-faint)] hover:text-[var(--text)] transition-colors">
-              <svg width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18 18 6M6 6l12 12" />
-              </svg>
+            <button
+              onClick={onClose}
+              className="ml-auto -mr-1.5 -mt-1 p-1.5 rounded-[var(--radius-badge)] text-[var(--text-faint)] hover:text-[var(--text)] hover:bg-[var(--bg-surface2)] transition-colors"
+              aria-label="Close"
+            >
+              <X size={18} />
             </button>
           </div>
         </div>
 
         {/* Callout — two-truth-modes context */}
-        <div className="mx-6 mt-4 rounded-[var(--radius-badge)] px-4 py-3 flex items-start gap-2.5 bg-[var(--bg-surface3)]/60 border border-[var(--border)]">
-          <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="var(--text-muted)" strokeWidth="2" className="shrink-0 mt-0.5">
-            <path strokeLinecap="round" strokeLinejoin="round" d="m11.25 11.25.041-.02a.75.75 0 0 1 1.063.852l-.708 2.836a.75.75 0 0 0 1.063.853l.041-.021M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9-3.75h.008v.008H12V8.25Z" />
-          </svg>
+        <div className="mx-6 mt-4 rounded-[var(--radius-btn)] px-4 py-3 flex items-start gap-2.5 bg-[var(--bg-surface3)]/60 border border-[var(--border)]">
+          <Info size={14} className="shrink-0 mt-0.5 text-[var(--text-muted)]" />
           <p className="text-xs text-[var(--text-faint)] leading-relaxed">
             Dev work (code / PRs) is <strong className="text-[var(--text-muted)]">automatically derived from git</strong> —
             you don&apos;t create those here. This form is for non-dev work that lives outside a repo:
@@ -124,18 +123,16 @@ export function CreateIssueModal({ projects, onClose, onCreate }) {
           )}
 
           {error && (
-            <p className="text-xs text-red-400 bg-red-500/[0.08] rounded px-3 py-2">{error}</p>
+            <p className="flex items-center gap-2 text-xs text-red-400 bg-red-500/[0.08] border border-red-500/20 rounded-[var(--radius-btn)] px-3 py-2">
+              <AlertCircle size={13} className="shrink-0" /> {error}
+            </p>
           )}
 
           <div className="flex items-center gap-3 pt-1">
             <Button
               type="submit"
               disabled={saving || !title.trim()}
-              leftIcon={saving && (
-                <svg className="animate-spin" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M21 12a9 9 0 1 1-6.219-8.56" strokeLinecap="round" />
-                </svg>
-              )}
+              leftIcon={saving ? <Loader2 size={12} className="animate-spin" /> : null}
             >
               Create task
             </Button>

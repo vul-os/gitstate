@@ -18,6 +18,7 @@ import InviteAccept from './pages/InviteAccept.jsx'
 import Repos from './pages/Repos.jsx'
 import Board from './pages/Board.jsx'
 import CycleTime from './pages/CycleTime.jsx'
+import Analytics from './pages/Analytics.jsx'
 import Involvement from './pages/Involvement.jsx'
 import Capacity from './pages/Capacity.jsx'
 import Billing from './pages/Billing.jsx'
@@ -59,6 +60,7 @@ export default function App() {
             <Route path="/board" element={<Board />} />
             <Route path="/projects" element={<Projects />} />
             <Route path="/repos" element={<Repos />} />
+            <Route path="/analytics" element={<Analytics />} />
             <Route path="/cycle-time" element={<CycleTime />} />
             <Route path="/involvement" element={<Involvement />} />
             <Route path="/capacity" element={<Capacity />} />

@@ -4,11 +4,15 @@
  * Filters by source (git/native), state, and project.
  * Shows issue detail drawer on click.
  * Two-truth-modes prominently surfaced.
+ *
+ * Board view: real drag-and-drop via @dnd-kit.
+ * Dragging a card to another column optimistically updates state
+ * and PATCHes /api/issues/{id} {state:<newColumn>}. Reverts on error.
  */
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useCallback } from 'react'
 import { useIssues } from '../lib/useIssues.js'
 import { useProjects } from '../lib/useProjects.js'
-import { BoardView } from '../components/BoardView.jsx'
+import { KanbanBoard } from '../components/board/KanbanBoard.jsx'
 import { ListView } from '../components/ListView.jsx'
 import { TableView } from '../components/TableView.jsx'
 import { IssueDrawer } from '../components/IssueDrawer.jsx'
@@ -92,27 +96,41 @@ export default function Board() {
 
   const { issues, loading, error, createIssue, updateIssue } = useIssues({
     source: sourceFilter || undefined,
-    state: stateFilter || undefined,
+    // Don't pass state filter to the API when in board view — the board shows all columns.
+    // In list/table view, pass it through.
+    state: view !== 'board' ? (stateFilter || undefined) : undefined,
     project: projectFilter || undefined,
   })
 
+  // For list/table views, apply state filter client-side too (mirrors API filter)
   const filteredIssues = useMemo(() => {
     return issues.filter(issue => {
       if (sourceFilter && issue.source !== sourceFilter) return false
-      if (stateFilter) {
+      if (stateFilter && view !== 'board') {
         const eff = issue.manualStateOverride ?? issue.derivedState ?? issue.state ?? 'open'
         if (eff !== stateFilter) return false
       }
       if (projectFilter && issue.projectId !== projectFilter) return false
       return true
     })
-  }, [issues, sourceFilter, stateFilter, projectFilter])
+  }, [issues, sourceFilter, stateFilter, projectFilter, view])
 
   const gitCount = issues.filter(i => i.source === 'git').length
   const nativeCount = issues.filter(i => i.source === 'native').length
 
+  // Called by KanbanBoard when a card is dropped to a new column
+  const handleIssueStateChange = useCallback((issueId, newState) => {
+    // Sync the drawer if the moved issue is currently open
+    setSelectedIssue(prev => {
+      if (prev?.id === issueId) {
+        return { ...prev, state: newState, manualStateOverride: newState, derivedState: newState }
+      }
+      return prev
+    })
+  }, [])
+
   return (
-    <div className="min-h-full">
+    <div className="min-h-full flex flex-col">
       {/* Page header */}
       <div className="flex items-start justify-between mb-5">
         <div>
@@ -187,11 +205,15 @@ export default function Board() {
 
         <div className="w-px h-5 bg-[var(--border)] hidden sm:block" />
 
-        {/* State filter */}
+        {/* State filter (only visible + meaningful in list/table view) */}
         <select
-          className="bg-[var(--bg)] text-xs text-[var(--text-muted)] rounded-[var(--radius-btn)] px-2.5 py-1.5 border border-[var(--border)] outline-none focus:border-[var(--brand-teal)]/40 transition-colors"
+          className={[
+            'bg-[var(--bg)] text-xs text-[var(--text-muted)] rounded-[var(--radius-btn)] px-2.5 py-1.5 border border-[var(--border)] outline-none focus:border-[var(--brand-teal)]/40 transition-colors',
+            view === 'board' ? 'opacity-40 pointer-events-none' : '',
+          ].join(' ')}
           value={stateFilter}
           onChange={e => setStateFilter(e.target.value)}
+          title={view === 'board' ? 'State filter applies in List / Table view' : undefined}
         >
           {STATE_FILTERS.map(f => <option key={f.id} value={f.id}>{f.label}</option>)}
         </select>
@@ -209,7 +231,7 @@ export default function Board() {
         )}
 
         <span className="ml-auto text-xs text-[var(--text-faint)] font-mono hidden md:block">
-          {filteredIssues.length} issue{filteredIssues.length !== 1 ? 's' : ''}
+          {view === 'board' ? `${issues.length} issues` : `${filteredIssues.length} issue${filteredIssues.length !== 1 ? 's' : ''}`}
         </span>
       </div>
 
@@ -232,13 +254,19 @@ export default function Board() {
       {/* Views */}
       {!loading && !error && (
         <>
-          {view === 'board' && <BoardView issues={filteredIssues} onCardClick={setSelectedIssue} />}
+          {view === 'board' && (
+            <KanbanBoard
+              issues={issues}
+              onCardClick={setSelectedIssue}
+              onIssueStateChange={handleIssueStateChange}
+            />
+          )}
           {view === 'list' && <ListView issues={filteredIssues} onCardClick={setSelectedIssue} />}
           {view === 'table' && <TableView issues={filteredIssues} onCardClick={setSelectedIssue} />}
         </>
       )}
 
-      {/* Empty state */}
+      {/* Empty state (no issues at all) */}
       {!loading && !error && issues.length === 0 && (
         <Card padding="xl" className="border-dashed mt-4 text-center">
           <div className="w-12 h-12 rounded-[var(--radius-card)] flex items-center justify-center mx-auto mb-4 bg-[var(--brand-teal)]/[0.06] border border-[var(--brand-teal)]/15">

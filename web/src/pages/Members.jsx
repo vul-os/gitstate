@@ -4,24 +4,28 @@
  * Invite/remove controls only shown to owner/admin.
  */
 import { useReducer, useEffect, useCallback } from 'react'
+import { Loader2, UserPlus, X, Crown, ShieldCheck, User, Eye, CreditCard, Users } from 'lucide-react'
 import { useOrg } from '../lib/useOrg.js'
 import * as api from '../lib/api.js'
 import { Card, Badge, Button } from '../components/ui/index.js'
+import { Reveal } from '../components/Reveal.jsx'
 
 const ROLES = ['owner', 'admin', 'member', 'stakeholder', 'billing']
 
-const ROLE_BADGE_COLORS = {
-  owner: 'yellow',
-  admin: 'indigo',
-  member: 'default',
-  stakeholder: 'teal',
-  billing: 'blue',
+const ROLE_META = {
+  owner: { color: 'yellow', icon: Crown },
+  admin: { color: 'indigo', icon: ShieldCheck },
+  member: { color: 'default', icon: User },
+  stakeholder: { color: 'teal', icon: Eye },
+  billing: { color: 'blue', icon: CreditCard },
 }
 
 function RoleBadge({ role }) {
-  const color = ROLE_BADGE_COLORS[role] ?? 'default'
+  const meta = ROLE_META[role] ?? ROLE_META.member
+  const Icon = meta.icon
   return (
-    <Badge color={color}>
+    <Badge color={meta.color}>
+      <Icon size={10} />
       {role}
       {role === 'stakeholder' && <span className="opacity-60"> · free</span>}
     </Badge>
@@ -33,17 +37,9 @@ function Avatar({ name, email }) {
     ? name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase()
     : (email ?? '?').slice(0, 2).toUpperCase()
   return (
-    <div className="w-8 h-8 rounded-full bg-gradient-to-br from-[var(--brand-teal)] to-[var(--brand-indigo)] flex items-center justify-center text-[11px] font-bold text-[#0B1120] shrink-0 select-none">
+    <div className="w-9 h-9 rounded-full bg-gradient-to-br from-[var(--brand-teal)] to-[var(--brand-indigo)] flex items-center justify-center text-[12px] font-bold text-[#0B1120] shrink-0 select-none">
       {initials}
     </div>
-  )
-}
-
-function Spinner() {
-  return (
-    <svg className="animate-spin shrink-0" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-      <path strokeLinecap="round" d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83" />
-    </svg>
   )
 }
 
@@ -176,137 +172,168 @@ export default function Members() {
           <h1 className="font-display text-2xl font-semibold text-[var(--text)] tracking-tight">Members</h1>
         </div>
         <Card padding="xl" className="text-center">
+          <Users size={22} className="mx-auto text-[var(--text-faint)] mb-2" />
           <p className="text-sm text-[var(--text-faint)]">No active organization. Create or select one from the sidebar.</p>
         </Card>
       </div>
     )
   }
 
+  const seatCount = members.filter(m => m.role !== 'stakeholder').length
+  const stakeholderCount = members.filter(m => m.role === 'stakeholder').length
+
   return (
     <div className="max-w-2xl">
-      <div className="mb-8">
-        <h1 className="font-display text-2xl font-semibold text-[var(--text)] tracking-tight">Members</h1>
-        <p className="text-sm text-[var(--text-faint)] mt-1">
-          Manage who has access to <span className="text-[var(--text-dim)] font-medium">{activeOrg.name}</span>.
-          {' '}Stakeholders are always <span className="text-[var(--brand-teal)] font-medium">free</span> — no seat cost.
-        </p>
-      </div>
+      <Reveal>
+        <div className="mb-8">
+          <h1 className="font-display text-2xl font-semibold text-[var(--text)] tracking-tight">Members</h1>
+          <p className="text-sm text-[var(--text-faint)] mt-1">
+            Manage who has access to <span className="text-[var(--text-dim)] font-medium">{activeOrg.name}</span>.
+            {' '}Stakeholders are always <span className="text-[var(--brand-teal)] font-medium">free</span> — no seat cost.
+          </p>
+        </div>
+      </Reveal>
 
       {/* Invite form */}
       {canManage && (
-        <Card padding="lg" className="mb-4">
-          <h2 className="text-sm font-semibold text-[var(--text)] mb-1">Invite a member</h2>
-          <p className="text-xs text-[var(--text-faint)] mb-4">
-            Stakeholder seats are <span className="text-[var(--brand-teal)] font-medium">free</span> — perfect for clients and external viewers.
-          </p>
-          <form onSubmit={handleInvite} className="flex gap-2 flex-wrap">
-            <input
-              type="email"
-              required
-              value={inviteEmail}
-              onChange={e => inviteDispatch({ type: 'SET_EMAIL', value: e.target.value })}
-              placeholder="colleague@example.com"
-              className="flex-1 min-w-[200px] px-3 py-2 rounded-[var(--radius-btn)] bg-[var(--bg)] border border-[var(--border)] text-sm text-[var(--text)] placeholder-[var(--text-faint)] outline-none focus:border-[var(--brand-teal)] focus:ring-1 focus:ring-[var(--brand-teal)]/30 transition-all"
-            />
-            <select
-              value={inviteRole}
-              onChange={e => inviteDispatch({ type: 'SET_ROLE', value: e.target.value })}
-              className="px-3 py-2 rounded-[var(--radius-btn)] bg-[var(--bg)] border border-[var(--border)] text-sm text-[var(--text)] outline-none focus:border-[var(--brand-teal)] transition-all cursor-pointer"
-            >
-              {ROLES.map(r => (
-                <option key={r} value={r}>
-                  {r === 'stakeholder' ? 'Stakeholder (free)' : r.charAt(0).toUpperCase() + r.slice(1)}
-                </option>
-              ))}
-            </select>
-            <Button
-              type="submit"
-              disabled={inviting || !inviteEmail.trim()}
-              leftIcon={inviting ? <Spinner /> : null}
-            >
-              {inviting ? 'Sending…' : 'Invite'}
-            </Button>
-          </form>
-          {inviteError && <p className="mt-2 text-xs text-red-400">{inviteError}</p>}
-          {inviteSuccess && <p className="mt-2 text-xs text-[var(--brand-teal)]">{inviteSuccess}</p>}
-        </Card>
-      )}
-
-      {/* Members list */}
-      <Card padding="none" className="overflow-hidden">
-        <div className="px-6 py-4 border-b border-[var(--border)] flex items-center justify-between">
-          <h2 className="text-sm font-semibold text-[var(--text)]">
-            Members
-            {!loading && members.length > 0 && (
-              <span className="ml-2 text-xs font-mono text-[var(--text-faint)]">({members.length})</span>
-            )}
-          </h2>
-          {loading && <Spinner />}
-        </div>
-
-        {error && (
-          <div className="px-6 py-4 text-sm text-red-400">{error}</div>
-        )}
-
-        {!loading && !error && members.length === 0 && (
-          <div className="px-6 py-8 text-center text-sm text-[var(--text-faint)]">
-            No members yet. Invite someone above.
-          </div>
-        )}
-
-        {members.map((member, idx) => (
-          <div
-            key={member.userId}
-            className={`flex items-center gap-3 px-6 py-4 ${idx < members.length - 1 ? 'border-b border-[var(--border)]' : ''}`}
-          >
-            <Avatar name={member.name} email={member.email} />
-            <div className="flex-1 min-w-0">
-              <p className="text-sm font-medium text-[var(--text)] truncate">
-                {member.name ?? member.email ?? member.userId}
-              </p>
-              {member.name && member.email && (
-                <p className="text-xs text-[var(--text-faint)] truncate">{member.email}</p>
-              )}
+        <Reveal delay={0.05}>
+          <Card padding="lg" className="mb-4">
+            <div className="flex items-center gap-2 mb-1">
+              <UserPlus size={15} className="text-[var(--brand-teal)]" />
+              <h2 className="text-sm font-semibold text-[var(--text)]">Invite a member</h2>
             </div>
-
-            {/* Role selector / badge */}
-            {canManage ? (
+            <p className="text-xs text-[var(--text-faint)] mb-4">
+              Stakeholder seats are <span className="text-[var(--brand-teal)] font-medium">free</span> — perfect for clients and external viewers.
+            </p>
+            <form onSubmit={handleInvite} className="flex gap-2 flex-wrap">
+              <input
+                type="email"
+                required
+                value={inviteEmail}
+                onChange={e => inviteDispatch({ type: 'SET_EMAIL', value: e.target.value })}
+                placeholder="colleague@example.com"
+                className="flex-1 min-w-[200px] px-3 py-2 rounded-[var(--radius-btn)] bg-[var(--bg)] border border-[var(--border)] text-sm text-[var(--text)] placeholder-[var(--text-faint)] outline-none focus:border-[var(--brand-teal)] focus:ring-2 focus:ring-[var(--brand-teal)]/15 transition-all"
+              />
               <select
-                value={member.role}
-                disabled={!!roleChanging[member.userId]}
-                onChange={e => handleRoleChange(member.userId, e.target.value)}
-                className="px-2 py-1 rounded-[var(--radius-badge)] bg-[var(--bg)] border border-[var(--border)] text-xs font-mono text-[var(--text-muted)] outline-none focus:border-[var(--brand-teal)] transition-all cursor-pointer disabled:opacity-50"
+                value={inviteRole}
+                onChange={e => inviteDispatch({ type: 'SET_ROLE', value: e.target.value })}
+                className="px-3 py-2 rounded-[var(--radius-btn)] bg-[var(--bg)] border border-[var(--border)] text-sm text-[var(--text)] outline-none focus:border-[var(--brand-teal)] transition-all cursor-pointer"
               >
                 {ROLES.map(r => (
                   <option key={r} value={r}>
-                    {r === 'stakeholder' ? 'stakeholder (free)' : r}
+                    {r === 'stakeholder' ? 'Stakeholder (free)' : r.charAt(0).toUpperCase() + r.slice(1)}
                   </option>
                 ))}
               </select>
-            ) : (
-              <RoleBadge role={member.role} />
-            )}
-
-            {/* Remove button */}
-            {canManage && (
-              <button
-                onClick={() => handleRemove(member.userId, member.email)}
-                disabled={!!removing[member.userId]}
-                className="ml-1 p-1.5 rounded-[var(--radius-badge)] text-[var(--text-faint)] hover:text-red-400 hover:bg-red-500/10 transition-all disabled:opacity-40"
-                title="Remove member"
+              <Button
+                type="submit"
+                disabled={inviting || !inviteEmail.trim()}
+                leftIcon={inviting ? <Loader2 size={14} className="animate-spin" /> : <UserPlus size={14} />}
               >
-                {removing[member.userId] ? (
-                  <Spinner />
-                ) : (
-                  <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M6 18 18 6M6 6l12 12" />
-                  </svg>
-                )}
-              </button>
-            )}
+                {inviting ? 'Sending…' : 'Invite'}
+              </Button>
+            </form>
+            {inviteError && <p className="mt-2 text-xs text-red-400">{inviteError}</p>}
+            {inviteSuccess && <p className="mt-2 text-xs text-[var(--brand-teal)]">{inviteSuccess}</p>}
+          </Card>
+        </Reveal>
+      )}
+
+      {/* Members list */}
+      <Reveal delay={0.1}>
+        <Card padding="none" className="overflow-hidden">
+          <div className="px-6 py-4 border-b border-[var(--border)] flex items-center justify-between">
+            <h2 className="text-sm font-semibold text-[var(--text)] flex items-center gap-2">
+              <Users size={15} className="text-[var(--text-faint)]" />
+              Members
+              {!loading && members.length > 0 && (
+                <span className="text-xs font-mono text-[var(--text-faint)]">({members.length})</span>
+              )}
+            </h2>
+            <div className="flex items-center gap-3">
+              {!loading && members.length > 0 && (
+                <span className="text-[11px] font-mono text-[var(--text-faint)]">
+                  {seatCount} seat{seatCount !== 1 ? 's' : ''}
+                  {stakeholderCount > 0 && <span className="text-[var(--brand-teal)]"> · {stakeholderCount} free</span>}
+                </span>
+              )}
+              {loading && <Loader2 size={15} className="animate-spin text-[var(--brand-teal)]" />}
+            </div>
           </div>
-        ))}
-      </Card>
+
+          {error && (
+            <div className="px-6 py-4 text-sm text-red-400">{error}</div>
+          )}
+
+          {loading && members.length === 0 && (
+            <div className="divide-y divide-[var(--border)]">
+              {Array.from({ length: 4 }).map((_, i) => (
+                <div key={i} className="flex items-center gap-3 px-6 py-4 animate-pulse">
+                  <div className="w-9 h-9 rounded-full bg-[var(--bg-surface3)]" />
+                  <div className="flex-1 space-y-2">
+                    <div className="h-3 w-32 rounded bg-[var(--bg-surface3)]" />
+                    <div className="h-2 w-44 rounded bg-[var(--bg-surface2)]" />
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {!loading && !error && members.length === 0 && (
+            <div className="px-6 py-10 text-center">
+              <Users size={20} className="mx-auto text-[var(--text-faint)] mb-2" />
+              <p className="text-sm text-[var(--text-faint)]">No members yet. Invite someone above.</p>
+            </div>
+          )}
+
+          {members.map((member, idx) => (
+            <div
+              key={member.userId}
+              className={`group flex items-center gap-3 px-6 py-4 hover:bg-[var(--bg-surface2)]/60 transition-colors ${idx < members.length - 1 ? 'border-b border-[var(--border)]' : ''}`}
+            >
+              <Avatar name={member.name} email={member.email} />
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-medium text-[var(--text)] truncate">
+                  {member.name ?? member.email ?? member.userId}
+                </p>
+                {member.name && member.email && (
+                  <p className="text-xs text-[var(--text-faint)] truncate">{member.email}</p>
+                )}
+              </div>
+
+              {/* Role selector / badge */}
+              {canManage ? (
+                <select
+                  value={member.role}
+                  disabled={!!roleChanging[member.userId]}
+                  onChange={e => handleRoleChange(member.userId, e.target.value)}
+                  className="px-2.5 py-1.5 rounded-[var(--radius-badge)] bg-[var(--bg)] border border-[var(--border)] text-xs font-mono text-[var(--text-muted)] outline-none focus:border-[var(--brand-teal)] hover:border-[var(--border2)] transition-all cursor-pointer disabled:opacity-50"
+                >
+                  {ROLES.map(r => (
+                    <option key={r} value={r}>
+                      {r === 'stakeholder' ? 'stakeholder (free)' : r}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <RoleBadge role={member.role} />
+              )}
+
+              {/* Remove button */}
+              {canManage && (
+                <button
+                  onClick={() => handleRemove(member.userId, member.email)}
+                  disabled={!!removing[member.userId]}
+                  className="ml-1 p-1.5 rounded-[var(--radius-badge)] text-[var(--text-faint)] opacity-0 group-hover:opacity-100 focus:opacity-100 hover:text-red-400 hover:bg-red-500/10 transition-all disabled:opacity-40"
+                  title="Remove member"
+                >
+                  {removing[member.userId] ? <Loader2 size={14} className="animate-spin" /> : <X size={14} />}
+                </button>
+              )}
+            </div>
+          ))}
+        </Card>
+      </Reveal>
     </div>
   )
 }
