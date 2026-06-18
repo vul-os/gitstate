@@ -12,8 +12,9 @@ avoid parallel git-index races). Waves & scope: see [`roadmap.md` §4](./roadmap
 | Wave | Scope | State |
 |---|---|---|
 | 0 | Foundation: skeleton, docs, logo, env/config, migration tool, base schema | ✅ done |
-| 1 | Backbone (Go) + Web shell | ⏳ dispatched |
-| 2 | Identity & tenancy (oauth, orgs, RLS scoping, exchange) | ⬜ |
+| 1 | Backbone (Go: config/db-RLS/router) + Web shell (Tailwind/routing/auth UI) | ✅ done |
+| 2 | Auth (JWT+refresh+argon2) · Exchange (USD↔ZAR) · Web auth flows | ⏳ dispatched |
+| 2b | Identity/tenancy: oauth (google/ms) · orgs/members/invites · web org UX | ⬜ |
 | 3 | Git engine (read, sync, llm, work UI) | ⬜ |
 | 4 | Metrics & reporting | ⬜ |
 | 5 | Billing (EE): Paystack, USD→ZAR, billsim | ⬜ |
@@ -28,5 +29,23 @@ avoid parallel git-index races). Waves & scope: see [`roadmap.md` §4](./roadmap
 - HTTP router + middleware in `internal/api` + `internal/middleware`; handlers under `internal/api`.
 - Web app in `web/`, React JSX (NO tsx), Tailwind; API base from `VITE_API_BASE_URL`.
 
+## Wave 1 contracts (next waves build on these)
+- `config.Load() (*Config, error)` — fields: `App{Name,Env,PublicURL,HTTPAddr}`, `Database{URL,MaxConns,RLS}`,
+  `Auth{JWTSigningKey,AccessTokenTTL,RefreshTokenTTL,Password,Providers{Google,Microsoft{ClientID,ClientSecret,Enabled}}}`,
+  `Git`, `LLM{Provider,Model,AnthropicAPIKey}`, `Billing{...,Plans[]}`, `Admin{SuperAdminEmails,Realtime}`.
+  OAuth `.Enabled` is DERIVED (id!="" && secret!="").
+- `db.New(ctx, *config.Config) (*DB, error)` · `(*DB).WithOrg(ctx, orgID string, fn func(pgx.Tx) error) error`
+  (begins tx → `SET LOCAL app.current_org` → fn → commit) · `(*DB).Ping` · `(*DB).Pool()` · `(*DB).Close()`.
+- Router: stdlib `net/http.ServeMux` (Go 1.22 patterns) in `internal/api/router.go`. `GET /healthz`, `GET /api/config`.
+  Middleware in `internal/middleware`: `Logger, Recoverer, CORS, AuthContext (stub), Chain`.
+- **Route-wiring rule (avoid router.go collisions):** feature packages expose `RegisterRoutes(mux, deps)`;
+  ONLY the orchestrator edits `router.go`. Each agent writes its OWN handler file (`internal/api/<feature>.go`)
+  and OWN store file (`internal/store/<feature>.go`).
+- Web: Tailwind v4 (`@tailwindcss/vite`), `envDir:'..'`, brand tokens `gs-teal/gs-indigo/gs-base`.
+  Routes `/login /signup / /projects /settings`. `web/src/lib/api.js` (token in localStorage `gs_access_token`,
+  `Authorization: Bearer`), `web/src/lib/auth.jsx` + `useAuth.js`. Consumes `/api/config` for OAuth gating.
+
 ## Log
 - W0: foundation laid; migrate tool builds + smoke-tested; deps pre-added; base schema w/ RLS.
+- W1: Go backbone (config/db-RLS/router/main) + web shell (Tailwind/routing/branded auth UI). Integrated green
+  (go build+vet+tidy, npm run build all clean). Committed.
