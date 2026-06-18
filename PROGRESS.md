@@ -19,7 +19,10 @@ avoid parallel git-index races). Waves & scope: see [`roadmap.md` §4](./roadmap
 | 4 | Metrics, reporting (NL→report), capacity/PTO, dashboards | ✅ done |
 | 5 | Billing (EE): Paystack, USD→ZAR, billsim | ✅ done |
 | 6 | Super admin (EE) + security pass | ✅ done |
-| 7 | Deploy & OSS hygiene | ⏳ dispatched |
+| 7 | Deploy, OSS, demo seed, web polish | ✅ done |
+
+**BUILD COMPLETE** — all 9 Definition-of-Done checks green (both build tags, vet, test, web build+lint,
+billsim, seed/migrate compile, single-binary serves embedded app). 3 migrations, 10 commits.
 
 ## Contracts (so parallel agents stay compatible)
 - Module: `github.com/exo/gitstate`. Deps pre-installed in go.mod — **import freely, do NOT `go get`**.
@@ -116,3 +119,11 @@ avoid parallel git-index races). Waves & scope: see [`roadmap.md` §4](./roadmap
   + RateLimit(300) into chain. Both build tags + vet + go test + boot-smoke green. 3 migrations. Committed.
   NOTE: collision auto-resolved — EE agent created internal/admin/admin.go w/ RequireSuperAdmin; HTML agent kept it,
   added routes.go (same signature). No duplicate symbol.
+- W7: deploy (internal/web go:embed Handler w/ SPA fallback+dev placeholder; deploy/fly.toml[jnb]; multi-stage
+  Dockerfile -tags ee; docker-compose +optional local pg; systemd; Makefile) · OSS (LICENSE AGPL-3.0 [fetched],
+  ee/LICENSE commercial, README rewrite, CONTRIBUTING, SECURITY — orchestrator wrote these after the OSS agent
+  hit a content filter on the license text) · cmd/seed (Acme Dev Shop demo: 5 users incl stakeholder+agent,
+  2 repos gh+gl, git+native issues, merged/open PRs, agent commits, cycle/involvement/estimates, leave/capacity;
+  login demo@gitstate.dev/demo1234; -reset flag) · web polish (Welcome landing, 404, empty/loading states,
+  base:'/'). Wired web.Handler() catch-all → router. FINAL VERIFY: 9/9 DoD checks green; single binary serves
+  embedded SPA (/ 200, /board SPA-fallback 200, /assets 200). Committed.

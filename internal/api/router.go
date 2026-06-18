@@ -10,6 +10,7 @@ import (
 	"github.com/exo/gitstate/internal/config"
 	"github.com/exo/gitstate/internal/db"
 	"github.com/exo/gitstate/internal/middleware"
+	"github.com/exo/gitstate/internal/web"
 
 	eeadmin "github.com/exo/gitstate/ee/admin"
 	eebilling "github.com/exo/gitstate/ee/billing"
@@ -42,6 +43,11 @@ func NewRouter(cfg *config.Config, database *db.DB) http.Handler {
 		admin.RegisterAdminRoutes(mux, database, cfg)
 		eeadmin.RegisterEEAdminRoutes(mux, database, cfg)
 	}
+
+	// Catch-all: serve the embedded React app (SPA fallback). Registered last so all
+	// /api, /auth, /admin, /healthz patterns match first. Serves a dev placeholder if
+	// no web build has been embedded.
+	mux.Handle("/", web.Handler())
 
 	// Apply middleware chain.
 	corsOrigin := cfg.App.PublicURL

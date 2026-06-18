@@ -1,0 +1,52 @@
+# /etc/systemd/system/gitstate.service
+# Install:
+#   sudo cp deploy/gitstate.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now gitstate
+#
+# Env file (copy and fill in secrets):
+#   sudo cp .env.example /etc/gitstate/env
+#   sudo chmod 640 /etc/gitstate/env
+#   sudo chown root:gitstate /etc/gitstate/env
+#
+# Binary:
+#   sudo install -m 755 gitstate /usr/local/bin/gitstate
+#   sudo install -m 755 migrate  /usr/local/bin/gitstate-migrate
+#
+# Run migrations before starting:
+#   sudo -u gitstate gitstate-migrate up
+
+[Unit]
+Description=gitstate — git-truth project tracker
+Documentation=https://github.com/exo/gitstate
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=gitstate
+Group=gitstate
+WorkingDirectory=/var/lib/gitstate
+
+# Load secrets from the env file (DATABASE_URL, JWT_SIGNING_KEY, etc.)
+EnvironmentFile=/etc/gitstate/env
+
+ExecStart=/usr/local/bin/gitstate
+ExecReload=/bin/kill -HUP $MAINPID
+
+Restart=on-failure
+RestartSec=5s
+
+# Graceful shutdown timeout — matches srv.Shutdown(30s) in main.go
+TimeoutStopSec=35s
+
+# Hardening
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/gitstate
+
+[Install]
+WantedBy=multi-user.target

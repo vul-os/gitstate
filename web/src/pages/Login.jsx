@@ -248,9 +248,12 @@ export default function Login() {
           </Link>
         </p>
 
-        {/* Open source note */}
+        {/* Landing + open source note */}
         <p className="text-center text-xs text-[#334155] mt-3 font-mono">
-          open-source · self-hostable · AGPL-3.0
+          <Link to="/welcome" className="hover:text-[#475569] transition-colors">
+            open-source
+          </Link>
+          {' '}· self-hostable · AGPL-3.0
         </p>
       </div>
     </div>

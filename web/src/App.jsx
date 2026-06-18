@@ -3,6 +3,7 @@ import { AuthProvider } from './lib/auth.jsx'
 import { AppShell } from './components/AppShell.jsx'
 import Login from './pages/Login.jsx'
 import Signup from './pages/Signup.jsx'
+import Welcome from './pages/Welcome.jsx'
 import Home from './pages/Home.jsx'
 import Dashboard from './pages/Dashboard.jsx'
 import Projects from './pages/Projects.jsx'
@@ -15,12 +16,16 @@ import CycleTime from './pages/CycleTime.jsx'
 import Involvement from './pages/Involvement.jsx'
 import Capacity from './pages/Capacity.jsx'
 import Billing from './pages/Billing.jsx'
+import NotFound from './pages/NotFound.jsx'
 
 export default function App() {
   return (
     <AuthProvider>
       <BrowserRouter>
         <Routes>
+          {/* Logged-out landing */}
+          <Route path="/welcome" element={<Welcome />} />
+
           {/* Public auth routes */}
           <Route path="/login" element={<Login />} />
           <Route path="/signup" element={<Signup />} />
@@ -46,8 +51,8 @@ export default function App() {
             <Route path="/home" element={<Home />} />
           </Route>
 
-          {/* Catch-all */}
-          <Route path="*" element={<Navigate to="/dashboard" replace />} />
+          {/* 404 — branded not-found */}
+          <Route path="*" element={<NotFound />} />
         </Routes>
       </BrowserRouter>
     </AuthProvider>

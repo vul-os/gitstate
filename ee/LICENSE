@@ -1,0 +1,23 @@
+gitstate Enterprise Edition License
+===================================
+
+Copyright (c) 2026 gitstate contributors. All rights reserved.
+
+The contents of the `ee/` directory (the "Enterprise Edition") are NOT covered by
+the GNU Affero General Public License v3.0 that governs the rest of this
+repository. The Enterprise Edition is commercial software.
+
+You may NOT use, copy, modify, or distribute the Enterprise Edition in production,
+or build binaries that include it (i.e. compiled with the `ee` build tag), except
+under a valid commercial agreement with the copyright holder.
+
+Permitted without a commercial agreement:
+  - Reading the source for evaluation, security review, and contribution.
+  - Building and running locally for development and testing.
+
+Everything OUTSIDE `ee/` is licensed under AGPL-3.0 (see the repository-root
+LICENSE) and may be self-hosted freely under those terms. Default builds
+(`go build ./...`) exclude the Enterprise Edition via the `!ee` stubs; only
+`go build -tags ee` compiles it.
+
+For commercial licensing, contact the maintainers.

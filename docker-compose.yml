@@ -1,0 +1,61 @@
+# docker-compose.yml — gitstate service + optional local Postgres
+#
+# Default (no profile):
+#   docker compose up          → starts the gitstate app only; point DATABASE_URL at Neon.
+#
+# Local Postgres (self-host, no Neon):
+#   docker compose --profile local-db up
+#   The app service waits for pg to be healthy before starting.
+#
+# Secrets: copy .env.example → .env and fill in values.
+# The app reads DATABASE_URL and all other secrets from the environment.
+
+services:
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: gitstate:local
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    env_file:
+      - .env
+    environment:
+      # Override DATABASE_URL to point at the local-db service when that profile is active.
+      # When using Neon, leave DATABASE_URL in .env and don't set it here.
+      DATABASE_URL: ${DATABASE_URL:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+        required: false   # only a hard dependency when the local-db profile is active
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/healthz"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # ─── Optional local Postgres ────────────────────────────────────────────────
+  # Activate with: docker compose --profile local-db up
+  postgres:
+    profiles: ["local-db"]
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER:     ${POSTGRES_USER:-gitstate}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-gitstate}
+      POSTGRES_DB:       ${POSTGRES_DB:-gitstate}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-gitstate}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    # When this profile is active, app's DATABASE_URL should point here:
+    # DATABASE_URL=postgres://gitstate:gitstate@postgres:5432/gitstate?sslmode=disable
+
+volumes:
+  postgres_data:
