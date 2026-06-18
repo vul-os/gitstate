@@ -38,7 +38,16 @@ export function useCycleTime(filters = {}) {
       const qs = params.toString()
       const data = await api.get(`/api/metrics/cycle-time${qs ? `?${qs}` : ''}`)
       if (genRef.current !== gen) return
-      const points = Array.isArray(data) ? data : (data?.points ?? [])
+      const raw = Array.isArray(data) ? data : (data?.points ?? [])
+      // API rows are { leadTimeSecs, computedAt, prId, ... }; the page wants { date, days }.
+      const points = raw.map(r => ({
+        date: typeof r.computedAt === 'string' ? r.computedAt.slice(0, 10) : (r.date ?? ''),
+        days: typeof r.leadTimeSecs === 'number' ? r.leadTimeSecs / 86400
+          : (typeof r.days === 'number' ? r.days : null),
+        title: r.title,
+        repo: r.repo,
+        prId: r.prId,
+      }))
       dispatch({ type: 'FETCH_DONE', points })
     } catch (e) {
       if (genRef.current !== gen) return

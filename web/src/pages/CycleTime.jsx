@@ -18,8 +18,8 @@ function Spinner() {
 }
 
 function computeStats(points) {
-  if (!points.length) return null
-  const ys = points.map(p => p.y)
+  const ys = points.map(p => p.days).filter(n => typeof n === 'number' && !Number.isNaN(n))
+  if (!ys.length) return null
   const avg = ys.reduce((a, b) => a + b, 0) / ys.length
   const sorted = [...ys].sort((a, b) => a - b)
   const p50 = sorted[Math.floor(sorted.length * 0.5)]

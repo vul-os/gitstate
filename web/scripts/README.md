@@ -1,0 +1,3 @@
+# Screenshots
+
+`screenshots.mjs` drives the live gitstate UI with Playwright (chromium) and writes retina PNGs to `docs/screenshots/` for the README and docs. To run it, first start the gitstate server (it serves the embedded app at `http://localhost:8080`), then from `web/` run `npm run shots`. It captures the public pages (landing in both dark and light, pricing, compare, docs), logs in via the UI using the demo account (`demo@gitstate.dev` / `demo1234`), and captures the authed pages (dashboard, board, involvement, capacity, cycle-time, billing). Override with `BASE_URL`, `OUT`, `EMAIL`, and `PASSWORD` env vars; pages fail independently so one broken route won't stop the rest.

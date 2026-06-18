@@ -16,7 +16,7 @@
  *   // Disable on mount (only animate once in view):
  *   <Reveal inView>...</Reveal>
  */
-import { motion, useInView } from 'motion/react'
+import { motion, useInView, useReducedMotion } from 'motion/react'
 import { useRef, Children } from 'react'
 
 const FADE_UP = {
@@ -37,14 +37,16 @@ const FADE_UP = {
 export function Reveal({ children, delay = 0, className = '', inView: triggerInView = false, as = 'div' }) {
   const ref = useRef(null)
   const isInView = useInView(ref, { once: true, margin: '-40px' })
-  const shouldAnimate = !triggerInView || isInView
+  const reduce = useReducedMotion()
+  // Reduced motion (and screenshots) → render visible immediately, never trapped at opacity:0.
+  const shouldAnimate = reduce || !triggerInView || isInView
 
   const Tag = motion[as] ?? motion.div
 
   return (
     <Tag
       ref={ref}
-      initial="hidden"
+      initial={reduce ? 'visible' : 'hidden'}
       animate={shouldAnimate ? 'visible' : 'hidden'}
       variants={{
         hidden: { opacity: 0, y: 18, filter: 'blur(4px)' },
@@ -66,14 +68,15 @@ export function Reveal({ children, delay = 0, className = '', inView: triggerInV
 export function RevealList({ children, className = '', staggerDelay = 0.08, baseDelay = 0, inView: triggerInView = false }) {
   const ref = useRef(null)
   const isInView = useInView(ref, { once: true, margin: '-40px' })
-  const shouldAnimate = !triggerInView || isInView
+  const reduce = useReducedMotion()
+  const shouldAnimate = reduce || !triggerInView || isInView
 
   return (
     <div ref={ref} className={className}>
       {Children.map(children, (child, i) => (
         <motion.div
           key={i}
-          initial="hidden"
+          initial={reduce ? 'visible' : 'hidden'}
           animate={shouldAnimate ? 'visible' : 'hidden'}
           custom={i}
           variants={{

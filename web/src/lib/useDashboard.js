@@ -32,8 +32,21 @@ export function useDashboard() {
     const gen = ++genRef.current
     dispatch({ type: 'FETCH_START' })
     try {
-      const data = await api.get('/api/reports/dashboard')
+      const raw = await api.get('/api/reports/dashboard?synthesize=true')
       if (genRef.current !== gen) return
+      // API nests counts under stateCounts and returns throughput as a weekly series;
+      // flatten to the shape the page consumes.
+      const sc = raw?.stateCounts ?? {}
+      const data = {
+        open: sc.open ?? 0,
+        inProgress: sc.inProgress ?? 0,
+        done: sc.done ?? 0,
+        throughput: Array.isArray(raw?.throughput)
+          ? raw.throughput.reduce((a, b) => a + (b.count ?? 0), 0)
+          : (raw?.throughput ?? null),
+        recentActivity: raw?.recentActivity ?? [],
+        status: raw?.status ?? null,
+      }
       dispatch({ type: 'FETCH_DONE', data })
     } catch (e) {
       if (genRef.current !== gen) return

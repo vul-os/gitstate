@@ -8,6 +8,23 @@ the invoice from git itself — built for a world where agents write the code an
 
 ---
 
+## Screenshots
+
+<p align="center"><img src="docs/screenshots/landing-dark.png" alt="gitstate landing" width="800"></p>
+
+|  |  |
+|---|---|
+| ![Dashboard](docs/screenshots/dashboard.png) | ![Board](docs/screenshots/board.png) |
+| **Dashboard** — state derived from git | **Board** — two truth-modes (git vs manual) |
+| ![Cycle time](docs/screenshots/cycle-time.png) | ![Involvement](docs/screenshots/involvement.png) |
+| **Cycle time** — DORA lead times | **Involvement** — texture, not a score |
+| ![Pricing](docs/screenshots/pricing.png) | ![Compare](docs/screenshots/compare.png) |
+| **Pricing** — per-builder, currency-aware | **Compare** — vs the incumbents |
+
+> Screenshots are generated with `cd web && npm run shots` (Playwright) against a running instance.
+
+---
+
 ## Why it exists
 
 Every current tool (Jira, Linear, ClickUp, ZenHub) is a **manually-maintained fiction** sitting
