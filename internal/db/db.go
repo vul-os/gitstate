@@ -73,7 +73,9 @@ func (d *DB) WithOrg(ctx context.Context, orgID string, fn func(pgx.Tx) error) e
 	}
 
 	// Set the RLS parameter so org_isolation policies fire correctly.
-	if _, err := tx.Exec(ctx, "SET LOCAL app.current_org = $1", orgID); err != nil {
+	// NOTE: SQL `SET LOCAL` does not accept bind parameters ($1); set_config(...,true)
+	// is the parameterized, transaction-local equivalent.
+	if _, err := tx.Exec(ctx, "SELECT set_config('app.current_org', $1, true)", orgID); err != nil {
 		_ = tx.Rollback(ctx)
 		return fmt.Errorf("db: set app.current_org: %w", err)
 	}

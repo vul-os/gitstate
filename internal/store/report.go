@@ -61,7 +61,7 @@ func WeeklyThroughput(ctx context.Context, tx pgx.Tx, orgID string, weeks int) (
 		FROM issues
 		WHERE org_id = $1
 		  AND COALESCE(derived_state, state) IN ('done', 'closed')
-		  AND updated_at >= now() - ($2 || ' weeks')::interval
+		  AND updated_at >= now() - make_interval(weeks => $2)
 		GROUP BY 1
 		ORDER BY 1`
 
@@ -183,7 +183,7 @@ func BurndownSeries(ctx context.Context, tx pgx.Tx, orgID, projectID string, day
 	baseQ := `
 		WITH days AS (
 			SELECT generate_series(
-				(now() - ($2 || ' days')::interval)::date,
+				(now() - make_interval(days => $2))::date,
 				now()::date,
 				'1 day'::interval
 			)::date AS day
