@@ -271,16 +271,23 @@ func (s *eeAdminService) handleRevenue(w http.ResponseWriter, r *http.Request) {
 
 	data := revenueDashData{Now: time.Now().UTC()}
 
-	// MRR by plan: join subscriptions with plans to get USD price × active count.
+	// MRR by plan (per-builder model): per_builder_cents × billable builders across
+	// each plan's active subscriptions. Stakeholders are free (decisions P6).
 	planRows, err := pool.Query(ctx, `
-		SELECT p.key, p.name, p.usd_cents,
-		       COUNT(s.id)::int AS active_orgs,
-		       (p.usd_cents * COUNT(s.id))::int AS mrr_cents
+		SELECT p.key, p.name, p.per_builder_cents,
+		       COUNT(DISTINCT s.org_id)::int AS active_orgs,
+		       COALESCE(SUM(p.per_builder_cents * bc.cnt), 0)::int AS mrr_cents
 		FROM plans p
 		LEFT JOIN subscriptions s
 		       ON s.plan_key = p.key AND s.status = 'active'
-		GROUP BY p.key, p.name, p.usd_cents
-		ORDER BY p.usd_cents DESC
+		LEFT JOIN (
+			SELECT org_id, COUNT(*) AS cnt
+			FROM org_members
+			WHERE role IN ('owner','admin','member')
+			GROUP BY org_id
+		) bc ON bc.org_id = s.org_id
+		GROUP BY p.key, p.name, p.per_builder_cents
+		ORDER BY p.per_builder_cents DESC
 	`)
 	if err != nil {
 		slog.ErrorContext(ctx, "ee/admin: revenue plans query failed", "error", err)

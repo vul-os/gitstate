@@ -24,12 +24,15 @@ import (
 
 // Plan mirrors a row from the plans table.
 type Plan struct {
-	Key      string
-	Name     string
-	USDCents int
-	Builders int
-	MaxConns int
-	Features map[string]any
+	Key              string
+	Name             string
+	USDCents         int     // legacy flat price (0 for per-builder tiers; kept for back-compat)
+	PerBuilderCents  int     // monthly price per billable builder
+	IncludedLLMCents int     // included managed-LLM allowance per builder/mo (our provider cost)
+	OverageMarkup    float64 // markup on managed-LLM usage beyond the allowance (e.g. 1.30)
+	Builders         int     // cap: 0 = unlimited
+	MaxConns         int
+	Features         map[string]any
 }
 
 // Subscription mirrors a row from the subscriptions table.
@@ -83,9 +86,10 @@ type InvoiceLine struct {
 // Plans are global (no org scope) — uses pool directly.
 func ListPlans(ctx context.Context, pool *pgxpool.Pool) ([]Plan, error) {
 	const q = `
-		SELECT key, name, usd_cents, builders, max_conns, features
+		SELECT key, name, usd_cents, per_builder_cents, included_llm_cents, overage_markup,
+		       builders, max_conns, features
 		FROM plans
-		ORDER BY usd_cents ASC`
+		ORDER BY per_builder_cents ASC, usd_cents ASC`
 
 	rows, err := pool.Query(ctx, q)
 	if err != nil {
@@ -97,7 +101,10 @@ func ListPlans(ctx context.Context, pool *pgxpool.Pool) ([]Plan, error) {
 	for rows.Next() {
 		var p Plan
 		var featuresJSON []byte
-		if err := rows.Scan(&p.Key, &p.Name, &p.USDCents, &p.Builders, &p.MaxConns, &featuresJSON); err != nil {
+		if err := rows.Scan(
+			&p.Key, &p.Name, &p.USDCents, &p.PerBuilderCents, &p.IncludedLLMCents,
+			&p.OverageMarkup, &p.Builders, &p.MaxConns, &featuresJSON,
+		); err != nil {
 			return nil, fmt.Errorf("store.billing: scan plan: %w", err)
 		}
 		if len(featuresJSON) > 0 {

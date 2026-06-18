@@ -29,7 +29,7 @@ type Config struct {
 // AppConfig holds core application settings.
 type AppConfig struct {
 	Name      string `yaml:"name"`
-	Env       string `yaml:"env"`       // dev | prod
+	Env       string `yaml:"env"` // dev | prod
 	PublicURL string `yaml:"public_url"`
 	HTTPAddr  string `yaml:"http_addr"`
 }
@@ -43,11 +43,11 @@ type DatabaseConfig struct {
 
 // AuthConfig holds JWT and OAuth provider settings.
 type AuthConfig struct {
-	JWTSigningKey    string          `yaml:"jwt_signing_key"`
-	AccessTokenTTL   time.Duration   `yaml:"access_token_ttl"`
-	RefreshTokenTTL  time.Duration   `yaml:"refresh_token_ttl"`
-	Password         bool            `yaml:"password"`
-	Providers        ProvidersConfig `yaml:"providers"`
+	JWTSigningKey   string          `yaml:"jwt_signing_key"`
+	AccessTokenTTL  time.Duration   `yaml:"access_token_ttl"`
+	RefreshTokenTTL time.Duration   `yaml:"refresh_token_ttl"`
+	Password        bool            `yaml:"password"`
+	Providers       ProvidersConfig `yaml:"providers"`
 }
 
 // ProvidersConfig holds the OAuth provider sub-configs.
@@ -122,13 +122,16 @@ type ExchangeConfig struct {
 	TTL      time.Duration `yaml:"ttl"`
 }
 
-// PlanConfig describes a billing plan tier.
+// PlanConfig describes a billing plan tier (per-builder model).
 type PlanConfig struct {
-	Key      string `yaml:"key"`
-	Name     string `yaml:"name"`
-	USD      int    `yaml:"usd"`
-	Builders int    `yaml:"builders"`
-	MaxConns int    `yaml:"max_conns"`
+	Key            string  `yaml:"key"`
+	Name           string  `yaml:"name"`
+	USD            int     `yaml:"usd"`              // legacy flat price (kept for back-compat)
+	PerBuilderUSD  int     `yaml:"per_builder_usd"`  // monthly price per billable builder
+	IncludedLLMUSD int     `yaml:"included_llm_usd"` // included managed-LLM allowance per builder/mo
+	OverageMarkup  float64 `yaml:"overage_markup"`   // markup on managed-LLM usage beyond allowance
+	Builders       int     `yaml:"builders"`         // cap: 0 = unlimited
+	MaxConns       int     `yaml:"max_conns"`
 }
 
 // AdminConfig holds super-admin settings.

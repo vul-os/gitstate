@@ -152,12 +152,13 @@ func (s *paystackService) handleCheckout(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// Resolve plan price in USD cents from config plans list.
-	usdCents, err := s.planUSDCents(req.Plan)
+	// Per-builder pricing: amount = per-builder price × billable builders (stakeholders free).
+	perBuilderCents, err := s.planPerBuilderCents(req.Plan)
 	if err != nil {
 		writeError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	usdCents := perBuilderCents * s.orgBuilderCount(r.Context(), orgID)
 
 	// Convert USD → ZAR at the capture-time rate (decisions A8).
 	zarCents, rateID, err := s.exchange.Convert(r.Context(), usdCents)
@@ -450,15 +451,26 @@ func (s *paystackService) handleVerify(w http.ResponseWriter, r *http.Request) {
 
 // ── Plan lookup ───────────────────────────────────────────────────────────────
 
-// planUSDCents returns the plan price in USD cents for the given plan key.
-// It looks up cfg.Billing.Plans (seeded from config.yaml / DB plans table).
-func (s *paystackService) planUSDCents(planKey string) (int, error) {
+// planPerBuilderCents returns the per-builder monthly price in USD cents for a plan.
+func (s *paystackService) planPerBuilderCents(planKey string) (int, error) {
 	for _, p := range s.cfg.Billing.Plans {
 		if strings.EqualFold(p.Key, planKey) {
-			return p.USD * 100, nil // config stores whole USD dollars; convert to cents
+			return p.PerBuilderUSD * 100, nil // config stores whole USD dollars; convert to cents
 		}
 	}
 	return 0, fmt.Errorf("unknown plan: %q", planKey)
+}
+
+// orgBuilderCount counts billable builders (owner/admin/member; stakeholders are
+// free per decisions P6). org_members is not RLS-protected, so a pool query is fine.
+func (s *paystackService) orgBuilderCount(ctx context.Context, orgID string) int {
+	var n int
+	if err := s.db.Pool().QueryRow(ctx,
+		`SELECT COUNT(*) FROM org_members WHERE org_id=$1 AND role IN ('owner','admin','member')`,
+		orgID).Scan(&n); err != nil || n < 1 {
+		return 1 // charge at least one builder
+	}
+	return n
 }
 
 // ── JSON helpers ──────────────────────────────────────────────────────────────

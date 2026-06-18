@@ -34,14 +34,16 @@ func RegisterDocsRoutes(mux *http.ServeMux) {
 	})
 }
 
-// publicPlan is the pricing-page shape (prices defined in USD; the frontend
-// converts for display, the backend charges in ZAR at capture-time FX).
+// publicPlan is the pricing-page shape (per-builder tier model; prices defined in
+// USD, the backend charges in ZAR at capture-time FX). The web pricing page depends
+// on this exact JSON shape.
 type publicPlan struct {
-	Key      string `json:"key"`
-	Name     string `json:"name"`
-	USD      int    `json:"usd"`      // dollars/month
-	Builders int    `json:"builders"`
-	MaxConns int    `json:"maxConns"`
+	Key            string  `json:"key"`
+	Name           string  `json:"name"`
+	PerBuilderUSD  int     `json:"perBuilderUsd"`  // per_builder_cents / 100
+	IncludedLLMUSD int     `json:"includedLlmUsd"` // included_llm_cents / 100
+	OverageMarkup  float64 `json:"overageMarkup"`
+	Builders       int     `json:"builders"` // cap: 0 = unlimited
 }
 
 // RegisterPublicPlans wires GET /api/plans (public — for the pricing page).
@@ -55,8 +57,12 @@ func RegisterPublicPlans(mux *http.ServeMux, database *db.DB, _ *config.Config) 
 		out := make([]publicPlan, 0, len(plans))
 		for _, p := range plans {
 			out = append(out, publicPlan{
-				Key: p.Key, Name: p.Name,
-				USD: p.USDCents / 100, Builders: p.Builders, MaxConns: p.MaxConns,
+				Key:            p.Key,
+				Name:           p.Name,
+				PerBuilderUSD:  p.PerBuilderCents / 100,
+				IncludedLLMUSD: p.IncludedLLMCents / 100,
+				OverageMarkup:  p.OverageMarkup,
+				Builders:       p.Builders,
 			})
 		}
 		writeJSON(w, http.StatusOK, out)

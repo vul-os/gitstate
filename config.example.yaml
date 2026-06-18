@@ -54,15 +54,15 @@ billing:                        # EE — only active in ee builds
     provider: ${EXCHANGE_PROVIDER}
     api_key: ${EXCHANGE_API_KEY}
     ttl: ${EXCHANGE_TTL}
-  # Plan ladder — prices in USD; charged in ZAR at capture-time rate.
-  # max_conns is a CEILING (not a reservation). stakeholders are free.
+  # Per-BUILDER plan ladder — prices in USD; charged in ZAR at capture-time rate.
+  # builders = cap (0 = unlimited). stakeholders are always free (decisions P6).
+  # included_llm_usd = managed-LLM allowance per builder/mo; usage beyond it is billed
+  # at provider-cost × overage_markup. free is BYOK-only (no managed allowance).
   plans:
-    - { key: free,   name: Free,   usd: 0,   builders: 2,  max_conns: 10  }
-    - { key: hobby,  name: Hobby,  usd: 9,   builders: 5,  max_conns: 25  }
-    - { key: pro,    name: Pro,    usd: 39,  builders: 15, max_conns: 75  }
-    - { key: team,   name: Team,   usd: 199, builders: 50, max_conns: 200 }
-    - { key: scale,  name: Scale,  usd: 249, builders: 100, max_conns: 400 }
-    - { key: ent,    name: Enterprise, usd: 0, builders: 0, max_conns: 0 }  # custom
+    - { key: free,       name: Free,       per_builder_usd: 0,  included_llm_usd: 0,  overage_markup: 1.00, builders: 2, max_conns: 10 }
+    - { key: team,       name: Team,       per_builder_usd: 12, included_llm_usd: 4,  overage_markup: 1.30, builders: 0, max_conns: 0 }
+    - { key: business,   name: Business,   per_builder_usd: 25, included_llm_usd: 12, overage_markup: 1.30, builders: 0, max_conns: 0 }  # + SSO/audit
+    - { key: enterprise, name: Enterprise, per_builder_usd: 0,  included_llm_usd: 0,  overage_markup: 1.00, builders: 0, max_conns: 0 }  # custom / self-host / BYOK
 
 admin:
   super_admin_emails: ${SUPER_ADMIN_EMAILS}

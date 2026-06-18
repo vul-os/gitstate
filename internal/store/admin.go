@@ -88,11 +88,18 @@ func GetAdminStats(ctx context.Context, pool *pgxpool.Pool) (*AdminStats, error)
 	).Scan(&s.NewOrgsLast30d); err != nil {
 		return nil, err
 	}
-	// MRR estimate: sum plan usd_cents for active subscriptions joined with plans
+	// MRR estimate (per-builder model): per_builder_cents × billable builders per org
+	// for active subscriptions. Stakeholders are free (decisions P6).
 	if err := pool.QueryRow(ctx, `
-		SELECT COALESCE(SUM(p.usd_cents), 0)
+		SELECT COALESCE(SUM(p.per_builder_cents * bc.cnt), 0)
 		FROM subscriptions s
 		JOIN plans p ON p.key = s.plan_key
+		JOIN (
+			SELECT org_id, COUNT(*) AS cnt
+			FROM org_members
+			WHERE role IN ('owner','admin','member')
+			GROUP BY org_id
+		) bc ON bc.org_id = s.org_id
 		WHERE s.status = 'active'
 	`).Scan(&s.MRREstimateCents); err != nil {
 		return nil, err

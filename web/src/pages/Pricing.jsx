@@ -22,22 +22,54 @@ import { get } from '../lib/api.js'
 import { PlanCard, CostCalculator, CompareTable } from '../components/pricing/index.jsx'
 
 // ── Plan ladder fallback (mirrors backend GET /api/plans) ────────────────────
+// Shape: { key, name, perBuilderUsd, includedLlmUsd, overageMarkup, builders }
+// builders=0 → unlimited; free=2 cap; perBuilderUsd=null → Enterprise/custom
 const FALLBACK_PLANS = [
-  { key: 'free',   name: 'Free',   usd: 0,   builders: 1,  maxConns: 5  },
-  { key: 'hobby',  name: 'Hobby',  usd: 9,   builders: 3,  maxConns: 10 },
-  { key: 'pro',    name: 'Pro',    usd: 39,  builders: 10, maxConns: 25 },
-  { key: 'team',   name: 'Team',   usd: 199, builders: 30, maxConns: 50 },
-  { key: 'scale',  name: 'Scale',  usd: 249, builders: 75, maxConns: 100},
-  { key: 'ent',    name: 'Enterprise', usd: null, builders: null, maxConns: null },
+  {
+    key: 'free',
+    name: 'Free',
+    perBuilderUsd: 0,
+    includedLlmUsd: 0,
+    overageMarkup: 0,
+    builders: 2,
+  },
+  {
+    key: 'team',
+    name: 'Team',
+    perBuilderUsd: 12,
+    includedLlmUsd: 4,
+    overageMarkup: 1.3,
+    builders: 0,
+  },
+  {
+    key: 'business',
+    name: 'Business',
+    perBuilderUsd: 25,
+    includedLlmUsd: 12,
+    overageMarkup: 1.3,
+    builders: 0,
+  },
+  {
+    key: 'ent',
+    name: 'Enterprise',
+    perBuilderUsd: null,
+    includedLlmUsd: null,
+    overageMarkup: null,
+    builders: 0,
+  },
 ]
 
-const RECOMMENDED_KEY = 'pro'
+const RECOMMENDED_KEY = 'team'
 
 // ── FAQ ──────────────────────────────────────────────────────────────────────
 const FAQ_ITEMS = [
   {
     q: 'What exactly is a "builder"?',
-    a: 'A builder is any team member who writes code, runs AI agents, manages repositories, or configures integrations. Builders consume seat licences. Product managers, designers, and executives who only read dashboards and reports are stakeholders — always free and unlimited on every plan.',
+    a: 'A builder is any team member who writes code, runs AI agents, manages repositories, or configures integrations — they consume a paid seat. Product managers, designers, executives, and clients who only read dashboards, cycle-time reports, and PR timelines are stakeholders — always free and unlimited on every plan.',
+  },
+  {
+    q: 'How do the included LLM credits work?',
+    a: 'Team and Business plans include a monthly managed-LLM credit per builder ($4 and $12 respectively). These credits are pooled across your team and cover AI code insights, automated summaries, and agent runs. If your team exceeds the included credit pool, overage is billed at cost × 1.30. Alternatively, enable BYOK (bring your own key) and route LLM calls directly to your provider at their rate — no markup.',
   },
   {
     q: 'Why billed in USD but charged in my local currency?',
@@ -48,8 +80,8 @@ const FAQ_ITEMS = [
     a: 'Yes. gitstate is open-source and self-hosting is free forever. You provide the infrastructure; there are no seat limits or feature gates on self-hosted deployments. The cloud plans fund ongoing development and add managed infra, support, and AI features on top.',
   },
   {
-    q: 'How does LLM usage affect my bill?',
-    a: 'AI features (code insights, automated summaries, agent runs) call large language models. On Hobby plans these are billed per-token through gitstate. On Pro and above you can bring your own API key (BYOK) and pay your provider directly — usually cheaper at volume. The calculator above shows when BYOK starts to pay off.',
+    q: 'When should I use BYOK instead of managed LLM credits?',
+    a: 'If your team\'s aggregate LLM spend would exceed the included credits and you have existing API agreements with Anthropic, OpenAI, or another provider, BYOK lets you bypass the managed-LLM markup entirely. The cost calculator above shows your BYOK savings in real time.',
   },
   {
     q: 'Can I change plans mid-cycle?',
@@ -57,7 +89,7 @@ const FAQ_ITEMS = [
   },
   {
     q: 'Is there a free trial for paid plans?',
-    a: 'Every paid plan starts with a 14-day free trial — no credit card required. If you exceed the free plan limits during the trial you will be prompted to confirm a payment method; otherwise you auto-revert to Free.',
+    a: 'Every paid plan starts with a 14-day free trial — no credit card required. If you exceed the Free plan limits during the trial you will be prompted to confirm a payment method; otherwise you auto-revert to Free.',
   },
 ]
 
@@ -93,7 +125,7 @@ function FaqItem({ q, a, defaultOpen = false }) {
 // ── Trust signals row ──────────────────────────────────────────────────────────
 const SIGNALS = [
   { icon: GitBranch, label: 'Open source · self-host free' },
-  { icon: ShieldCheck, label: 'SOC 2 controls · SSO on Team+' },
+  { icon: ShieldCheck, label: 'SSO + audit logs on Business+' },
   { icon: KeyRound, label: 'BYOK — bring your own LLM key' },
   { icon: InfinityIcon, label: 'Unlimited free stakeholders' },
 ]
@@ -124,9 +156,8 @@ export default function Pricing() {
     return () => { cancelled = true }
   }, [])
 
-  // Columns for the comparison matrix (skip Scale to keep it readable).
+  // Columns for the comparison matrix — all 4 tiers
   const compareCols = (plans.length ? plans : FALLBACK_PLANS)
-    .filter(p => p.key !== 'scale')
     .map(p => ({ key: p.key, name: p.name }))
 
   return (
@@ -183,8 +214,8 @@ export default function Pricing() {
           )}
 
           {loading ? (
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
-              {Array.from({ length: 6 }).map((_, i) => (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
+              {Array.from({ length: 4 }).map((_, i) => (
                 <Card key={i} padding="lg" className="animate-pulse">
                   <div className="h-9 w-9 rounded-[var(--radius-badge)] bg-[var(--bg-surface2)] mb-4" />
                   <div className="h-5 w-24 rounded bg-[var(--bg-surface2)] mb-3" />
@@ -198,7 +229,7 @@ export default function Pricing() {
             </div>
           ) : (
             <RevealList
-              className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5 items-stretch"
+              className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5 items-stretch"
               staggerDelay={0.06}
               inView
             >
@@ -226,7 +257,7 @@ export default function Pricing() {
         <Container size="lg">
           <Reveal inView>
             <div
-              className="relative overflow-hidden rounded-[var(--radius-card)] border border-[#2DD4BF]/20 p-7 md:p-9 border-glow-teal"
+              className="relative overflow-hidden rounded-[var(--radius-card)] border border-[#2DD4BF]/20 p-7 md:p-9"
               style={{ background: 'linear-gradient(135deg, rgba(45,212,191,0.05) 0%, rgba(99,102,241,0.05) 100%)' }}
             >
               <Glow variant="indigo" size={360} className="bottom-0 right-0 opacity-30" />
@@ -279,7 +310,7 @@ export default function Pricing() {
                 Estimate your cost
               </h2>
               <p className="text-sm text-[var(--text-muted)] max-w-md mx-auto">
-                Drag the sliders — we pick the right plan by builder count and show your real per-seat cost.
+                Set your builder count, expected LLM usage, and BYOK preference — we pick the best plan and show your real per-builder cost.
               </p>
             </div>
           </Reveal>
@@ -305,7 +336,7 @@ export default function Pricing() {
                 Compare every plan
               </h2>
               <p className="text-sm text-[var(--text-muted)]">
-                The full feature matrix — Scale sits between Team and Enterprise.
+                Full feature matrix — per-builder pricing, included LLM credits, and enterprise options.
               </p>
             </div>
           </Reveal>
@@ -360,13 +391,14 @@ export default function Pricing() {
               <Glow variant="indigo" size={420} className="bottom-0 right-1/4 opacity-40" />
               <div className="relative z-10">
                 <span className="inline-flex items-center gap-1.5 mb-5 px-3 py-1 rounded-full border border-[#2DD4BF]/25 bg-[#2DD4BF]/[0.06] text-xs font-mono text-[#2DD4BF]">
-                  <Sparkles size={12} /> Free forever plan available
+                  <Sparkles size={12} /> Free forever plan · ≤ 2 builders
                 </span>
                 <GradientText as="h2" className="font-display text-3xl md:text-4xl font-semibold mb-4 leading-tight">
                   Start for free today
                 </GradientText>
                 <p className="text-[var(--text-muted)] mb-8 max-w-md mx-auto">
                   No credit card. No seat minimum. Git is already your ledger — gitstate just reads it.
+                  Stakeholders always free, builders pay per seat.
                 </p>
                 <div className="flex flex-wrap items-center justify-center gap-3">
                   <Button variant="primary" size="lg" rightIcon={<ArrowRight size={16} />}>

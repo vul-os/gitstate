@@ -154,14 +154,17 @@ func (s *Service) CurrentUsage(ctx context.Context, orgID string) ([]store.Usage
 
 // GenerateInvoice builds a USD invoice for the org covering [periodStart, periodEnd].
 //
-// It produces two categories of line items:
+// It produces these categories of line items:
 //
-//  1. Per-builder seat lines — one line per builder (role = owner/admin/member);
-//     stakeholders are never counted (decisions P6). Each line carries git evidence
-//     (commit count, PR count for the period) from the org's connected repos.
+//  1. Per-builder seat lines — one line per builder (role = owner/admin/member) at
+//     the plan's per_builder_cents price; stakeholders are never counted (decisions P6).
+//     Each line carries git evidence (commit count, PR count for the period).
 //
-//  2. Metered usage lines — one line per usage kind (llm_tokens, sync, etc.) summed
-//     from usage_events in the period.
+//  2. A managed-LLM line — provider cost beyond the org's included allowance
+//     (builders × included_llm_cents) billed at × overage_markup. BYOK records $0
+//     provider cost and so never overflows; the free tier has no allowance/managed LLM.
+//
+//  3. Other metered usage lines — one line per remaining usage kind (sync, etc.).
 //
 // Any work that git cannot prove (zero git activity for a builder) is recorded as an
 // is_estimated=true line with evidence["confirmation_required"]=true so a human can
@@ -241,6 +244,7 @@ func (s *Service) GenerateInvoice(ctx context.Context, orgID string, periodStart
 	var (
 		totalUSDCents int
 		seatLines     []invoiceLine
+		numBuilders   int
 	)
 
 	for _, m := range members {
@@ -248,8 +252,9 @@ func (s *Service) GenerateInvoice(ctx context.Context, orgID string, periodStart
 			// stakeholder — free, skip (decisions P6)
 			continue
 		}
+		numBuilders++
 
-		seatCostUSD := plan.USDCents // per-builder monthly price in USD cents
+		seatCostUSD := plan.PerBuilderCents // per-builder monthly price in USD cents
 
 		// Gather git evidence for this builder.
 		numCommits := commitsByAuthor[m.Name]
@@ -285,11 +290,30 @@ func (s *Service) GenerateInvoice(ctx context.Context, orgID string, periodStart
 		totalUSDCents += seatCostUSD
 	}
 
-	// 5. Build usage/metered lines.
-	var usageLines []invoiceLine
+	// 5. Build the managed-LLM line + any other metered usage lines.
+	//
+	// Managed-LLM model: usage beyond the org's included allowance
+	// (builders × included_llm_cents) is billed at provider-cost × overage_markup.
+	// BYOK usage records $0 provider cost, so it never produces overage. The free
+	// tier carries no allowance and no managed LLM (BYOK-only) → no overage either.
+	var (
+		usageLines    []invoiceLine
+		llmCostCents  int  // total managed-LLM provider cost for the period (cents)
+		sawLLM        bool // did we observe any llm_tokens usage?
+		llmTotalQty   float64
+	)
 	for _, u := range usage {
 		// cost_usd is stored as a float; convert to cents.
 		costCents := int(u.TotalCostUSD * 100)
+
+		if u.Kind == "llm_tokens" {
+			// Managed-LLM provider cost — aggregated into the allowance/overage line below.
+			llmCostCents += costCents
+			llmTotalQty += u.TotalQty
+			sawLLM = true
+			continue
+		}
+
 		if costCents == 0 {
 			continue // zero-cost usage events don't appear on the invoice
 		}
@@ -305,6 +329,33 @@ func (s *Service) GenerateInvoice(ctx context.Context, orgID string, periodStart
 			isEstimated: false,
 		})
 		totalUSDCents += costCents
+	}
+
+	// Managed-LLM allowance/overage line.
+	allowanceCents := numBuilders * plan.IncludedLLMCents
+	overageCostCents := llmCostCents - allowanceCents
+	if overageCostCents < 0 {
+		overageCostCents = 0
+	}
+	billedLLMCents := int(float64(overageCostCents) * plan.OverageMarkup)
+	if sawLLM && billedLLMCents > 0 {
+		usageLines = append(usageLines, invoiceLine{
+			desc:     fmt.Sprintf("Managed LLM overage (%d builders × $%.2f allowance, ×%.2f markup)", numBuilders, float64(plan.IncludedLLMCents)/100, plan.OverageMarkup),
+			usdCents: billedLLMCents,
+			evidence: map[string]any{
+				"kind":              "llm_tokens",
+				"total_qty":         llmTotalQty,
+				"provider_cost_usd": float64(llmCostCents) / 100,
+				"allowance_usd":     float64(allowanceCents) / 100,
+				"overage_cost_usd":  float64(overageCostCents) / 100,
+				"overage_markup":    plan.OverageMarkup,
+				"builders":          numBuilders,
+				"period_start":      periodStart.Format(time.DateOnly),
+				"period_end":        periodEnd.Format(time.DateOnly),
+			},
+			isEstimated: false,
+		})
+		totalUSDCents += billedLLMCents
 	}
 
 	// 6. Persist: create invoice + lines in a single org-scoped transaction.
