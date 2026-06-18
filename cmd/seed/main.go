@@ -1,5 +1,6 @@
-// Command seed inserts a coherent demo dataset into gitstate so the UI is
-// populated for demos and local development.
+// Command seed inserts a coherent, *rich* demo dataset into gitstate so the UI
+// and analytics dashboards look like a real, active engineering org rather than
+// a toy fixture.
 //
 // Usage:
 //
@@ -9,9 +10,20 @@
 //
 //	-reset   wipe all demo data (matched by org slug "acme-dev") before re-seeding.
 //
-// The command is idempotent-ish: without -reset it uses ON CONFLICT DO NOTHING /
-// DO UPDATE for most inserts, so re-running is safe. With -reset it deletes the
-// demo org (cascade clears everything org-scoped) then re-seeds from scratch.
+// Scale (deterministic seed → reproducible):
+//
+//	~12 members · 4 repos (github + gitlab) · 5 projects ·
+//	~3,000 commits over the last ~9 months with weekday-heavy daily clustering
+//	(heatmap-worthy) · ~200 pull requests with varied lead times ·
+//	~120 issues (git + native) · involvement / cycle_times / effort_estimates /
+//	leave / availability / time_entries · an active `team` subscription.
+//
+// The command is idempotent: without -reset it relies on ON CONFLICT DO NOTHING /
+// DO UPDATE for every insert (commits/PRs/issues keyed on deterministic external
+// ids), so re-running is safe. With -reset it deletes the demo org (cascade
+// clears everything org-scoped) then re-seeds from scratch.
+//
+// Every org-scoped insert runs inside db.WithOrg(ctx, orgID, …) so RLS applies.
 //
 // Requires DATABASE_URL to be set (directly or via config.yaml / .env file).
 package main
@@ -20,6 +32,8 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"math"
+	"math/rand"
 	"os"
 	"strings"
 	"time"
@@ -40,12 +54,52 @@ const (
 	demoOrgName  = "Acme Dev Shop"
 	demoPassword = "demo1234"
 	demoPlanKey  = "team"
+
+	// historyDays is how far back synthetic git history reaches (~9 months).
+	historyDays = 274
+
+	// seedRNG makes the whole dataset reproducible across runs.
+	seedRNG = 0x6175746f70696c // "autopil"
 )
 
 // seed-time reference for building relative timestamps.
 var now = time.Now()
 
 func ago(d time.Duration) time.Time { return now.Add(-d) }
+
+// rng is the deterministic source of all randomness in this seeder.
+var rng = rand.New(rand.NewSource(seedRNG))
+
+// ── people ────────────────────────────────────────────────────────────────────
+
+// member describes a synthetic org member and their behavioural profile.
+type member struct {
+	email   string
+	name    string
+	login   string  // git author_login (split-part of email by default)
+	role    string  // owner | admin | member | stakeholder | agent
+	isAgent bool    // contributes is_agent=true commits
+	weight  float64 // relative share of commit/PR volume (0 ⇒ no git output)
+	user    *store.User
+}
+
+// members defines ~12 people: a few heavy builders, a long tail, two PMs/stake-
+// holders, and two bot-ish agent identities. weight drives commit distribution.
+var members = []*member{
+	{email: "demo@gitstate.dev", name: "Alex Rivera", login: "arivera", role: "owner", weight: 1.6},
+	{email: "priya.nair@acme.dev", name: "Priya Nair", login: "pnair", role: "admin", weight: 1.9},
+	{email: "marcus.lee@acme.dev", name: "Marcus Lee", login: "mlee", role: "member", weight: 2.2},
+	{email: "sofia.gomez@acme.dev", name: "Sofia Gómez", login: "sgomez", role: "member", weight: 1.4},
+	{email: "tom.fischer@acme.dev", name: "Tom Fischer", login: "tfischer", role: "member", weight: 1.1},
+	{email: "aisha.khan@acme.dev", name: "Aisha Khan", login: "akhan", role: "member", weight: 1.3},
+	{email: "diego.santos@acme.dev", name: "Diego Santos", login: "dsantos", role: "member", weight: 0.7},
+	{email: "yuki.tanaka@acme.dev", name: "Yuki Tanaka", login: "ytanaka", role: "member", weight: 0.5},
+	{email: "noah.brooks@acme.dev", name: "Noah Brooks", login: "nbrooks", role: "member", weight: 0.35},
+	{email: "riley.pm@acme.dev", name: "Riley Okonkwo", login: "rokonkwo", role: "admin", weight: 0.15},
+	{email: "sam.stake@acme.dev", name: "Sam Whitfield", login: "swhitfield", role: "stakeholder", weight: 0},
+	{email: "claude-bot@acme.dev", name: "Claude Agent", login: "claude-bot", role: "agent", isAgent: true, weight: 1.2},
+	{email: "dependabot@acme.dev", name: "Acme Build Bot", login: "acme-bot", role: "agent", isAgent: true, weight: 0.6},
+}
 
 // ── entry point ───────────────────────────────────────────────────────────────
 
@@ -60,7 +114,6 @@ func main() {
 
 	database, err := db.New(ctx, cfg)
 	if err != nil {
-		// Provide a clear actionable message rather than a panic.
 		fmt.Fprintf(os.Stderr, "seed: cannot connect to database: %v\n", err)
 		fmt.Fprintln(os.Stderr, "  → Set DATABASE_URL or add it to config.yaml / .env")
 		os.Exit(1)
@@ -73,13 +126,15 @@ func main() {
 	}
 
 	// Resolve admin email: SUPER_ADMIN_EMAILS first element, fallback to demo address.
-	adminEmail := "demo@gitstate.dev"
+	adminEmail := members[0].email
 	if cfg.Admin.SuperAdminEmails != "" {
 		parts := strings.Split(cfg.Admin.SuperAdminEmails, ",")
 		if e := strings.TrimSpace(parts[0]); e != "" {
 			adminEmail = e
 		}
 	}
+	members[0].email = adminEmail
+	members[0].login = loginFromEmail(adminEmail)
 
 	s := &seeder{db: database, pool: database.Pool(), ctx: ctx}
 
@@ -88,39 +143,25 @@ func main() {
 		s.must(s.wipeDemo())
 	}
 
-	fmt.Println("→ Seeding demo data …")
+	fmt.Println("→ Seeding rich demo data …")
 
 	// ── 1. Users (not org-scoped) ──────────────────────────────────────────
 	passwordHash, err := auth.HashPassword(demoPassword)
 	must(err, "hash password")
 
-	adminUser := s.upsertUser(adminEmail, "Alex Demo (admin)", passwordHash, true)
-	devUser := s.upsertUser("dev@acme.dev", "Jordan Dev", passwordHash, false)
-	agentUser := s.upsertUser("agent@acme.dev", "Claude Agent", passwordHash, false)
-	stakeholderUser := s.upsertUser("stakeholder@acme.dev", "Sam Stakeholder", passwordHash, false)
-	pmUser := s.upsertUser("pm@acme.dev", "Riley PM", passwordHash, false)
+	for _, m := range members {
+		m.user = s.upsertUser(m.email, m.name, passwordHash, m.email == adminEmail)
+	}
 
 	// ── 2. Organization ────────────────────────────────────────────────────
-	org := s.upsertOrg(demoOrgSlug, demoOrgName, adminUser.ID)
+	org := s.upsertOrg(demoOrgSlug, demoOrgName, members[0].user.ID)
 
 	// ── 3. Org members (inside db.WithOrg for RLS) ────────────────────────
 	s.must(database.WithOrg(ctx, org.ID, func(tx pgx.Tx) error {
-		// admin already added as owner by upsertOrg; ensure idempotent
-		if err := store.AddMember(ctx, tx, org.ID, adminUser.ID, "owner"); err != nil {
-			return err
-		}
-		if err := store.AddMember(ctx, tx, org.ID, devUser.ID, "member"); err != nil {
-			return err
-		}
-		if err := store.AddMember(ctx, tx, org.ID, agentUser.ID, "member"); err != nil {
-			return err
-		}
-		if err := store.AddMember(ctx, tx, org.ID, pmUser.ID, "admin"); err != nil {
-			return err
-		}
-		// stakeholder = free seat (wedge P6)
-		if err := store.AddMember(ctx, tx, org.ID, stakeholderUser.ID, "stakeholder"); err != nil {
-			return err
+		for _, m := range members {
+			if err := store.AddMember(ctx, tx, org.ID, m.user.ID, m.role); err != nil {
+				return err
+			}
 		}
 		return nil
 	}))
@@ -131,132 +172,729 @@ func main() {
 		return store.UpsertSubscription(ctx, tx, org.ID, demoPlanKey, "active", &periodEnd, "")
 	}))
 
-	// ── 5. Repos ──────────────────────────────────────────────────────────
-	// ConnectRepo uses pool directly (no org-scoped tx needed per contract).
-	// We seed via pool after SET LOCAL in a short tx to satisfy RLS.
-	repoGH := s.upsertRepo(org.ID, "github", "acme/frontend", "acme/frontend", "main",
-		"https://github.com/acme/frontend.git")
-	repoGL := s.upsertRepo(org.ID, "gitlab", "acme/api-service", "acme/api-service", "main",
-		"https://gitlab.com/acme/api-service.git")
+	// ── 5. Repos (mix of github + gitlab) ─────────────────────────────────
+	repos := []*store.Repo{
+		s.upsertRepo(org.ID, "github", "acme/frontend", "acme/frontend", "main",
+			"https://github.com/acme/frontend.git"),
+		s.upsertRepo(org.ID, "github", "acme/platform", "acme/platform", "main",
+			"https://github.com/acme/platform.git"),
+		s.upsertRepo(org.ID, "gitlab", "acme/api-service", "acme/api-service", "main",
+			"https://gitlab.com/acme/api-service.git"),
+		s.upsertRepo(org.ID, "gitlab", "acme/data-pipeline", "acme/data-pipeline", "main",
+			"https://gitlab.com/acme/data-pipeline.git"),
+	}
 
 	// ── 6. Projects ───────────────────────────────────────────────────────
-	projWebApp := s.upsertProject(org.ID, "Web App Rewrite", "WEBAPP")
-	projAPI := s.upsertProject(org.ID, "API v2", "APIV2")
+	projects := []*projectRow{
+		s.upsertProject(org.ID, "Web App Rewrite", "WEBAPP"),
+		s.upsertProject(org.ID, "Platform Core", "CORE"),
+		s.upsertProject(org.ID, "API v2", "APIV2"),
+		s.upsertProject(org.ID, "Data Pipeline", "DATA"),
+		s.upsertProject(org.ID, "Growth & Analytics", "GROWTH"),
+	}
 
-	// ── 7. Issues ─────────────────────────────────────────────────────────
-	// Mix of source='git' (synced from GitHub) and source='native' (manually created).
-	ghID := repoGH.ID
-	glID := repoGL.ID
-	issueAuth := s.upsertIssue(org.ID, projWebApp.ID, &ghID, "git", "github", "101",
-		101, "Implement OAuth login flow", "Add Google + Microsoft OAuth",
-		"done", "merged", &devUser.ID, []string{"auth", "feature"})
-	issueDark := s.upsertIssue(org.ID, projWebApp.ID, &ghID, "git", "github", "102",
-		102, "Dark mode support", "System preference detection + toggle",
-		"in_progress", "in_progress", &devUser.ID, []string{"ui"})
-	issuePerf := s.upsertIssue(org.ID, projAPI.ID, &glID, "git", "gitlab", "201",
-		201, "Reduce API latency p99", "Profile slow queries, add indexes",
-		"open", "open", &pmUser.ID, []string{"performance", "backend"})
-	issueDocs := s.upsertIssue(org.ID, projAPI.ID, nil, "native", "", "",
-		0, "Update API documentation", "Swagger + changelog for v2 endpoints",
-		"open", "", &adminUser.ID, []string{"docs"})
-	issueAgent := s.upsertIssue(org.ID, projWebApp.ID, &ghID, "git", "github", "103",
-		103, "Agent: Generate test suite for auth module", "Auto-generated by Claude agent",
-		"done", "merged", &agentUser.ID, []string{"testing", "agent"})
+	// ── 7. Commits (the heatmap fuel) ─────────────────────────────────────
+	commitStats := s.seedCommits(org.ID, repos)
 
-	_ = issueDocs // referenced implicitly via issueIDs in time entries below
+	// ── 8. Pull requests + cycle times + effort estimates ─────────────────
+	prStats := s.seedPullRequests(org.ID, repos, projects)
 
-	// ── 8. Pull requests ──────────────────────────────────────────────────
-	prAuth := s.upsertPR(org.ID, repoGH.ID, "github", "pr-101",
-		101, "feat(auth): OAuth login flow", devUser.Email, "merged",
-		420, 55, 12,
-		ago(14*24*time.Hour), ptr(ago(13*24*time.Hour)))
-	prDark := s.upsertPR(org.ID, repoGH.ID, "github", "pr-102",
-		102, "feat(ui): dark mode toggle", devUser.Email, "open",
-		210, 18, 6,
-		ago(3*24*time.Hour), nil)
-	prAgent := s.upsertPR(org.ID, repoGH.ID, "github", "pr-103",
-		103, "test(auth): agent-generated test suite", agentUser.Email, "merged",
-		880, 12, 24,
-		ago(7*24*time.Hour), ptr(ago(6*24*time.Hour)))
-	prPerf := s.upsertPR(org.ID, repoGL.ID, "gitlab", "pr-201",
-		201, "perf(api): add composite indexes for slow queries", devUser.Email, "merged",
-		95, 10, 3,
-		ago(5*24*time.Hour), ptr(ago(4*24*time.Hour)))
+	// ── 9. Issues (git-synced + native) for the Kanban board ──────────────
+	issueIDs, issueStats := s.seedIssues(org.ID, repos, projects)
 
-	// ── 9. Commits ────────────────────────────────────────────────────────
-	s.upsertCommit(org.ID, repoGH.ID, "a1b2c3d4e5f6aa11", devUser.Email, false,
-		"feat(auth): scaffold OAuth flow", 320, 10, ago(14*24*time.Hour+2*time.Hour))
-	s.upsertCommit(org.ID, repoGH.ID, "b2c3d4e5f6a7bb22", devUser.Email, false,
-		"feat(auth): add Google provider callback", 100, 45, ago(14*24*time.Hour))
-	s.upsertCommit(org.ID, repoGH.ID, "cc3344aabbdd5566", agentUser.Email, true,
-		"test(auth): agent-generated unit tests for oauth handlers", 880, 12, ago(7*24*time.Hour))
-	s.upsertCommit(org.ID, repoGH.ID, "dd4455bbccee6677", devUser.Email, false,
-		"feat(ui): add dark mode toggle component", 210, 18, ago(3*24*time.Hour))
-	s.upsertCommit(org.ID, repoGL.ID, "ee5566ccdeff7788", devUser.Email, false,
-		"perf(api): add composite index on events(org_id, occurred_at)", 95, 10, ago(5*24*time.Hour))
-	s.upsertCommit(org.ID, repoGL.ID, "ff6677ddeeff8899", agentUser.Email, true,
-		"chore(agent): auto-refactor duplicate query helpers", 140, 260, ago(2*24*time.Hour))
+	// ── 10. Involvement texture (per member/project, monthly) ─────────────
+	s.seedInvolvement(org.ID, projects, commitStats)
 
-	// ── 10. Cycle times (DORA) ────────────────────────────────────────────
-	// lead_time_secs = first_commit → merged_at
-	s.must(database.WithOrg(ctx, org.ID, func(tx pgx.Tx) error {
+	// ── 11. Capacity: availability · leave · time entries ─────────────────
+	s.seedAvailability(org.ID)
+	leaveCount := s.seedLeave(org.ID)
+	timeCount := s.seedTimeEntries(org.ID, issueIDs)
+
+	// ── Summary ───────────────────────────────────────────────────────────
+	s.printSummary(org, adminEmail, len(repos), len(projects),
+		commitStats, prStats, issueStats, leaveCount, timeCount)
+}
+
+// ── commit generation ───────────────────────────────────────────────────────
+
+type commitTally struct {
+	total      int
+	agent      int
+	human      int
+	perUser    map[string]int // userID → commit count
+	perUserAdd map[string]int // userID → lines added
+	perUserDel map[string]int // userID → lines deleted
+}
+
+// commitVerbs / scopes / subjects compose plausible conventional-commit messages.
+var (
+	commitTypes = []string{"feat", "fix", "refactor", "chore", "test", "docs", "perf", "style", "build", "ci"}
+	commitScopes = []string{
+		"auth", "api", "ui", "db", "billing", "search", "cache", "metrics",
+		"router", "config", "worker", "pipeline", "schema", "deps", "ci",
+		"dashboard", "export", "webhook", "rls", "session", "queue", "report",
+	}
+	commitSubjects = []string{
+		"handle nil pointer on empty result set",
+		"add pagination to the results endpoint",
+		"wire up the new settings panel",
+		"reduce p99 latency on the hot path",
+		"extract shared validation helper",
+		"upgrade to the latest pinned dependencies",
+		"add integration tests for the sync flow",
+		"document the public API surface",
+		"cache the expensive aggregate query",
+		"fix flaky test in the worker suite",
+		"introduce feature flag for the rollout",
+		"correct timezone handling on reports",
+		"add composite index for slow lookups",
+		"tighten input validation on the form",
+		"refactor the retry/backoff logic",
+		"support dark mode preference",
+		"stream large exports instead of buffering",
+		"add structured logging to the handler",
+		"deduplicate webhook deliveries",
+		"backfill missing created_at timestamps",
+		"split the monolithic service module",
+		"add rate limiting to the public routes",
+		"migrate to the new connection pool",
+		"fix off-by-one in the pagination cursor",
+		"add metrics for queue depth",
+		"improve error messages on 4xx responses",
+		"guard against duplicate submissions",
+		"add a health check for the dependency",
+		"normalize email casing on signup",
+		"prefetch related rows to avoid N+1",
+	}
+	agentSubjects = []string{
+		"auto-generate test suite for the changed module",
+		"apply automated lint fixes across the package",
+		"bump transitive dependencies to patched versions",
+		"regenerate API client from the updated schema",
+		"auto-refactor duplicated query helpers",
+		"format codebase with the new style config",
+		"sweep unused imports and dead code",
+		"update generated mocks after interface change",
+	}
+)
+
+func (s *seeder) commitMessage(m *member) (string, int, int) {
+	typ := commitTypes[rng.Intn(len(commitTypes))]
+	scope := commitScopes[rng.Intn(len(commitScopes))]
+	var subj string
+	if m.isAgent {
+		subj = agentSubjects[rng.Intn(len(agentSubjects))]
+	} else {
+		subj = commitSubjects[rng.Intn(len(commitSubjects))]
+	}
+	msg := fmt.Sprintf("%s(%s): %s", typ, scope, subj)
+
+	// Size distribution: mostly small, occasionally large; agents skew bigger
+	// on additions (generated code) and bigger on deletions for refactors.
+	add := 5 + rng.Intn(60)
+	del := rng.Intn(25)
+	switch {
+	case rng.Float64() < 0.08: // big change
+		add = 200 + rng.Intn(900)
+		del = rng.Intn(400)
+	case rng.Float64() < 0.20: // medium
+		add = 60 + rng.Intn(180)
+		del = rng.Intn(120)
+	}
+	if m.isAgent {
+		add = int(float64(add) * (1.3 + rng.Float64()))
+		if typ == "refactor" || typ == "chore" {
+			del = int(float64(del) * (1.5 + rng.Float64()))
+		}
+	}
+	return msg, add, del
+}
+
+// dayIntensity returns a 0..1 activity multiplier for a given calendar day so
+// the contribution heatmap looks organic: weekday-heavy, weekends sparse,
+// occasional dead days and occasional bursts, plus a slow ramp over the period.
+func dayIntensity(day time.Time, idx, totalDays int) float64 {
+	wd := day.Weekday()
+	base := 1.0
+	switch wd {
+	case time.Saturday:
+		base = 0.18
+	case time.Sunday:
+		base = 0.12
+	case time.Monday:
+		base = 0.85
+	case time.Friday:
+		base = 0.8
+	}
+	// Slow ramp: the org gets busier over time (0.55 → 1.15).
+	ramp := 0.55 + 0.6*float64(idx)/float64(totalDays)
+
+	// Deterministic per-day jitter.
+	j := 0.4 + rng.Float64()*1.2
+
+	// Sprinkle some near-dead days (vacations / quiet weeks).
+	if rng.Float64() < 0.07 {
+		j *= 0.05
+	}
+	// And occasional crunch-day bursts.
+	if rng.Float64() < 0.05 {
+		j *= 2.6
+	}
+	return base * ramp * j
+}
+
+// seedCommits generates ~3k commits across repos/members over historyDays with
+// realistic per-day clustering. Inserted in batched pgx.Batch chunks for speed.
+func (s *seeder) seedCommits(orgID string, repos []*store.Repo) commitTally {
+	tally := commitTally{
+		perUser:    map[string]int{},
+		perUserAdd: map[string]int{},
+		perUserDel: map[string]int{},
+	}
+
+	// Build a weighted picker over members that actually commit.
+	var contributors []*member
+	var weights []float64
+	var wsum float64
+	for _, m := range members {
+		if m.weight <= 0 {
+			continue
+		}
+		contributors = append(contributors, m)
+		wsum += m.weight
+		weights = append(weights, wsum)
+	}
+	pickMember := func() *member {
+		r := rng.Float64() * wsum
+		for i, w := range weights {
+			if r <= w {
+				return contributors[i]
+			}
+		}
+		return contributors[len(contributors)-1]
+	}
+
+	// Each member tends to work in particular repos; precompute a primary repo.
+	primaryRepo := map[string]int{}
+	for _, m := range contributors {
+		primaryRepo[m.user.ID] = rng.Intn(len(repos))
+	}
+
+	type pending struct {
+		repoID, sha, login, email, msg string
+		isAgent                        bool
+		add, del                       int
+		at                             time.Time
+	}
+	var buf []pending
+
+	flush := func() {
+		if len(buf) == 0 {
+			return
+		}
+		s.must(s.db.WithOrg(s.ctx, orgID, func(tx pgx.Tx) error {
+			batch := &pgx.Batch{}
+			const q = `
+				INSERT INTO commits
+				    (org_id, repo_id, sha, author_login, author_email, is_agent,
+				     message, additions, deletions, committed_at)
+				VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+				ON CONFLICT (org_id, repo_id, sha) DO NOTHING`
+			for _, c := range buf {
+				batch.Queue(q, orgID, c.repoID, c.sha, c.login, c.email,
+					c.isAgent, c.msg, c.add, c.del, c.at)
+			}
+			br := tx.SendBatch(s.ctx, batch)
+			defer br.Close()
+			for range buf {
+				if _, err := br.Exec(); err != nil {
+					return fmt.Errorf("seed: batch insert commit: %w", err)
+				}
+			}
+			return nil
+		}))
+		buf = buf[:0]
+	}
+
+	seq := 0
+	start := now.AddDate(0, 0, -historyDays)
+	for d := 0; d < historyDays; d++ {
+		day := start.AddDate(0, 0, d)
+		intensity := dayIntensity(day, d, historyDays)
+		// Target ~11 commits/active-weekday at peak ⇒ 0..~20 per day.
+		count := int(math.Round(intensity * 11))
+		if count < 0 {
+			count = 0
+		}
+		for c := 0; c < count; c++ {
+			m := pickMember()
+
+			// Most commits land in the member's primary repo; some spill over.
+			ri := primaryRepo[m.user.ID]
+			if rng.Float64() < 0.25 {
+				ri = rng.Intn(len(repos))
+			}
+			repo := repos[ri]
+
+			// committed_at: spread across working hours with some late-night.
+			hour := 8 + rng.Intn(11) // 08:00–18:59 mostly
+			if rng.Float64() < 0.12 {
+				hour = rng.Intn(24)
+			}
+			at := time.Date(day.Year(), day.Month(), day.Day(),
+				hour, rng.Intn(60), rng.Intn(60), 0, day.Location())
+
+			msg, add, del := s.commitMessage(m)
+			isAgent := m.isAgent
+			// A small share of human commits are co-authored/automated agent runs.
+			if !isAgent && rng.Float64() < 0.04 {
+				isAgent = true
+			}
+
+			seq++
+			sha := fmt.Sprintf("%040x", rng.Int63()^int64(seq)<<20^int64(d))[:40]
+
+			buf = append(buf, pending{
+				repoID:  repo.ID,
+				sha:     sha,
+				login:   m.login,
+				email:   m.email,
+				isAgent: isAgent,
+				msg:     msg,
+				add:     add,
+				del:     del,
+				at:      at,
+			})
+
+			tally.total++
+			if isAgent {
+				tally.agent++
+			} else {
+				tally.human++
+			}
+			tally.perUser[m.user.ID]++
+			tally.perUserAdd[m.user.ID] += add
+			tally.perUserDel[m.user.ID] += del
+
+			if len(buf) >= 500 {
+				flush()
+			}
+		}
+	}
+	flush()
+	return tally
+}
+
+// ── pull requests ───────────────────────────────────────────────────────────
+
+type prTally struct {
+	total, merged, open, closed int
+	cycleTimes                  int
+	estimates                   int
+}
+
+var prTitles = []string{
+	"feat(auth): OAuth login flow with provider fallback",
+	"fix(api): correct cursor pagination on large datasets",
+	"refactor(billing): extract invoice line builder",
+	"perf(search): add composite index for filtered queries",
+	"feat(ui): dark mode + system preference detection",
+	"chore(deps): bump runtime and test dependencies",
+	"feat(export): streaming CSV export for large reports",
+	"fix(webhook): deduplicate deliveries via idempotency key",
+	"feat(dashboard): contribution heatmap widget",
+	"refactor(worker): retry/backoff with jitter",
+	"feat(rls): per-org row-level isolation policies",
+	"perf(db): replace N+1 with batched prefetch",
+	"fix(session): rotate refresh tokens on reuse detection",
+	"feat(metrics): DORA cycle-time computation",
+	"chore(ci): cache build artifacts between stages",
+	"feat(report): NL→SQL query box with safety layers",
+	"fix(pipeline): handle late-arriving events gracefully",
+	"feat(queue): backpressure on the ingest worker",
+	"refactor(config): derive OAuth enabled from credentials",
+	"feat(billing): per-builder seat pricing model",
+}
+
+// seedPullRequests creates ~200 PRs with varied lead times → feeds cycle-time
+// charts. Most are merged; a fraction stay open; a few are closed-unmerged.
+func (s *seeder) seedPullRequests(orgID string, repos []*store.Repo, projects []*projectRow) prTally {
+	var tally prTally
+
+	// Contributors eligible to author PRs (everyone with weight, plus PMs).
+	var authors []*member
+	for _, m := range members {
+		if m.weight > 0 || m.role == "admin" {
+			authors = append(authors, m)
+		}
+	}
+
+	const targetPRs = 210
+
+	type prGen struct {
+		repoID, platform, extID, title, login, state string
+		number                                       int
+		add, del, files                              int
+		firstCommit                                  time.Time
+		merged                                       *time.Time
+		leadSecs, reviewSecs                          int64
+	}
+	var gens []prGen
+
+	for i := 0; i < targetPRs; i++ {
+		repo := repos[rng.Intn(len(repos))]
+		author := authors[rng.Intn(len(authors))]
+
+		// Spread first_commit_at across the whole history window.
+		daysBack := rng.Intn(historyDays - 1)
+		firstCommit := now.AddDate(0, 0, -daysBack).
+			Add(time.Duration(rng.Intn(10)) * time.Hour)
+
+		add := 20 + rng.Intn(600)
+		del := rng.Intn(300)
+		if rng.Float64() < 0.1 {
+			add += 400 + rng.Intn(1500) // occasional large PR
+		}
+		files := 1 + rng.Intn(18)
+
+		// State distribution: ~80% merged, ~13% open, ~7% closed.
+		var state string
+		var merged *time.Time
+		var leadSecs, reviewSecs int64
+		roll := rng.Float64()
+		switch {
+		case roll < 0.80 && daysBack > 1:
+			state = "merged"
+			tally.merged++
+			// Lead time: bimodal — fast PRs (hours→2d) and slow ones (up to ~3w).
+			var lead time.Duration
+			if rng.Float64() < 0.7 {
+				lead = time.Duration(2+rng.Intn(46)) * time.Hour // 2h–2d
+			} else {
+				lead = time.Duration(2+rng.Intn(19)) * 24 * time.Hour // 2d–3w
+			}
+			// Never merge in the future.
+			mt := firstCommit.Add(lead)
+			if mt.After(now) {
+				mt = now.Add(-time.Duration(rng.Intn(6)) * time.Hour)
+			}
+			merged = &mt
+			leadSecs = int64(mt.Sub(firstCommit).Seconds())
+			if leadSecs < 0 {
+				leadSecs = 3600
+			}
+			reviewSecs = int64(float64(leadSecs) * (0.1 + 0.3*rng.Float64()))
+		case roll < 0.93:
+			state = "open"
+			tally.open++
+		default:
+			state = "closed"
+			tally.closed++
+		}
+
+		gens = append(gens, prGen{
+			repoID:      repo.ID,
+			platform:    repo.Platform,
+			extID:       fmt.Sprintf("pr-%s-%d", repo.Platform, 1000+i),
+			number:      1000 + i,
+			title:       prTitles[rng.Intn(len(prTitles))],
+			login:       author.login,
+			state:       state,
+			add:         add,
+			del:         del,
+			files:       files,
+			firstCommit: firstCommit,
+			merged:      merged,
+			leadSecs:    leadSecs,
+			reviewSecs:  reviewSecs,
+		})
+		tally.total++
+	}
+
+	// Batched insert of PRs, capturing generated ids for cycle_times/estimates.
+	prIDs := make([]string, len(gens))
+	s.must(s.db.WithOrg(s.ctx, orgID, func(tx pgx.Tx) error {
+		const q = `
+			INSERT INTO pull_requests
+			    (org_id, repo_id, platform, external_id, number, title, author_login,
+			     state, additions, deletions, changed_files, first_commit_at, merged_at)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+			ON CONFLICT (org_id, repo_id, external_id) DO UPDATE SET
+			    title = EXCLUDED.title, state = EXCLUDED.state, merged_at = EXCLUDED.merged_at
+			RETURNING id`
+		batch := &pgx.Batch{}
+		for _, g := range gens {
+			batch.Queue(q, orgID, g.repoID, g.platform, g.extID, g.number, g.title,
+				g.login, g.state, g.add, g.del, g.files, g.firstCommit, g.merged)
+		}
+		br := tx.SendBatch(s.ctx, batch)
+		defer br.Close()
+		for i := range gens {
+			if err := br.QueryRow().Scan(&prIDs[i]); err != nil {
+				return fmt.Errorf("seed: batch insert PR: %w", err)
+			}
+		}
+		return nil
+	}))
+
+	// Cycle times for merged PRs (drives DORA / lead-time charts).
+	s.must(s.db.WithOrg(s.ctx, orgID, func(tx pgx.Tx) error {
 		const q = `
 			INSERT INTO cycle_times (org_id, pr_id, lead_time_secs, review_secs, computed_at)
-			VALUES ($1, $2, $3, $4, now())
+			VALUES ($1, $2, $3, $4, $5)
 			ON CONFLICT DO NOTHING`
-		rows := []struct {
-			prID        string
-			leadTimeSec int64
-			reviewSec   int64
-		}{
-			{prAuth.ID, int64((13 * 24 * time.Hour).Seconds()), int64((4 * time.Hour).Seconds())},
-			{prAgent.ID, int64((1 * 24 * time.Hour).Seconds()), int64((30 * time.Minute).Seconds())},
-			{prPerf.ID, int64((1 * 24 * time.Hour).Seconds()), int64((2 * time.Hour).Seconds())},
+		batch := &pgx.Batch{}
+		n := 0
+		for i, g := range gens {
+			if g.state != "merged" {
+				continue
+			}
+			batch.Queue(q, orgID, prIDs[i], g.leadSecs, g.reviewSecs, *g.merged)
+			n++
 		}
-		for _, r := range rows {
-			if _, err := tx.Exec(ctx, q, org.ID, r.prID, r.leadTimeSec, r.reviewSec); err != nil {
-				return fmt.Errorf("seed: insert cycle_time: %w", err)
+		if n == 0 {
+			return nil
+		}
+		br := tx.SendBatch(s.ctx, batch)
+		defer br.Close()
+		for j := 0; j < n; j++ {
+			if _, err := br.Exec(); err != nil {
+				return fmt.Errorf("seed: batch insert cycle_time: %w", err)
 			}
 		}
+		tally.cycleTimes = n
 		return nil
 	}))
 
-	// ── 11. Effort estimates (LLM diff-difficulty) ─────────────────────────
-	s.must(database.WithOrg(ctx, org.ID, func(tx pgx.Tx) error {
+	// Effort estimates for a representative subset of PRs (LLM diff-difficulty).
+	s.must(s.db.WithOrg(s.ctx, orgID, func(tx pgx.Tx) error {
 		const q = `
-			INSERT INTO effort_estimates (org_id, pr_id, issue_id, difficulty, rationale, evidence, model)
-			VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7)
+			INSERT INTO effort_estimates (org_id, pr_id, difficulty, rationale, evidence, model)
+			VALUES ($1, $2, $3, $4, $5::jsonb, $6)
 			ON CONFLICT DO NOTHING`
-		estimates := []struct {
-			prID       *string
-			issueID    *string
-			difficulty float64
-			rationale  string
-			evidence   string
-		}{
-			{&prAuth.ID, &issueAuth.ID, 7.5,
-				"Complex OAuth flow with multiple providers, token rotation, and CSRF protection.",
-				`{"files_changed":12,"additions":420,"deletions":55,"pr_number":101}`},
-			{&prAgent.ID, &issueAgent.ID, 3.0,
-				"Agent-generated test suite; well-structured but straightforward coverage.",
-				`{"files_changed":24,"additions":880,"deletions":12,"pr_number":103,"is_agent":true}`},
-			{&prPerf.ID, &issuePerf.ID, 4.0,
-				"Targeted index additions. Low risk, focused scope.",
-				`{"files_changed":3,"additions":95,"deletions":10,"pr_number":201}`},
+		rationales := []string{
+			"Focused change, low blast radius and good test coverage.",
+			"Touches shared infrastructure; moderate cross-cutting risk.",
+			"Complex flow with several edge cases and external integration.",
+			"Large diff but mechanical; mostly generated or repetitive.",
+			"Performance-sensitive path requiring careful benchmarking.",
 		}
-		for _, e := range estimates {
-			if _, err := tx.Exec(ctx, q,
-				org.ID, e.prID, e.issueID, e.difficulty, e.rationale, e.evidence, "claude-sonnet-4-6",
-			); err != nil {
-				return fmt.Errorf("seed: insert effort_estimate: %w", err)
+		batch := &pgx.Batch{}
+		n := 0
+		for i, g := range gens {
+			if rng.Float64() > 0.55 { // estimate ~55% of PRs
+				continue
 			}
+			diff := 1.5 + rng.Float64()*8.0
+			if g.add+g.del > 800 {
+				diff = math.Min(10, diff+2)
+			}
+			ev := fmt.Sprintf(
+				`{"files_changed":%d,"additions":%d,"deletions":%d,"pr_number":%d}`,
+				g.files, g.add, g.del, g.number)
+			batch.Queue(q, orgID, prIDs[i],
+				math.Round(diff*10)/10,
+				rationales[rng.Intn(len(rationales))], ev, "claude-sonnet-4-6")
+			n++
+		}
+		if n == 0 {
+			return nil
+		}
+		br := tx.SendBatch(s.ctx, batch)
+		defer br.Close()
+		for j := 0; j < n; j++ {
+			if _, err := br.Exec(); err != nil {
+				return fmt.Errorf("seed: batch insert effort_estimate: %w", err)
+			}
+		}
+		tally.estimates = n
+		return nil
+	}))
+
+	_ = projects
+	return tally
+}
+
+// ── issues ──────────────────────────────────────────────────────────────────
+
+type issueTally struct {
+	total, git, native            int
+	open, inProgress, done, closed int
+}
+
+var (
+	issueTitles = []string{
+		"Implement OAuth login flow",
+		"Dark mode support",
+		"Reduce API latency p99",
+		"Update API documentation",
+		"Add contribution heatmap to dashboard",
+		"Fix flaky integration tests",
+		"Migrate jobs to the new queue",
+		"Add export to CSV/Excel",
+		"Improve onboarding empty states",
+		"Rate-limit the public API",
+		"Backfill missing timestamps",
+		"Add audit logging to admin actions",
+		"Support GitLab self-hosted instances",
+		"Webhook delivery retries",
+		"Per-org usage metering",
+		"Kanban drag-and-drop persistence",
+		"Slow query on the reports page",
+		"Add keyboard shortcuts",
+		"Internationalize date formatting",
+		"Cache invalidation on settings change",
+		"Add SSO via Microsoft Entra",
+		"Pagination on the members list",
+		"Investigate memory growth in the worker",
+		"Add health checks to all services",
+		"Schema migration for per-builder pricing",
+	}
+	issueLabels = [][]string{
+		{"feature"}, {"bug"}, {"performance", "backend"}, {"docs"},
+		{"ui", "feature"}, {"testing"}, {"infra"}, {"auth", "security"},
+		{"agent"}, {"good-first-issue"}, {"tech-debt"},
+	}
+	issueStates = []struct {
+		state, derived string
+		weight         float64
+	}{
+		{"done", "merged", 0.34},
+		{"closed", "closed", 0.10},
+		{"in_progress", "in_progress", 0.22},
+		{"open", "open", 0.34},
+	}
+)
+
+func pickIssueState() (string, string) {
+	r := rng.Float64()
+	var acc float64
+	for _, st := range issueStates {
+		acc += st.weight
+		if r <= acc {
+			return st.state, st.derived
+		}
+	}
+	return "open", "open"
+}
+
+// seedIssues creates ~120 issues: a git-synced majority (with derived_state and
+// platform/external_id) plus a native minority, assigned across members and
+// spread across projects/labels so the Kanban board and triage views fill out.
+func (s *seeder) seedIssues(orgID string, repos []*store.Repo, projects []*projectRow) ([]string, issueTally) {
+	var tally issueTally
+
+	// Assignees: builders + PMs (not stakeholders, not bots most of the time).
+	var assignees []*member
+	for _, m := range members {
+		if m.role == "stakeholder" {
+			continue
+		}
+		assignees = append(assignees, m)
+	}
+
+	const targetIssues = 120
+	type issueGen struct {
+		projectID  string
+		repoID     *string
+		source     string
+		platform   string
+		extID      string
+		number     int
+		title      string
+		body       string
+		state      string
+		derived    string
+		assignee   *string
+		labels     []string
+	}
+	var gens []issueGen
+
+	for i := 0; i < targetIssues; i++ {
+		proj := projects[rng.Intn(len(projects))]
+		assignee := assignees[rng.Intn(len(assignees))]
+		state, derived := pickIssueState()
+		labels := issueLabels[rng.Intn(len(issueLabels))]
+		title := fmt.Sprintf("%s (#%d)", issueTitles[rng.Intn(len(issueTitles))], 100+i)
+
+		g := issueGen{
+			projectID: proj.ID,
+			number:    100 + i,
+			title:     title,
+			body:      "Synthetic demo issue generated by the seed command.",
+			state:     state,
+			assignee:  &assignee.user.ID,
+			labels:    labels,
+		}
+		// ~70% git-synced, ~30% native.
+		if rng.Float64() < 0.70 {
+			repo := repos[rng.Intn(len(repos))]
+			g.source = "git"
+			g.platform = repo.Platform
+			g.extID = fmt.Sprintf("%s-issue-%d", repo.Platform, 100+i)
+			g.repoID = &repo.ID
+			g.derived = derived
+			tally.git++
+		} else {
+			g.source = "native"
+			g.derived = ""
+			tally.native++
+		}
+
+		switch state {
+		case "done":
+			tally.done++
+		case "closed":
+			tally.closed++
+		case "in_progress":
+			tally.inProgress++
+		default:
+			tally.open++
+		}
+		gens = append(gens, g)
+		tally.total++
+	}
+
+	issueIDs := make([]string, 0, len(gens))
+	s.must(s.db.WithOrg(s.ctx, orgID, func(tx pgx.Tx) error {
+		const q = `
+			INSERT INTO issues
+			    (org_id, project_id, repo_id, source, platform, external_id, number,
+			     title, body, state, derived_state, assignee_id, labels)
+			VALUES ($1, $2, $3, $4,
+			        NULLIF($5,''), NULLIF($6,''), NULLIF($7::int,0),
+			        $8, $9, $10, NULLIF($11,''), $12, $13)
+			ON CONFLICT (org_id, platform, external_id) WHERE platform IS NOT NULL
+			DO UPDATE SET title = EXCLUDED.title, state = EXCLUDED.state,
+			              derived_state = EXCLUDED.derived_state
+			RETURNING id`
+		batch := &pgx.Batch{}
+		for _, g := range gens {
+			batch.Queue(q, orgID, g.projectID, g.repoID, g.source, g.platform,
+				g.extID, g.number, g.title, g.body, g.state, g.derived,
+				g.assignee, g.labels)
+		}
+		br := tx.SendBatch(s.ctx, batch)
+		defer br.Close()
+		for range gens {
+			var id string
+			if err := br.QueryRow().Scan(&id); err != nil {
+				return fmt.Errorf("seed: batch insert issue: %w", err)
+			}
+			issueIDs = append(issueIDs, id)
 		}
 		return nil
 	}))
 
-	// ── 12. Involvement texture ────────────────────────────────────────────
-	periodStart := now.AddDate(0, -1, 0).Truncate(24 * time.Hour)
-	s.must(database.WithOrg(ctx, org.ID, func(tx pgx.Tx) error {
+	return issueIDs, tally
+}
+
+// ── involvement texture ─────────────────────────────────────────────────────
+
+// seedInvolvement writes monthly involvement rows per member/project derived
+// from their commit volume, so the texture cards (never a single score) fill in.
+func (s *seeder) seedInvolvement(orgID string, projects []*projectRow, ct commitTally) {
+	s.must(s.db.WithOrg(s.ctx, orgID, func(tx pgx.Tx) error {
 		const q = `
 			INSERT INTO involvement
 			    (org_id, project_id, user_id, period_start,
@@ -267,179 +905,253 @@ func main() {
 			    reviews_done     = EXCLUDED.reviews_done,
 			    areas_owned      = EXCLUDED.areas_owned,
 			    dimensions       = EXCLUDED.dimensions`
-		rows := []struct {
-			projectID string
-			userID    string
-			features  int
-			reviews   int
-			areas     int
-			dims      string
-		}{
-			{projWebApp.ID, devUser.ID, 2, 3, 2,
-				`{"commit_count":4,"pr_count":2,"lines_added":740,"lines_deleted":73}`},
-			{projWebApp.ID, agentUser.ID, 1, 0, 1,
-				`{"commit_count":2,"pr_count":1,"lines_added":880,"lines_deleted":12,"is_agent":true}`},
-			{projAPI.ID, devUser.ID, 1, 1, 1,
-				`{"commit_count":1,"pr_count":1,"lines_added":95,"lines_deleted":10}`},
-			{projWebApp.ID, pmUser.ID, 0, 4, 0,
-				`{"reviews_given":4,"comments_left":12,"issues_triaged":3}`},
+
+		batch := &pgx.Batch{}
+		n := 0
+		// Last 9 months, one row per member per (primary) project per month.
+		for monthOffset := 0; monthOffset < 9; monthOffset++ {
+			periodStart := now.AddDate(0, -monthOffset, 0).
+				Truncate(24 * time.Hour)
+			ps := time.Date(periodStart.Year(), periodStart.Month(), 1, 0, 0, 0, 0, periodStart.Location())
+
+			for mi, m := range members {
+				if m.weight <= 0 && m.role != "admin" {
+					continue
+				}
+				// Assign each member a stable home project.
+				proj := projects[mi%len(projects)]
+
+				total := ct.perUser[m.user.ID]
+				// Scale per-month roughly from total/9 with jitter.
+				monthly := int(float64(total)/9.0*(0.6+rng.Float64()*0.9)) + 1
+				features := monthly/12 + rng.Intn(3)
+				reviews := monthly/8 + rng.Intn(5)
+				if m.role == "admin" { // PMs review more, ship less
+					features = rng.Intn(2)
+					reviews = 4 + rng.Intn(10)
+				}
+				areas := 1 + rng.Intn(3)
+				added := ct.perUserAdd[m.user.ID] / 9
+				deleted := ct.perUserDel[m.user.ID] / 9
+				dims := fmt.Sprintf(
+					`{"commit_count":%d,"lines_added":%d,"lines_deleted":%d,"is_agent":%t}`,
+					monthly, added, deleted, m.isAgent)
+
+				batch.Queue(q, orgID, proj.ID, m.user.ID, ps.Format("2006-01-02"),
+					features, reviews, areas, true, dims)
+				n++
+			}
 		}
-		for _, r := range rows {
-			if _, err := tx.Exec(ctx, q,
-				org.ID, r.projectID, r.userID, periodStart.Format("2006-01-02"),
-				r.features, r.reviews, r.areas, true, r.dims,
-			); err != nil {
-				return fmt.Errorf("seed: insert involvement: %w", err)
+		br := tx.SendBatch(s.ctx, batch)
+		defer br.Close()
+		for j := 0; j < n; j++ {
+			if _, err := br.Exec(); err != nil {
+				return fmt.Errorf("seed: batch insert involvement: %w", err)
 			}
 		}
 		return nil
 	}))
+}
 
-	// ── 13. Leave entries ─────────────────────────────────────────────────
-	s.must(database.WithOrg(ctx, org.ID, func(tx pgx.Tx) error {
-		const q = `
-			INSERT INTO leave_entries
-			    (org_id, user_id, kind, start_date, end_date, status, note)
-			VALUES ($1, $2, $3, $4, $5, $6, $7)
-			ON CONFLICT DO NOTHING`
-		// Jordan takes PTO next week; Sam already has a holiday this month.
-		entries := []struct {
-			userID string
-			kind   string
-			start  string
-			end    string
-			status string
-			note   string
-		}{
-			{devUser.ID, "pto",
-				now.AddDate(0, 0, 7).Format("2006-01-02"),
-				now.AddDate(0, 0, 11).Format("2006-01-02"),
-				"approved", "Annual leave"},
-			{stakeholderUser.ID, "holiday",
-				now.AddDate(0, 0, -5).Format("2006-01-02"),
-				now.AddDate(0, 0, -5).Format("2006-01-02"),
-				"approved", "Public holiday"},
-			{pmUser.ID, "sick",
-				now.AddDate(0, 0, -2).Format("2006-01-02"),
-				now.AddDate(0, 0, -2).Format("2006-01-02"),
-				"approved", ""},
-		}
-		for _, e := range entries {
-			if _, err := tx.Exec(ctx, q,
-				org.ID, e.userID, e.kind, e.start, e.end, e.status, e.note,
-			); err != nil {
-				return fmt.Errorf("seed: insert leave_entry: %w", err)
-			}
-		}
-		return nil
-	}))
+// ── capacity ────────────────────────────────────────────────────────────────
 
-	// ── 14. Availability ──────────────────────────────────────────────────
-	s.must(database.WithOrg(ctx, org.ID, func(tx pgx.Tx) error {
+func (s *seeder) seedAvailability(orgID string) {
+	s.must(s.db.WithOrg(s.ctx, orgID, func(tx pgx.Tx) error {
 		const q = `
-			INSERT INTO availability
-			    (org_id, user_id, weekly_hours, working_days, effective_from)
+			INSERT INTO availability (org_id, user_id, weekly_hours, working_days, effective_from)
 			VALUES ($1, $2, $3, $4, $5)
 			ON CONFLICT DO NOTHING`
-		// Mon–Fri (ISO 1–5) for everyone; agent runs 24/7 nominally at 40h
 		std := "{1,2,3,4,5}"
-		epoch := "2026-01-01"
-		avails := []struct {
-			userID string
-			hours  float64
-		}{
-			{adminUser.ID, 40},
-			{devUser.ID, 40},
-			{agentUser.ID, 40},
-			{pmUser.ID, 32}, // part-time PM
-			{stakeholderUser.ID, 0}, // stakeholder: read-only, no capacity tracked
-		}
-		for _, a := range avails {
-			if a.hours == 0 {
-				continue // skip stakeholder — no capacity row needed
+		epoch := now.AddDate(0, 0, -historyDays).Format("2006-01-02")
+		batch := &pgx.Batch{}
+		n := 0
+		for _, m := range members {
+			if m.role == "stakeholder" {
+				continue // read-only seat, no capacity tracked
 			}
-			if _, err := tx.Exec(ctx, q,
-				org.ID, a.userID, a.hours, std, epoch,
-			); err != nil {
-				return fmt.Errorf("seed: insert availability: %w", err)
+			hours := 40.0
+			if m.role == "admin" {
+				hours = 32.0 // part-time PM
+			}
+			batch.Queue(q, orgID, m.user.ID, hours, std, epoch)
+			n++
+		}
+		br := tx.SendBatch(s.ctx, batch)
+		defer br.Close()
+		for j := 0; j < n; j++ {
+			if _, err := br.Exec(); err != nil {
+				return fmt.Errorf("seed: batch insert availability: %w", err)
 			}
 		}
 		return nil
 	}))
+}
 
-	// ── 15. Time entries ──────────────────────────────────────────────────
-	s.must(database.WithOrg(ctx, org.ID, func(tx pgx.Tx) error {
+// seedLeave writes a scattering of PTO / sick / holiday entries across members
+// and across the period so the capacity calendar shows real gaps.
+func (s *seeder) seedLeave(orgID string) int {
+	kinds := []string{"pto", "pto", "pto", "sick", "holiday"}
+	notes := map[string]string{
+		"pto": "Annual leave", "sick": "", "holiday": "Public holiday",
+	}
+	type leave struct {
+		userID, kind, start, end, note string
+	}
+	var rows []leave
+	for _, m := range members {
+		if m.role == "stakeholder" || m.isAgent {
+			continue
+		}
+		// 1–3 leave entries per person across the window.
+		for k := 0; k < 1+rng.Intn(3); k++ {
+			kind := kinds[rng.Intn(len(kinds))]
+			daysBack := rng.Intn(historyDays) - 14 // can be slightly future
+			start := now.AddDate(0, 0, -daysBack)
+			span := 0
+			if kind == "pto" {
+				span = rng.Intn(5)
+			}
+			end := start.AddDate(0, 0, span)
+			rows = append(rows, leave{
+				userID: m.user.ID, kind: kind,
+				start: start.Format("2006-01-02"),
+				end:   end.Format("2006-01-02"),
+				note:  notes[kind],
+			})
+		}
+	}
+	s.must(s.db.WithOrg(s.ctx, orgID, func(tx pgx.Tx) error {
 		const q = `
-			INSERT INTO time_entries
-			    (org_id, user_id, issue_id, source, minutes, occurred_on, note)
+			INSERT INTO leave_entries (org_id, user_id, kind, start_date, end_date, status, note)
+			VALUES ($1, $2, $3, $4, $5, 'approved', $6)
+			ON CONFLICT DO NOTHING`
+		batch := &pgx.Batch{}
+		for _, r := range rows {
+			batch.Queue(q, orgID, r.userID, r.kind, r.start, r.end, r.note)
+		}
+		br := tx.SendBatch(s.ctx, batch)
+		defer br.Close()
+		for range rows {
+			if _, err := br.Exec(); err != nil {
+				return fmt.Errorf("seed: batch insert leave_entry: %w", err)
+			}
+		}
+		return nil
+	}))
+	return len(rows)
+}
+
+// seedTimeEntries logs manual/git time across the last ~8 weeks against issues.
+func (s *seeder) seedTimeEntries(orgID string, issueIDs []string) int {
+	var builders []*member
+	for _, m := range members {
+		if m.role == "stakeholder" {
+			continue
+		}
+		builders = append(builders, m)
+	}
+	type te struct {
+		userID  string
+		issueID *string
+		source  string
+		minutes int
+		day     string
+		note    string
+	}
+	notes := []string{
+		"Implementation session", "Code review + pairing", "Debugging production issue",
+		"Spec + design discussion", "Refactor and cleanup", "Writing tests",
+		"Sprint planning", "Investigation / spike",
+	}
+	var rows []te
+	for d := 0; d < 56; d++ { // last 8 weeks
+		day := now.AddDate(0, 0, -d)
+		if wd := day.Weekday(); wd == time.Saturday || wd == time.Sunday {
+			if rng.Float64() > 0.2 {
+				continue
+			}
+		}
+		entriesToday := 2 + rng.Intn(6)
+		for e := 0; e < entriesToday; e++ {
+			m := builders[rng.Intn(len(builders))]
+			var iss *string
+			if len(issueIDs) > 0 && rng.Float64() < 0.8 {
+				id := issueIDs[rng.Intn(len(issueIDs))]
+				iss = &id
+			}
+			src := "manual"
+			if rng.Float64() < 0.4 {
+				src = "git"
+			}
+			rows = append(rows, te{
+				userID:  m.user.ID,
+				issueID: iss,
+				source:  src,
+				minutes: 30 + rng.Intn(7)*30, // 30–210 min
+				day:     day.Format("2006-01-02"),
+				note:    notes[rng.Intn(len(notes))],
+			})
+		}
+	}
+	s.must(s.db.WithOrg(s.ctx, orgID, func(tx pgx.Tx) error {
+		const q = `
+			INSERT INTO time_entries (org_id, user_id, issue_id, source, minutes, occurred_on, note)
 			VALUES ($1, $2, $3, $4, $5, $6, $7)
 			ON CONFLICT DO NOTHING`
-		today := now.Format("2006-01-02")
-		yesterday := now.AddDate(0, 0, -1).Format("2006-01-02")
-		entries := []struct {
-			userID  string
-			issueID *string
-			source  string
-			minutes int
-			day     string
-			note    string
-		}{
-			{devUser.ID, &issueAuth.ID, "git", 180, yesterday, "OAuth implementation session"},
-			{devUser.ID, &issueDark.ID, "manual", 120, today, "Dark mode styling pass"},
-			{agentUser.ID, &issueAgent.ID, "git", 60, yesterday, "Agent test generation run"},
-			{pmUser.ID, nil, "manual", 90, today, "Sprint planning + stakeholder review"},
-			{devUser.ID, &issuePerf.ID, "git", 150, yesterday, "Index profiling + deployment"},
+		batch := &pgx.Batch{}
+		for _, r := range rows {
+			batch.Queue(q, orgID, r.userID, r.issueID, r.source, r.minutes, r.day, r.note)
 		}
-		for _, e := range entries {
-			if _, err := tx.Exec(ctx, q,
-				org.ID, e.userID, e.issueID, e.source, e.minutes, e.day, e.note,
-			); err != nil {
-				return fmt.Errorf("seed: insert time_entry: %w", err)
+		br := tx.SendBatch(s.ctx, batch)
+		defer br.Close()
+		for range rows {
+			if _, err := br.Exec(); err != nil {
+				return fmt.Errorf("seed: batch insert time_entry: %w", err)
 			}
 		}
 		return nil
 	}))
+	return len(rows)
+}
 
-	// ── Summary ───────────────────────────────────────────────────────────
+// ── summary ─────────────────────────────────────────────────────────────────
+
+func (s *seeder) printSummary(
+	org *store.Org, adminEmail string, repos, projects int,
+	ct commitTally, pr prTally, iss issueTally, leave, timeEntries int,
+) {
 	fmt.Printf(`
-╔══════════════════════════════════════════════════════╗
-║             gitstate demo seed — complete            ║
-╠══════════════════════════════════════════════════════╣
-║  Org:          %s (%s)
-║  Plan:         Pro ($39/mo) — active subscription
+╔═══════════════════════════════════════════════════════════════╗
+║              gitstate demo seed — complete                    ║
+╠═══════════════════════════════════════════════════════════════╣
+║  Org:        %s (%s)
+║  Plan:       Team — active subscription
+║  Members:    %d  (builders + PMs + 1 stakeholder + 2 agents)
 ║
-║  Users created / ensured:
-║    %-40s  owner / super-admin
-║    %-40s  member (dev)
-║    %-40s  member (agent)
-║    %-40s  admin  (PM)
-║    %-40s  stakeholder (free seat)
-║  Password for all:  %s
-║
-║  Repos:   2  (1 GitHub · 1 GitLab)
-║  Projects: 2  (%s · %s)
-║  Issues:  5  (3 git-synced · 2 native)
-║  PRs:     4  (3 merged · 1 open)
-║  Commits: 6  (2 agent · 4 human)
-║  Cycle times: 3  effort estimates: 3
-║  Leave entries: 3  time entries: 5
+║  Repos:      %d   (GitHub + GitLab)
+║  Projects:   %d
+║  Commits:    %d   (%d human · %d agent)  over ~%d months
+║  Pull reqs:  %d   (%d merged · %d open · %d closed)
+║  Cycle times:%d   Effort estimates: %d
+║  Issues:     %d   (%d git · %d native)
+║              open %d · in-progress %d · done %d · closed %d
+║  Leave:      %d   Time entries: %d
 ║
 ║  → Open http://localhost:8080/login
 ║    Email:    %s
 ║    Password: %s
-╚══════════════════════════════════════════════════════╝
+╚═══════════════════════════════════════════════════════════════╝
 `,
-		org.Name, org.Slug,
-		adminEmail, devUser.Email, agentUser.Email, pmUser.Email, stakeholderUser.Email,
-		demoPassword,
-		projWebApp.Name, projAPI.Name,
+		org.Name, org.Slug, len(members),
+		repos, projects,
+		ct.total, ct.human, ct.agent, historyDays/30,
+		pr.total, pr.merged, pr.open, pr.closed,
+		pr.cycleTimes, pr.estimates,
+		iss.total, iss.git, iss.native,
+		iss.open, iss.inProgress, iss.done, iss.closed,
+		leave, timeEntries,
 		adminEmail, demoPassword,
 	)
-
-	// Also echo the PR pair IDs that don't get printed above (keep compiler happy).
-	_ = prDark
-	_ = projWebApp
-	_ = projAPI
 }
 
 // ── helpers ───────────────────────────────────────────────────────────────────
@@ -456,6 +1168,13 @@ func (s *seeder) must(err error) {
 		fmt.Fprintf(os.Stderr, "seed error: %v\n", err)
 		os.Exit(1)
 	}
+}
+
+func loginFromEmail(email string) string {
+	if i := strings.IndexByte(email, '@'); i > 0 {
+		return email[:i]
+	}
+	return email
 }
 
 // wipeDemo deletes the demo org (CASCADE removes everything org-scoped).
@@ -489,11 +1208,10 @@ func (s *seeder) upsertUser(email, name, passwordHash string, isSuperAdmin bool)
 
 // upsertOrg ensures the demo org exists and that ownerUserID is an owner.
 func (s *seeder) upsertOrg(slug, name, ownerUserID string) *store.Org {
-	// Try insert; on conflict just read the existing row.
 	const q = `
 		INSERT INTO organizations (slug, name, plan_key)
 		VALUES ($1, $2, $3)
-		ON CONFLICT (slug) DO UPDATE SET name = EXCLUDED.name
+		ON CONFLICT (slug) DO UPDATE SET name = EXCLUDED.name, plan_key = EXCLUDED.plan_key
 		RETURNING id, slug, name, plan_key, created_at, updated_at`
 
 	var o store.Org
@@ -513,7 +1231,7 @@ func (s *seeder) upsertOrg(slug, name, ownerUserID string) *store.Org {
 	return &o
 }
 
-// upsertRepo connects a repo for the org via the raw pool (ConnectRepo pattern).
+// upsertRepo connects a repo for the org via a short org-scoped tx (RLS).
 func (s *seeder) upsertRepo(orgID, platform, externalID, fullName, branch, cloneURL string) *store.Repo {
 	const q = `
 		INSERT INTO repos (org_id, platform, external_id, full_name, default_branch, clone_url, last_synced_at)
@@ -526,7 +1244,6 @@ func (s *seeder) upsertRepo(orgID, platform, externalID, fullName, branch, clone
 		RETURNING id, org_id, platform, external_id, full_name,
 		          COALESCE(default_branch,''), COALESCE(clone_url,''), created_at`
 
-	// repos has RLS — we need a short org-scoped tx.
 	var r store.Repo
 	err := s.db.WithOrg(s.ctx, orgID, func(tx pgx.Tx) error {
 		return tx.QueryRow(s.ctx, q,
@@ -556,125 +1273,16 @@ func (s *seeder) upsertProject(orgID, name, key string) *projectRow {
 		RETURNING id, name, COALESCE(key,'')`
 
 	var p projectRow
-
 	err := s.db.WithOrg(s.ctx, orgID, func(tx pgx.Tx) error {
 		scanErr := tx.QueryRow(s.ctx, q, orgID, name, key).Scan(&p.ID, &p.Name, &p.Key)
 		if scanErr == nil {
 			return nil // inserted, got the row back
 		}
-		// ON CONFLICT DO NOTHING returns no row — fetch instead.
 		const fetch = `SELECT id, name, COALESCE(key,'') FROM projects WHERE org_id=$1 AND name=$2`
 		return tx.QueryRow(s.ctx, fetch, orgID, name).Scan(&p.ID, &p.Name, &p.Key)
 	})
 	s.must(wrapErr("upsert project "+name, err))
 	return &p
-}
-
-// issueRow holds the minimal fields we need from issues.
-type issueRow struct {
-	ID string
-}
-
-// upsertIssue inserts or updates an issue. repoID and assigneeID may be nil.
-func (s *seeder) upsertIssue(
-	orgID string, projectID string, repoID *string,
-	source, platform, externalID string, number int,
-	title, body, state, derivedState string,
-	assigneeID *string, labels []string,
-) *issueRow {
-	var row issueRow
-	err := s.db.WithOrg(s.ctx, orgID, func(tx pgx.Tx) error {
-		// For native issues (no platform/external_id), try a title-match fetch first
-		// to avoid duplicates on re-run, then insert.
-		if source == "native" {
-			const fetch = `SELECT id FROM issues WHERE org_id=$1 AND title=$2 AND source='native' LIMIT 1`
-			scanErr := tx.QueryRow(s.ctx, fetch, orgID, title).Scan(&row.ID)
-			if scanErr == nil {
-				return nil // already exists
-			}
-		}
-
-		const q = `
-			INSERT INTO issues
-			    (org_id, project_id, repo_id, source, platform, external_id, number,
-			     title, body, state, derived_state, assignee_id, labels)
-			VALUES ($1, $2, $3, $4,
-			        NULLIF($5,''), NULLIF($6,''), NULLIF($7::int,0),
-			        $8, $9, $10, NULLIF($11,''), $12, $13)
-			ON CONFLICT (org_id, platform, external_id) WHERE platform IS NOT NULL
-			DO UPDATE SET
-			    title         = EXCLUDED.title,
-			    state         = EXCLUDED.state,
-			    derived_state = EXCLUDED.derived_state
-			RETURNING id`
-
-		return tx.QueryRow(s.ctx, q,
-			orgID, projectID, repoID,
-			source, platform, externalID, number,
-			title, body, state, derivedState,
-			assigneeID, labels,
-		).Scan(&row.ID)
-	})
-	s.must(wrapErr("upsert issue "+title, err))
-	return &row
-}
-
-// prRow holds the minimal fields we need from pull_requests.
-type prRow struct {
-	ID string
-}
-
-// upsertPR inserts or updates a pull request. mergedAt may be nil for open PRs.
-func (s *seeder) upsertPR(
-	orgID, repoID, platform, externalID string,
-	number int, title, authorLogin, state string,
-	additions, deletions, changedFiles int,
-	firstCommitAt time.Time, mergedAt *time.Time,
-) *prRow {
-	const q = `
-		INSERT INTO pull_requests
-		    (org_id, repo_id, platform, external_id, number, title, author_login,
-		     state, additions, deletions, changed_files, first_commit_at, merged_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
-		ON CONFLICT (org_id, repo_id, external_id) DO UPDATE SET
-		    title       = EXCLUDED.title,
-		    state       = EXCLUDED.state,
-		    merged_at   = EXCLUDED.merged_at
-		RETURNING id`
-
-	var row prRow
-	err := s.db.WithOrg(s.ctx, orgID, func(tx pgx.Tx) error {
-		return tx.QueryRow(s.ctx, q,
-			orgID, repoID, platform, externalID, number, title, authorLogin,
-			state, additions, deletions, changedFiles, firstCommitAt, mergedAt,
-		).Scan(&row.ID)
-	})
-	s.must(wrapErr("upsert PR #"+fmt.Sprint(number), err))
-	return &row
-}
-
-// upsertCommit inserts a commit if not already present.
-func (s *seeder) upsertCommit(
-	orgID, repoID, sha, authorEmail string, isAgent bool,
-	message string, additions, deletions int, committedAt time.Time,
-) {
-	const q = `
-		INSERT INTO commits
-		    (org_id, repo_id, sha, author_login, author_email, is_agent,
-		     message, additions, deletions, committed_at)
-		VALUES ($1, $2, $3,
-		        SPLIT_PART($4, '@', 1), $4, $5,
-		        $6, $7, $8, $9)
-		ON CONFLICT (org_id, repo_id, sha) DO NOTHING`
-
-	err := s.db.WithOrg(s.ctx, orgID, func(tx pgx.Tx) error {
-		_, execErr := tx.Exec(s.ctx, q,
-			orgID, repoID, sha, authorEmail, isAgent,
-			message, additions, deletions, committedAt,
-		)
-		return execErr
-	})
-	s.must(wrapErr("upsert commit "+sha[:8], err))
 }
 
 // ── util ──────────────────────────────────────────────────────────────────────
@@ -692,5 +1300,3 @@ func wrapErr(label string, err error) error {
 	}
 	return fmt.Errorf("seed: %s: %w", label, err)
 }
-
-func ptr[T any](v T) *T { return &v }

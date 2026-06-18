@@ -1,0 +1,223 @@
+// Package analytics — pure unit tests.
+// These exercise the DB-free helper functions (averages, bucketing, date-range
+// defaulting, filter parsing, day parsing) and always run — no DATABASE_URL or
+// Postgres required.
+package analytics
+
+import (
+	"math"
+	"testing"
+	"time"
+)
+
+func TestDeriveAverages(t *testing.T) {
+	tests := []struct {
+		name                                       string
+		commits, activeDays, contributors          int
+		additions, deletions                       int64
+		wantPerDay, wantPerContrib, wantPerCommit  float64
+	}{
+		{
+			name: "typical", commits: 100, activeDays: 20, contributors: 5,
+			additions: 800, deletions: 200,
+			wantPerDay: 5, wantPerContrib: 20, wantPerCommit: 10,
+		},
+		{
+			name: "zero active days → no div-by-zero", commits: 10, activeDays: 0, contributors: 2,
+			additions: 5, deletions: 5,
+			wantPerDay: 0, wantPerContrib: 5, wantPerCommit: 1,
+		},
+		{
+			name: "zero contributors", commits: 10, activeDays: 5, contributors: 0,
+			additions: 0, deletions: 0,
+			wantPerDay: 2, wantPerContrib: 0, wantPerCommit: 0,
+		},
+		{
+			name: "zero commits → lines/commit is 0", commits: 0, activeDays: 0, contributors: 0,
+			additions: 100, deletions: 50,
+			wantPerDay: 0, wantPerContrib: 0, wantPerCommit: 0,
+		},
+		{
+			name: "fractional", commits: 7, activeDays: 2, contributors: 3,
+			additions: 10, deletions: 4,
+			wantPerDay: 3.5, wantPerContrib: 7.0 / 3.0, wantPerCommit: 2,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := DeriveAverages(tt.commits, tt.activeDays, tt.contributors, tt.additions, tt.deletions)
+			if !almostEqual(got.CommitsPerActiveDay, tt.wantPerDay) {
+				t.Errorf("CommitsPerActiveDay = %v, want %v", got.CommitsPerActiveDay, tt.wantPerDay)
+			}
+			if !almostEqual(got.CommitsPerContributor, tt.wantPerContrib) {
+				t.Errorf("CommitsPerContributor = %v, want %v", got.CommitsPerContributor, tt.wantPerContrib)
+			}
+			if !almostEqual(got.LinesPerCommit, tt.wantPerCommit) {
+				t.Errorf("LinesPerCommit = %v, want %v", got.LinesPerCommit, tt.wantPerCommit)
+			}
+		})
+	}
+}
+
+func TestNormalizeBucket(t *testing.T) {
+	tests := []struct {
+		in, want string
+	}{
+		{"day", "day"},
+		{"week", "week"},
+		{"Week", "week"},
+		{" WEEK ", "week"},
+		{"month", "day"},  // unsupported → day
+		{"", "day"},       // empty → day
+		{"garbage", "day"},
+	}
+	for _, tt := range tests {
+		if got := NormalizeBucket(tt.in); got != tt.want {
+			t.Errorf("NormalizeBucket(%q) = %q, want %q", tt.in, got, tt.want)
+		}
+	}
+}
+
+func TestParseFilterDefaulting(t *testing.T) {
+	now := time.Date(2026, 6, 18, 12, 0, 0, 0, time.UTC)
+	nineMoEarlier := now.AddDate(0, -DefaultRangeMonths, 0)
+
+	tests := []struct {
+		name      string
+		in        FilterInput
+		wantFrom  time.Time
+		wantTo    time.Time
+		wantRepo  string
+		wantAuth  string
+		wantError bool
+	}{
+		{
+			name:     "no bounds → last 9 months",
+			in:       FilterInput{},
+			wantFrom: nineMoEarlier, wantTo: now,
+		},
+		{
+			name:     "only from → to defaults to now",
+			in:       FilterInput{From: "2026-01-01"},
+			wantFrom: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), wantTo: now,
+		},
+		{
+			name:     "only to → from defaults to 9mo before to",
+			in:       FilterInput{To: "2026-06-01"},
+			wantFrom: time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC).AddDate(0, -DefaultRangeMonths, 0),
+			wantTo:   time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC),
+		},
+		{
+			name:     "both bounds preserved",
+			in:       FilterInput{From: "2026-01-01", To: "2026-03-01"},
+			wantFrom: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+			wantTo:   time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC),
+		},
+		{
+			name:     "inverted bounds get swapped",
+			in:       FilterInput{From: "2026-03-01", To: "2026-01-01"},
+			wantFrom: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+			wantTo:   time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC),
+		},
+		{
+			name:     "RFC3339 timestamps accepted",
+			in:       FilterInput{From: "2026-01-01T08:30:00Z", To: "2026-02-01T00:00:00Z"},
+			wantFrom: time.Date(2026, 1, 1, 8, 30, 0, 0, time.UTC),
+			wantTo:   time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC),
+		},
+		{
+			name:     "repo + author trimmed and passed through",
+			in:       FilterInput{RepoID: "  repo-123 ", Author: " jane@work "},
+			wantFrom: nineMoEarlier, wantTo: now,
+			wantRepo: "repo-123", wantAuth: "jane@work",
+		},
+		{
+			name:      "bad from date → error",
+			in:        FilterInput{From: "not-a-date"},
+			wantError: true,
+		},
+		{
+			name:      "bad to date → error",
+			in:        FilterInput{To: "2026/01/01"},
+			wantError: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := ParseFilter(tt.in, now)
+			if tt.wantError {
+				if err == nil {
+					t.Fatalf("expected error, got nil (filter=%+v)", got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if !got.From.Equal(tt.wantFrom) {
+				t.Errorf("From = %v, want %v", got.From, tt.wantFrom)
+			}
+			if !got.To.Equal(tt.wantTo) {
+				t.Errorf("To = %v, want %v", got.To, tt.wantTo)
+			}
+			if got.RepoID != tt.wantRepo {
+				t.Errorf("RepoID = %q, want %q", got.RepoID, tt.wantRepo)
+			}
+			if got.Author != tt.wantAuth {
+				t.Errorf("Author = %q, want %q", got.Author, tt.wantAuth)
+			}
+			// Invariant: from must never be after to once defaulted.
+			if got.From.After(got.To) {
+				t.Errorf("invariant violated: From %v after To %v", got.From, got.To)
+			}
+		})
+	}
+}
+
+func TestParseDay(t *testing.T) {
+	tests := []struct {
+		in        string
+		want      time.Time
+		wantError bool
+	}{
+		{in: "2026-06-18", want: time.Date(2026, 6, 18, 0, 0, 0, 0, time.UTC)},
+		{in: " 2026-01-01 ", want: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)},
+		{in: "2026-13-01", wantError: true}, // invalid month
+		{in: "garbage", wantError: true},
+		{in: "", wantError: true},
+		{in: "2026-06-18T00:00:00Z", wantError: true}, // timestamp not accepted here
+	}
+	for _, tt := range tests {
+		t.Run(tt.in, func(t *testing.T) {
+			got, err := ParseDay(tt.in)
+			if tt.wantError {
+				if err == nil {
+					t.Fatalf("expected error for %q, got %v", tt.in, got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error for %q: %v", tt.in, err)
+			}
+			if !got.Equal(tt.want) {
+				t.Errorf("ParseDay(%q) = %v, want %v", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestApplyDefaultsIsPure(t *testing.T) {
+	// applyDefaults must not mutate non-zero bounds.
+	now := time.Date(2026, 6, 18, 0, 0, 0, 0, time.UTC)
+	from := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	to := time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC)
+	out := applyDefaults(Filter{From: from, To: to}, now)
+	if !out.From.Equal(from) || !out.To.Equal(to) {
+		t.Errorf("applyDefaults mutated explicit bounds: got from=%v to=%v", out.From, out.To)
+	}
+}
+
+func almostEqual(a, b float64) bool {
+	return math.Abs(a-b) < 1e-9
+}
