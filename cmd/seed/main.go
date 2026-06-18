@@ -39,7 +39,7 @@ const (
 	demoOrgSlug  = "acme-dev"
 	demoOrgName  = "Acme Dev Shop"
 	demoPassword = "demo1234"
-	demoPlanKey  = "pro"
+	demoPlanKey  = "team"
 )
 
 // seed-time reference for building relative timestamps.

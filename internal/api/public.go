@@ -54,8 +54,14 @@ func RegisterPublicPlans(mux *http.ServeMux, database *db.DB, _ *config.Config) 
 			writeError(w, http.StatusInternalServerError, "could not load plans")
 			return
 		}
-		out := make([]publicPlan, 0, len(plans))
+		// Only the canonical per-builder ladder is public; legacy rows
+		// (hobby/pro/scale/ent) are kept in the table for back-compat but hidden.
+		canonical := map[string]bool{"free": true, "team": true, "business": true, "enterprise": true}
+		out := make([]publicPlan, 0, 4)
 		for _, p := range plans {
+			if !canonical[p.Key] {
+				continue
+			}
 			out = append(out, publicPlan{
 				Key:            p.Key,
 				Name:           p.Name,
