@@ -23,6 +23,7 @@ import {
   GitCommitHorizontal, GitBranch, Users, CalendarDays, Plus, Minus,
   Sigma, TrendingUp, Activity, X, Bot, ArrowUpRight, Folder, Hash, ChevronDown,
   GitPullRequest, GitMerge, Timer, CircleDot, CircleCheck, ListChecks, Cpu, User,
+  BarChart3, AlertTriangle,
 } from 'lucide-react'
 
 // ── small helpers ───────────────────────────────────────────────────────────
@@ -1151,11 +1152,16 @@ export default function Analytics() {
       {/* Header */}
       <Reveal>
         <div className="flex items-start justify-between gap-4">
-          <div>
-            <h1 className="font-display text-2xl font-semibold text-[var(--text)] tracking-tight">Analytics</h1>
-            <p className="text-sm text-[var(--text-faint)] mt-1">
-              Delivery insight across every connected repo, PR, issue and project — derived from git, not self-reported.
-            </p>
+          <div className="flex items-start gap-3">
+            <span className="mt-0.5 grid place-items-center w-9 h-9 rounded-[var(--radius-btn)] bg-[var(--brand-teal)]/10 border border-[var(--brand-teal)]/20 shrink-0">
+              <BarChart3 size={17} className="text-[var(--brand-teal)]" />
+            </span>
+            <div>
+              <h1 className="font-display text-2xl font-semibold text-[var(--text)] tracking-tight">Analytics</h1>
+              <p className="text-sm text-[var(--text-faint)] mt-1">
+                Delivery insight across every connected repo, PR, issue and project — derived from git, not self-reported.
+              </p>
+            </div>
           </div>
           <a
             href="#leaderboard"
@@ -1176,8 +1182,14 @@ export default function Analytics() {
       </Reveal>
 
       {sumError && (
-        <Card className="border-red-500/20 bg-red-500/[0.04]">
-          <p className="text-sm text-red-400">{sumError} — the backend may not be running yet.</p>
+        <Card className="border-red-500/25 bg-red-500/[0.04]">
+          <div className="flex items-start gap-3">
+            <AlertTriangle size={16} className="text-red-400 mt-0.5 shrink-0" />
+            <div>
+              <p className="text-sm text-red-400">{sumError}</p>
+              <p className="text-xs text-[var(--text-faint)] mt-0.5">The backend may not be running yet.</p>
+            </div>
+          </div>
         </Card>
       )}
 

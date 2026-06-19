@@ -53,11 +53,19 @@ import (
 
 // ── Dashboard types ────────────────────────────────────────────────────────────
 
+// CycleTrendPoint is one point on the dashboard's lead-time trend (days per PR,
+// oldest→newest), matching the frontend's {date, days} shape.
+type CycleTrendPoint struct {
+	Date string  `json:"date"`
+	Days float64 `json:"days"`
+}
+
 // DashboardResult is the response for GET /api/reports/dashboard.
 type DashboardResult struct {
-	StateCounts    store.IssueStateCounts    `json:"stateCounts"`
-	Throughput     []store.ThroughputPoint   `json:"throughput"`
+	StateCounts    store.IssueStateCounts     `json:"stateCounts"`
+	Throughput     []store.ThroughputPoint    `json:"throughput"`
 	RecentActivity []store.RecentActivityItem `json:"recentActivity"`
+	CycleTrend     []CycleTrendPoint          `json:"cycleTrend"`
 	// SynthesizedStatus is the LLM-written prose summary (empty when LLM is not
 	// configured or the caller did not request synthesis).
 	SynthesizedStatus string `json:"synthesizedStatus,omitempty"`
@@ -119,6 +127,26 @@ func (s *Service) Dashboard(ctx context.Context, orgID string, synthesize bool) 
 		if err != nil {
 			return err
 		}
+
+		// Lead-time trend for the dashboard sparkline: pull cycle_times (RLS-scoped
+		// via tx) and map to {date, days}, oldest→newest. ListCycleTimes returns
+		// newest-first, so we reverse into chronological order for the chart.
+		cts, err := store.ListCycleTimes(ctx, tx, orgID, store.CycleTimeFilter{})
+		if err != nil {
+			return err
+		}
+		trend := make([]CycleTrendPoint, 0, len(cts))
+		for i := len(cts) - 1; i >= 0; i-- {
+			ct := cts[i]
+			if ct.LeadTimeSecs == nil {
+				continue
+			}
+			trend = append(trend, CycleTrendPoint{
+				Date: ct.ComputedAt.UTC().Format("2006-01-02"),
+				Days: float64(*ct.LeadTimeSecs) / 86400.0,
+			})
+		}
+		result.CycleTrend = trend
 
 		return nil
 	})

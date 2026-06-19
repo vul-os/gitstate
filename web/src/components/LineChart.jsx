@@ -1,5 +1,5 @@
 /**
- * Hand-rolled SVG line chart — no external deps.
+ * Hand-rolled SVG line chart — no external deps. Theme-aware (dark + light).
  * Props:
  *   points: Array<{ x: number|string, y: number, label?: string }>
  *   width: number (default 600)
@@ -10,8 +10,9 @@
  *   yLabel: (value) => string  — optional y axis tick formatter
  *   tooltip: (point) => string — optional tooltip text
  *   emptyText: string
+ *   emptyIcon: ReactNode — optional icon shown above empty text
  */
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useId } from 'react'
 
 const PAD = { top: 16, right: 20, bottom: 36, left: 48 }
 
@@ -22,13 +23,15 @@ export function LineChart({
   width = 600,
   height = 200,
   color = '#2DD4BF',
-  areaColor = 'rgba(45,212,191,0.07)',
+  areaColor,
   xLabel,
   yLabel,
   tooltip,
   emptyText = 'No data yet.',
+  emptyIcon = null,
 }) {
   const [hovered, setHovered] = useState(null)
+  const gid = useId().replace(/:/g, '')
 
   const W = width - PAD.left - PAD.right
   const H = height - PAD.top - PAD.bottom
@@ -36,7 +39,9 @@ export function LineChart({
   const handleMouseMove = useCallback((e) => {
     const svg = e.currentTarget
     const rect = svg.getBoundingClientRect()
-    const mouseX = e.clientX - rect.left - PAD.left
+    // account for responsive scaling (svg may render narrower than its width attr)
+    const scale = rect.width / svg.viewBox.baseVal.width || 1
+    const mouseX = (e.clientX - rect.left) / scale - PAD.left
     const n = svg.dataset.pointCount ? Number(svg.dataset.pointCount) : 1
     const w = svg.dataset.innerW   ? Number(svg.dataset.innerW)    : 1
     const idx = clamp(Math.round(mouseX / (w / Math.max(n - 1, 1))), 0, n - 1)
@@ -46,16 +51,17 @@ export function LineChart({
   if (!points.length) {
     return (
       <div
-        className="flex items-center justify-center rounded-[var(--radius-card)] text-xs text-[var(--text-faint)] font-mono border border-dashed border-[var(--border)]"
-        style={{ width, height, background: 'var(--bg)' }}
+        className="flex flex-col items-center justify-center gap-2 rounded-[var(--radius-card)] text-center text-xs text-[var(--text-faint)] font-mono border border-dashed border-[var(--border)]"
+        style={{ width: '100%', maxWidth: width, height, background: 'var(--bg)' }}
       >
-        {emptyText}
+        {emptyIcon}
+        <span className="max-w-[80%]">{emptyText}</span>
       </div>
     )
   }
 
   const ys = points.map(p => p.y)
-  const yMin = Math.min(...ys)
+  const yMin = Math.min(...ys, 0)
   const yMax = Math.max(...ys)
   const yRange = yMax - yMin || 1
 
@@ -84,30 +90,41 @@ export function LineChart({
     .filter(({ i }) => i === 0 || i === points.length - 1 || i % step === 0)
 
   const hovPoint = hovered != null ? points[hovered] : null
+  const fillArea = areaColor || `url(#area-${gid})`
 
   return (
-    <div style={{ position: 'relative', width, height }}>
+    <div style={{ position: 'relative', width: '100%', maxWidth: width, height }}>
       <svg
-        width={width}
+        viewBox={`0 0 ${width} ${height}`}
+        width="100%"
         height={height}
+        preserveAspectRatio="xMidYMid meet"
         data-point-count={points.length}
         data-inner-w={W}
         onMouseMove={handleMouseMove}
         onMouseLeave={() => setHovered(null)}
-        style={{ display: 'block', cursor: 'crosshair' }}
+        style={{ display: 'block', cursor: 'crosshair', maxWidth: '100%' }}
       >
+        <defs>
+          <linearGradient id={`area-${gid}`} x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor={color} stopOpacity="0.22" />
+            <stop offset="100%" stopColor={color} stopOpacity="0.01" />
+          </linearGradient>
+        </defs>
+
         {/* Y-axis grid lines */}
         {yTicks.map(({ v, y }, i) => (
           <g key={i}>
             <line
               x1={PAD.left} y1={y.toFixed(1)}
               x2={PAD.left + W} y2={y.toFixed(1)}
-              stroke="#1e2d45" strokeWidth="1"
+              stroke="var(--border)" strokeWidth="1"
+              strokeDasharray={i === 0 ? undefined : '2 3'}
             />
             <text
               x={PAD.left - 8} y={y.toFixed(1)}
               textAnchor="end" dominantBaseline="middle"
-              fontSize="10" fill="#64748b"
+              fontSize="10" className="font-mono" fill="var(--text-faint)"
             >
               {yLabel ? yLabel(v) : Math.round(v)}
             </text>
@@ -115,7 +132,7 @@ export function LineChart({
         ))}
 
         {/* Area fill */}
-        <path d={areaD} fill={areaColor} />
+        <path d={areaD} fill={fillArea} />
 
         {/* Line */}
         <path
@@ -133,7 +150,7 @@ export function LineChart({
             key={i}
             x={toX(i).toFixed(1)} y={PAD.top + H + 18}
             textAnchor="middle"
-            fontSize="10" fill="#64748b"
+            fontSize="10" className="font-mono" fill="var(--text-faint)"
           >
             {xLabel ? xLabel(p) : p.x}
           </text>
@@ -160,11 +177,11 @@ export function LineChart({
         <div
           style={{
             position: 'absolute',
-            left: Math.min(toX(hovered) + 10, width - 140),
-            top: Math.max(toY(hovPoint.y) - 36, 0),
+            left: clamp(toX(hovered) + 10, 0, width - 160),
+            top: clamp(toY(hovPoint.y) - 38, 0, height - 30),
             pointerEvents: 'none',
-            background: 'var(--bg-surface3)',
-            border: '1px solid var(--border)',
+            background: 'var(--bg)',
+            border: '1px solid var(--border2)',
             borderRadius: 'var(--radius-badge)',
             padding: '5px 10px',
             fontSize: 11,
@@ -172,6 +189,10 @@ export function LineChart({
             whiteSpace: 'nowrap',
             zIndex: 10,
             fontFamily: 'var(--font-mono)',
+            boxShadow: 'var(--shadow-float)',
+            maxWidth: 220,
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
           }}
         >
           {tooltip ? tooltip(hovPoint) : `${yLabel ? yLabel(hovPoint.y) : hovPoint.y}`}

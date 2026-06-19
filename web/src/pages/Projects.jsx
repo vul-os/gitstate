@@ -7,6 +7,7 @@ import { useNavigate } from 'react-router-dom'
 import { useProjects } from '../lib/useProjects.js'
 import { BurndownChart } from '../components/BurndownChart.jsx'
 import { Card, Badge, Button } from '../components/ui/index.js'
+import { Reveal, RevealList } from '../components/Reveal.jsx'
 
 function Spinner() {
   return (
@@ -146,11 +147,23 @@ function ProjectCard({ project, selected, onClick }) {
         <Badge color={badgeColor}>{project.status ?? 'active'}</Badge>
       </div>
 
-      <div className="flex items-center gap-4 text-xs font-mono text-[var(--text-faint)]">
-        {project.issueCount != null && <span>{project.issueCount} issues</span>}
-        {project.repoCount != null && <span>{project.repoCount} repos</span>}
+      <div className="flex items-center gap-4 text-xs font-mono text-[var(--text-faint)] pt-3 mt-1 border-t border-[var(--border)]">
+        <span className="flex items-center gap-1.5">
+          <svg width="12" height="12" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2" className="shrink-0">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M9 12h3.75M9 15h3.75M9 18h3.75m3 .75H18a2.25 2.25 0 0 0 2.25-2.25V6.108c0-1.135-.845-2.098-1.976-2.192a48.424 48.424 0 0 0-1.123-.08m-5.801 0c-.065.21-.1.433-.1.664 0 .414.336.75.75.75h4.5a.75.75 0 0 0 .75-.75 2.25 2.25 0 0 0-.1-.664m-5.8 0A2.251 2.251 0 0 1 13.5 2.25H15c1.012 0 1.867.668 2.15 1.586m-5.8 0c-.376.023-.75.05-1.124.08C9.095 4.01 8.25 4.973 8.25 6.108V8.25m0 0H4.875c-.621 0-1.125.504-1.125 1.125v11.25c0 .621.504 1.125 1.125 1.125h9.75c.621 0 1.125-.504 1.125-1.125V9.375c0-.621-.504-1.125-1.125-1.125H8.25Z" />
+          </svg>
+          {project.issueCount != null ? `${project.issueCount} issues` : 'No issues yet'}
+        </span>
+        {project.repoCount != null && (
+          <span className="flex items-center gap-1.5">
+            <svg width="12" height="12" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2" className="shrink-0">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M6 3v12m0 0a3 3 0 1 0 0 6 3 3 0 0 0 0-6Zm0-12a3 3 0 1 0 0-.001M18 9a3 3 0 1 0 0-6 3 3 0 0 0 0 6Zm0 0c0 3-3 4.5-6 6" />
+            </svg>
+            {project.repoCount} repos
+          </span>
+        )}
         {project.updatedAt && (
-          <span className="ml-auto">{new Date(project.updatedAt).toLocaleDateString()}</span>
+          <span className="ml-auto text-[var(--text-faint)]">{new Date(project.updatedAt).toLocaleDateString()}</span>
         )}
       </div>
     </Card>
@@ -170,23 +183,25 @@ export default function Projects() {
   return (
     <div className="w-full">
       {/* Header */}
-      <div className="flex items-center justify-between mb-8">
-        <div>
-          <h1 className="font-display text-2xl font-semibold text-[var(--text)] tracking-tight">Projects</h1>
-          <p className="text-sm text-[var(--text-faint)] mt-1">Group issues and repos · filter the board by project.</p>
+      <Reveal>
+        <div className="flex items-end justify-between mb-8 gap-4">
+          <div>
+            <h1 className="font-display text-2xl font-semibold text-[var(--text)] tracking-tight">Projects</h1>
+            <p className="text-sm text-[var(--text-faint)] mt-1">Group issues and repos · filter the board by project.</p>
+          </div>
+          <Button
+            variant="primary"
+            onClick={() => setShowCreate(true)}
+            leftIcon={
+              <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+              </svg>
+            }
+          >
+            New project
+          </Button>
         </div>
-        <Button
-          variant="primary"
-          onClick={() => setShowCreate(true)}
-          leftIcon={
-            <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
-            </svg>
-          }
-        >
-          New project
-        </Button>
-      </div>
+      </Reveal>
 
       {/* Loading */}
       {loading && (
@@ -223,7 +238,7 @@ export default function Projects() {
       {/* Project grid */}
       {!loading && projects.length > 0 && (
         <>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <RevealList className="grid grid-cols-1 md:grid-cols-2 gap-4" staggerDelay={0.05}>
             {projects.map(p => (
               <ProjectCard
                 key={p.id}
@@ -232,10 +247,11 @@ export default function Projects() {
                 onClick={handleProjectClick}
               />
             ))}
-          </div>
+          </RevealList>
 
           {/* Burndown panel */}
           {selectedProjectId && (
+            <Reveal key={selectedProjectId}>
             <Card padding="lg" className="mt-4">
               <div className="flex items-center justify-between mb-3">
                 <h2 className="text-sm font-semibold text-[var(--text)]">
@@ -261,6 +277,7 @@ export default function Projects() {
               </div>
               <BurndownChart projectId={selectedProjectId} />
             </Card>
+            </Reveal>
           )}
         </>
       )}

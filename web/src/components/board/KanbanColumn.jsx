@@ -6,19 +6,23 @@ import { useDroppable } from '@dnd-kit/core'
 import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable'
 import { KanbanCard } from './KanbanCard.jsx'
 
-function ColumnEmptyState({ label }) {
+function ColumnEmptyState({ label, isOver, color }) {
   return (
-    <div className="flex flex-col items-center justify-center py-10 gap-2">
+    <div className="flex flex-col items-center justify-center py-10 gap-2 transition-opacity duration-150">
       <div
-        className="w-8 h-8 rounded-lg flex items-center justify-center mb-1"
-        style={{ background: 'rgba(30,45,69,0.6)', border: '1px dashed #243352' }}
+        className="w-8 h-8 rounded-lg flex items-center justify-center mb-1 border border-dashed transition-colors duration-150"
+        style={{
+          background: isOver ? `${color}14` : 'var(--bg-surface3)',
+          borderColor: isOver ? `${color}66` : 'var(--border2)',
+        }}
       >
-        <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="#334155" strokeWidth="1.5">
+        <svg width="14" height="14" fill="none" viewBox="0 0 24 24" strokeWidth="1.5"
+          style={{ color: isOver ? color : 'var(--text-faint)' }} stroke="currentColor">
           <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
         </svg>
       </div>
       <p className="text-[11px] font-mono text-[var(--text-faint)] text-center leading-snug">
-        no {label.toLowerCase()} issues
+        {isOver ? 'drop here' : `no ${label.toLowerCase()} issues`}
       </p>
     </div>
   )
@@ -48,16 +52,17 @@ export function KanbanColumn({ col, issues, onCardClick, isOver }) {
       <SortableContext items={issueIds} strategy={verticalListSortingStrategy}>
         <div
           ref={setNodeRef}
-          className="flex flex-col gap-2.5 rounded-xl p-2 overflow-y-auto flex-1 transition-colors duration-150"
+          className="flex flex-col gap-2.5 rounded-xl p-2 overflow-y-auto flex-1 transition-[background,border-color,box-shadow] duration-150"
           style={{
-            background: isOver ? `${col.color}0d` : 'rgba(13,22,40,0.45)',
-            border: `1px solid ${isOver ? col.color + '40' : '#1e2d45'}`,
+            backgroundColor: isOver ? `${col.color}10` : 'color-mix(in srgb, var(--bg-surface2) 45%, transparent)',
+            border: `1px solid ${isOver ? col.color + '55' : 'var(--border)'}`,
+            boxShadow: isOver ? `inset 0 0 0 1px ${col.color}22` : 'none',
             minHeight: 120,
             maxHeight: 'calc(100vh - 280px)',
           }}
         >
           {issues.length === 0 ? (
-            <ColumnEmptyState label={col.label} />
+            <ColumnEmptyState label={col.label} isOver={isOver} color={col.color} />
           ) : (
             issues.map(issue => (
               <KanbanCard key={issue.id} issue={issue} onClick={onCardClick} />

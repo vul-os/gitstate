@@ -119,7 +119,7 @@ function fmtRate(rate) {
 const PLAN_ORDER = ['free', 'hobby', 'pro', 'team', 'scale', 'ent']
 
 const PLAN_ACCENTS = {
-  free:  { border: '#1e2d45', badge: '#334155',  text: '#94a3b8' },
+  free:  { border: 'var(--border2)', badge: '#334155',  text: 'var(--text-muted)' },
   hobby: { border: '#6366F1', badge: '#4f46e5',  text: '#a5b4fc' },
   pro:   { border: '#2DD4BF', badge: '#0d9488',  text: '#2DD4BF' },
   team:  { border: '#f59e0b', badge: '#d97706',  text: '#fbbf24' },
@@ -142,7 +142,7 @@ function PlanBadge({ planKey, isCurrent }) {
 
 function FeatureLine({ icon, text, dim }) {
   return (
-    <div className={`flex items-start gap-2 text-xs ${dim ? 'text-[#334155]' : 'text-[#64748b]'}`}>
+    <div className={`flex items-start gap-2 text-xs ${dim ? 'text-[var(--text-faint)]' : 'text-[var(--text-muted)]'}`}>
       <span className="mt-0.5 shrink-0">{icon}</span>
       <span>{text}</span>
     </div>
@@ -156,7 +156,7 @@ const CheckIcon = (
 )
 
 const DashIcon = (
-  <svg width="13" height="13" fill="none" viewBox="0 0 24 24" stroke="#334155" strokeWidth="2">
+  <svg width="13" height="13" fill="none" viewBox="0 0 24 24" stroke="var(--text-faint)" strokeWidth="2">
     <path strokeLinecap="round" strokeLinejoin="round" d="M5 12h14" />
   </svg>
 )
@@ -621,7 +621,7 @@ function GitEvidenceChip({ evidence }) {
       {repoName && (
         <span
           className="text-[10px] font-mono px-1.5 py-0.5 rounded"
-          style={{ background: '#0d1628', color: '#6366F1', border: '1px solid rgba(99,102,241,0.2)' }}
+          style={{ background: 'rgba(99,102,241,0.08)', color: '#6366F1', border: '1px solid rgba(99,102,241,0.2)' }}
         >
           {repoName}
         </span>
@@ -629,7 +629,7 @@ function GitEvidenceChip({ evidence }) {
       {displaySha && (
         <span
           className="text-[10px] font-mono px-1.5 py-0.5 rounded"
-          style={{ background: '#0d1628', color: '#2DD4BF', border: '1px solid rgba(45,212,191,0.2)' }}
+          style={{ background: 'rgba(45,212,191,0.1)', color: '#0d9488', border: '1px solid rgba(45,212,191,0.25)' }}
         >
           {displaySha}
         </span>
@@ -637,7 +637,7 @@ function GitEvidenceChip({ evidence }) {
       {prNumber && (
         <span
           className="text-[10px] font-mono px-1.5 py-0.5 rounded"
-          style={{ background: '#0d1628', color: '#a5b4fc', border: '1px solid rgba(165,180,252,0.2)' }}
+          style={{ background: 'rgba(129,140,248,0.1)', color: '#6366F1', border: '1px solid rgba(165,180,252,0.2)' }}
         >
           PR #{prNumber}
         </span>
@@ -730,7 +730,7 @@ function InvoiceDetailPanel({ id, onBack }) {
       {/* Back */}
       <button
         onClick={onBack}
-        className="flex items-center gap-1.5 text-xs text-[#64748b] hover:text-[#e2e8f0] transition-colors"
+        className="flex items-center gap-1.5 text-xs text-[var(--text-muted)] hover:text-[var(--text)] transition-colors"
       >
         <svg width="13" height="13" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
           <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5 8.25 12l7.5-7.5" />
@@ -1019,8 +1019,8 @@ export default function Billing() {
   return (
     <div className="w-full">
       <div className="mb-8">
-        <h1 className="text-2xl font-bold text-[var(--text)] tracking-tight font-display">Billing</h1>
-        <p className="text-sm text-[var(--text-muted)] mt-1">Plan, usage, and evidence-backed invoices.</p>
+        <h1 className="text-2xl font-semibold text-[var(--text)] tracking-tight font-display">Billing</h1>
+        <p className="text-sm text-[var(--text-faint)] mt-1">Plan, usage, and evidence-backed invoices.</p>
       </div>
 
       <TabBar active={tab} onChange={handleTabChange} />

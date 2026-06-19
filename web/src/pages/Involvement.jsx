@@ -7,7 +7,7 @@
  * Data from GET /api/metrics/involvement?project=&period=
  */
 import { useState } from 'react'
-import { RefreshCw, Info, Users, GitMerge, Eye, FolderGit2 } from 'lucide-react'
+import { RefreshCw, Info, Users, GitMerge, Eye, FolderGit2, AlertTriangle, RotateCw } from 'lucide-react'
 import { useInvolvement } from '../lib/useInvolvement.js'
 import { useProjects } from '../lib/useProjects.js'
 import { Card, Badge, Button } from '../components/ui/index.js'
@@ -32,7 +32,7 @@ function DimBar({ label, value, max, color, icon: Icon }) {
         {Icon && <Icon size={11} className="opacity-70" style={{ color }} />}
         {label}
       </span>
-      <div className="flex-1 h-1.5 rounded-full bg-[var(--border)] overflow-hidden">
+      <div className="flex-1 h-1.5 rounded-full bg-[var(--bg-surface3)] overflow-hidden">
         <div
           className="h-full rounded-full transition-all duration-500"
           style={{ width: `${pct}%`, background: color }}
@@ -132,12 +132,17 @@ export default function Involvement() {
     <div className="w-full space-y-6">
       {/* Header */}
       <Reveal>
-        <div>
-          <h1 className="font-display text-2xl font-semibold text-[var(--text)] tracking-tight">Involvement</h1>
-          {/* Honest caption — not a score */}
-          <p className="text-sm text-[var(--text-faint)] mt-1">
-            Involvement across dimensions — not a productivity score.
-          </p>
+        <div className="flex items-start gap-3">
+          <span className="mt-0.5 grid place-items-center w-9 h-9 rounded-[var(--radius-btn)] bg-[var(--brand-indigo)]/10 border border-[var(--brand-indigo)]/20 shrink-0">
+            <Users size={17} className="text-[var(--brand-indigo)]" />
+          </span>
+          <div>
+            <h1 className="font-display text-2xl font-semibold text-[var(--text)] tracking-tight">Involvement</h1>
+            {/* Honest caption — not a score */}
+            <p className="text-sm text-[var(--text-faint)] mt-1">
+              Involvement across dimensions — not a productivity score.
+            </p>
+          </div>
         </div>
       </Reveal>
 
@@ -147,7 +152,7 @@ export default function Involvement() {
           <div className="flex items-start gap-3">
             <Info size={15} className="mt-0.5 shrink-0 text-[var(--brand-indigo)]" />
             <p className="text-xs text-[var(--text-muted)] leading-relaxed">
-              This view shows <strong className="text-[#c7d2fe]">texture across multiple dimensions</strong> — features shipped, review load, areas owned, and activity — so seniors, mentors, and reviewers are visible alongside feature authors. No single number, no ranking, no formula.
+              This view shows <strong className="text-[var(--brand-indigo)] font-semibold">texture across multiple dimensions</strong> — features shipped, review load, areas owned, and activity — so seniors, mentors, and reviewers are visible alongside feature authors. No single number, no ranking, no formula.
             </p>
           </div>
         </Card>
@@ -206,9 +211,18 @@ export default function Involvement() {
 
       {/* Error */}
       {error && (
-        <Card className="border-red-500/20 bg-red-500/[0.04]">
-          <p className="text-sm text-red-400">{error} — the backend may not be running yet.</p>
-        </Card>
+        <Reveal>
+          <Card className="border-red-500/25 bg-red-500/[0.04]">
+            <div className="flex items-start gap-3">
+              <AlertTriangle size={16} className="text-red-400 mt-0.5 shrink-0" />
+              <div className="flex-1">
+                <p className="text-sm text-red-400">{error}</p>
+                <p className="text-xs text-[var(--text-faint)] mt-0.5">The backend may not be running yet.</p>
+              </div>
+              <Button variant="outline" size="xs" onClick={refetch} leftIcon={<RotateCw size={12} />}>Retry</Button>
+            </div>
+          </Card>
+        </Reveal>
       )}
 
       {/* Loading skeleton */}

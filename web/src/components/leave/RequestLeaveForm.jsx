@@ -5,6 +5,7 @@
 import { useState } from 'react'
 import { Loader2, Plus, X, AlertCircle, Sun, Moon } from 'lucide-react'
 import { Card, Button } from '../ui/index.js'
+import { Reveal } from '../Reveal.jsx'
 
 const inputCls =
   'bg-[var(--bg)] text-sm text-[var(--text)] rounded-[var(--radius-btn)] px-3 py-2 border border-[var(--border)] outline-none focus:border-[var(--brand-teal)]/50 focus:ring-2 focus:ring-[var(--brand-teal)]/15 transition-all w-full'
@@ -55,18 +56,21 @@ export function RequestLeaveForm({ types = [], members = [], canPickMember = fal
   }
 
   return (
-    <div>
-      <Button
-        variant={open ? 'outline' : 'primary'}
-        size="sm"
-        onClick={() => setOpen(v => !v)}
-        leftIcon={open ? <X size={13} /> : <Plus size={13} strokeWidth={2.5} />}
-      >
-        {open ? 'Cancel' : 'Request leave'}
-      </Button>
+    <div className={open ? 'w-full sm:max-w-md sm:ml-auto' : 'shrink-0'}>
+      <div className="flex justify-end">
+        <Button
+          variant={open ? 'outline' : 'primary'}
+          size="sm"
+          onClick={() => setOpen(v => !v)}
+          leftIcon={open ? <X size={13} /> : <Plus size={13} strokeWidth={2.5} />}
+        >
+          {open ? 'Cancel' : 'Request leave'}
+        </Button>
+      </div>
 
       {open && (
         <form onSubmit={handleSubmit} className="mt-4">
+          <Reveal delay={0.02}>
           <Card padding="md" className="flex flex-col gap-4">
             <div className="grid sm:grid-cols-2 gap-4">
               {canPickMember && (
@@ -186,6 +190,7 @@ export function RequestLeaveForm({ types = [], members = [], canPickMember = fal
               Submit request
             </Button>
           </Card>
+          </Reveal>
         </form>
       )}
     </div>

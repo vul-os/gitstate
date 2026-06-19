@@ -25,7 +25,7 @@ function CardContent({ issue, isDragging, isOverlay }) {
         border: `1px solid ${isGit ? 'rgba(45,212,191,0.18)' : 'var(--border)'}`,
         boxShadow: isOverlay
           ? '0 12px 40px rgba(0,0,0,0.5), 0 0 0 1px rgba(45,212,191,0.25)'
-          : '0 1px 6px rgba(0,0,0,0.18)',
+          : '0 1px 3px rgba(0,0,0,0.12), 0 1px 2px rgba(0,0,0,0.08)',
       }}
     >
       {/* Source badge row */}

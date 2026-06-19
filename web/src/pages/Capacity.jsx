@@ -345,7 +345,7 @@ export default function Capacity() {
       {tab === 'mine' && (
         <div className="space-y-8">
           <section>
-            <div className="flex items-center justify-between mb-4 gap-4 flex-wrap">
+            <div className="flex flex-col gap-4 mb-4 sm:flex-row sm:items-start sm:justify-between">
               <div>
                 <h2 className="text-sm font-semibold text-[var(--text)]">Your balances</h2>
                 <p className="text-xs text-[var(--text-faint)] mt-0.5">Days remaining this year, per leave type.</p>

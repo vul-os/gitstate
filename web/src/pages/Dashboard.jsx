@@ -12,7 +12,8 @@ import { LineChart } from '../components/LineChart.jsx'
 import { post } from '../lib/api.js'
 import { useOrg } from '../lib/useOrg.js'
 import { Card, Badge, Button, Stat } from '../components/ui/index.js'
-import { ArrowUpRight, Bot } from 'lucide-react'
+import { Reveal } from '../components/Reveal.jsx'
+import { ArrowUpRight, Bot, LayoutDashboard, AlertTriangle, RotateCw, Inbox, GitMerge } from 'lucide-react'
 
 function Spinner() {
   return (
@@ -242,7 +243,10 @@ function MiniHeatmap() {
       {loading ? (
         <div className="h-[100px] rounded bg-[var(--bg-surface2)] animate-pulse" />
       ) : total === 0 ? (
-        <p className="text-sm text-[var(--text-faint)] py-6 text-center">No recent commit activity.</p>
+        <div className="flex flex-col items-center justify-center h-[100px] text-center gap-2">
+          <Inbox size={20} className="text-[var(--text-faint)]" />
+          <p className="text-sm text-[var(--text-faint)]">No recent commit activity.</p>
+        </div>
       ) : (
         <Link to="/analytics" className="block">
           <div className="flex gap-[3px] overflow-x-auto pb-1">
@@ -285,7 +289,10 @@ function TopContributors() {
       {loading ? (
         <div className="space-y-2">{Array.from({ length: 4 }).map((_, i) => <div key={i} className="h-7 rounded bg-[var(--bg-surface2)] animate-pulse" />)}</div>
       ) : top.length === 0 ? (
-        <p className="text-sm text-[var(--text-faint)] py-6 text-center">No contributors yet.</p>
+        <div className="flex flex-col items-center justify-center py-7 text-center gap-2">
+          <Bot size={20} className="text-[var(--text-faint)]" />
+          <p className="text-sm text-[var(--text-faint)]">No contributors yet.</p>
+        </div>
       ) : (
         <div className="space-y-2.5">
           {top.map((c, i) => {
@@ -322,61 +329,81 @@ export default function Dashboard() {
     raw: pt,
   }))
 
+  const isInitialLoad = loading && !data
+  const rollup = [
+    { label: 'Open', value: data?.open, sublabel: 'issues in backlog' },
+    { label: 'In progress', value: data?.inProgress, sublabel: 'active PRs / tasks' },
+    { label: 'Done', value: data?.done, sublabel: 'merged / closed' },
+    { label: 'Throughput', value: data?.throughput != null ? `${data.throughput}/wk` : undefined, sublabel: 'issues closed per week' },
+  ]
+
   return (
     <div className="w-full space-y-8">
       {/* Header */}
-      <div className="flex items-start justify-between">
-        <div>
-          <h1 className="font-display text-2xl font-semibold text-[var(--text)] tracking-tight">Dashboard</h1>
-          <p className="text-sm text-[var(--text-faint)] mt-1">Derived from git — no tickets to maintain.</p>
+      <Reveal>
+        <div className="flex items-start justify-between gap-4">
+          <div className="flex items-start gap-3">
+            <span className="mt-0.5 grid place-items-center w-9 h-9 rounded-[var(--radius-btn)] bg-[var(--brand-teal)]/10 border border-[var(--brand-teal)]/20 shrink-0">
+              <LayoutDashboard size={17} className="text-[var(--brand-teal)]" />
+            </span>
+            <div>
+              <h1 className="font-display text-2xl font-semibold text-[var(--text)] tracking-tight">Dashboard</h1>
+              <p className="text-sm text-[var(--text-faint)] mt-1">Derived from git — no tickets to maintain.</p>
+            </div>
+          </div>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={refetch}
+            disabled={loading}
+            leftIcon={
+              <svg width="13" height="13" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2" className={loading ? 'animate-spin' : ''}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" />
+              </svg>
+            }
+          >
+            Refresh
+          </Button>
         </div>
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={refetch}
-          disabled={loading}
-          leftIcon={
-            <svg width="13" height="13" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" />
-            </svg>
-          }
-        >
-          Refresh
-        </Button>
-      </div>
-
-      {/* Loading */}
-      {loading && !data && (
-        <div className="flex items-center gap-3 py-12 justify-center">
-          <Spinner />
-          <span className="text-sm text-[var(--text-faint)]">Loading dashboard…</span>
-        </div>
-      )}
+      </Reveal>
 
       {/* Error */}
       {error && !data && (
-        <Card className="border-red-500/20 bg-red-500/[0.04]">
-          <p className="text-sm text-red-400">{error} — the backend may not be running yet.</p>
-        </Card>
+        <Reveal>
+          <Card className="border-red-500/25 bg-red-500/[0.04]">
+            <div className="flex items-start gap-3">
+              <AlertTriangle size={16} className="text-red-400 mt-0.5 shrink-0" />
+              <div className="flex-1">
+                <p className="text-sm text-red-400">{error}</p>
+                <p className="text-xs text-[var(--text-faint)] mt-0.5">The backend may not be running yet.</p>
+              </div>
+              <Button variant="outline" size="xs" onClick={refetch} leftIcon={<RotateCw size={12} />}>Retry</Button>
+            </div>
+          </Card>
+        </Reveal>
       )}
 
       {/* State rollup */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <Card padding="lg">
-          <Stat label="Open" value={data?.open ?? (loading ? '…' : '—')} sublabel="issues in backlog" />
-        </Card>
-        <Card padding="lg">
-          <Stat label="In progress" value={data?.inProgress ?? (loading ? '…' : '—')} sublabel="active PRs / tasks" />
-        </Card>
-        <Card padding="lg">
-          <Stat label="Done" value={data?.done ?? (loading ? '…' : '—')} sublabel="merged / closed" />
-        </Card>
-        <Card padding="lg">
-          <Stat label="Throughput" value={data?.throughput != null ? `${data.throughput}/wk` : (loading ? '…' : '—')} sublabel="issues closed per week" />
-        </Card>
-      </div>
+      <Reveal delay={0.05}>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          {rollup.map(r => (
+            <Card key={r.label} padding="lg">
+              {isInitialLoad ? (
+                <div className="flex flex-col gap-2">
+                  <div className="h-3 w-16 rounded bg-[var(--bg-surface3)] animate-pulse" />
+                  <div className="h-8 w-12 rounded bg-[var(--bg-surface3)] animate-pulse" />
+                  <div className="h-3 w-20 rounded bg-[var(--bg-surface3)] animate-pulse" />
+                </div>
+              ) : (
+                <Stat label={r.label} value={r.value ?? '—'} sublabel={r.sublabel} />
+              )}
+            </Card>
+          ))}
+        </div>
+      </Reveal>
 
       {/* Cycle-time trend chart */}
+      <Reveal delay={0.05} inView>
       <Card padding="lg">
         <div className="flex items-center justify-between mb-5">
           <div>
@@ -387,7 +414,9 @@ export default function Dashboard() {
             <span className="text-xs font-mono text-[var(--text-faint)]">{chartPoints.length} data points</span>
           )}
         </div>
-        <div className="overflow-x-auto">
+        {isInitialLoad ? (
+          <div className="h-[180px] rounded-[var(--radius-card)] bg-[var(--bg-surface2)] animate-pulse" />
+        ) : (
           <LineChart
             points={chartPoints}
             width={700}
@@ -402,22 +431,26 @@ export default function Dashboard() {
               const dateStr = isNaN(d) ? pt.x : d.toLocaleDateString()
               return `${dateStr}: ${pt.y.toFixed(1)}d${pt.raw?.title ? ` — ${pt.raw.title}` : ''}`
             }}
+            emptyIcon={<GitMerge size={20} className="text-[var(--text-faint)]" />}
             emptyText="No cycle time data yet — connect a repo to start tracking."
           />
-        </div>
+        )}
       </Card>
+      </Reveal>
 
       {/* Analytics preview — links through to /analytics */}
-      <div className="grid md:grid-cols-2 gap-4">
-        <MiniHeatmap />
-        <TopContributors />
-      </div>
+      <Reveal delay={0.05} inView>
+        <div className="grid md:grid-cols-2 gap-4">
+          <MiniHeatmap />
+          <TopContributors />
+        </div>
+      </Reveal>
 
       {/* LLM status synthesis */}
-      {data?.status && <StatusBlock status={data.status} />}
+      {data?.status && <Reveal inView><StatusBlock status={data.status} /></Reveal>}
 
       {/* NL query box */}
-      <NLQueryBox />
+      <Reveal inView><NLQueryBox /></Reveal>
     </div>
   )
 }
