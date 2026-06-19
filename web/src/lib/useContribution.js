@@ -5,14 +5,17 @@
  *
  * Endpoints / shapes (see API CONTRACT):
  *   GET /api/contribution?from=&to=
- *     → { period, weights:{shipped,review,effort,quality,ownership},
+ *     → { period, weights:{shipped,review,effort,quality,ownership,durability},
  *         members:[{ userId, name, email, isAgentBot, composite,
  *           dimensions:{ shipped:{score,raw}, review:{score,raw},
- *             effort:{score,raw}, quality:{score,raw}, ownership:{score,raw} },
+ *             effort:{score,raw}, quality:{score,raw}, ownership:{score,raw},
+ *             durability:{score,raw:{survivingLines,authoredLines,survivalPct}} },
  *           authorship:{humanCommits,agentCommits,agentPct} }] }   (sorted by composite desc)
+ *     quality.raw also carries bugsIntroduced (SZZ) + testCoupling (0–1, tested-touch fraction).
  *   GET /api/contribution/{userId}?from=&to=
- *     → member + evidence:{ shipped:[{title,repo,at}], review:[...], quality:[{message,at}], effort:[...] }
- *   GET /api/contribution/weights → { shipped,review,effort,quality,ownership }
+ *     → member + evidence:{ shipped:[{title,repo,at}], review:[...], quality:[{message,at}], effort:[...],
+ *         durability:[{repo,survivingLines,authoredLines}], bugIntroductions:[{fixSha,introducedSha,lines}] }
+ *   GET /api/contribution/weights → { shipped,review,effort,quality,ownership,durability }
  *   PUT /api/contribution/weights  (owner/admin)
  *
  * Exports:
@@ -28,11 +31,12 @@ import * as api from './api.js'
 // ── Ordered dimension metadata — the single source of truth for the five axes ──
 // Kept here (not in the page) so the hook, sliders, radar and bars stay in sync.
 export const DIMENSIONS = [
-  { key: 'shipped',   label: 'Shipped',   short: 'Ship',  hue: 168, blurb: 'Merged PRs, issues closed, features delivered' },
-  { key: 'review',    label: 'Review',    short: 'Rev',   hue: 199, blurb: 'Code reviews given — multiplying others’ work' },
-  { key: 'effort',    label: 'Effort',    short: 'Eff',   hue: 239, blurb: 'Sustained effort points across the period' },
-  { key: 'quality',   label: 'Quality',   short: 'Qual',  hue: 268, blurb: 'Low reverts, healthy cycle time' },
-  { key: 'ownership', label: 'Ownership', short: 'Own',   hue: 322, blurb: 'Breadth of areas meaningfully owned' },
+  { key: 'shipped',    label: 'Shipped',    short: 'Ship', hue: 168, blurb: 'Merged PRs, issues closed, features delivered' },
+  { key: 'review',     label: 'Review',     short: 'Rev',  hue: 199, blurb: 'Code reviews given — multiplying others’ work' },
+  { key: 'effort',     label: 'Effort',     short: 'Eff',  hue: 239, blurb: 'Sustained effort points across the period' },
+  { key: 'quality',    label: 'Quality',    short: 'Qual', hue: 268, blurb: 'Low reverts & bug-introductions (SZZ), tested changes, healthy cycle time' },
+  { key: 'ownership',  label: 'Ownership',  short: 'Own',  hue: 322, blurb: 'Breadth of areas meaningfully owned' },
+  { key: 'durability', label: 'Durability', short: 'Dur',  hue: 128, blurb: 'How much of their code still survives in the codebase — persistence over churn' },
 ]
 
 export const DIMENSION_KEYS = DIMENSIONS.map((d) => d.key)

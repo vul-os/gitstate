@@ -83,9 +83,9 @@ export function CompositeRing({ value, size = 88, stroke = 7, delta = null }) {
   )
 }
 
-// ── radar (5-axis) ──────────────────────────────────────────────────────────
+// ── radar (N-axis, driven by DIMENSIONS) ─────────────────────────────────────
 
-/** Five-axis radar of the per-dimension scores. Pure SVG. */
+/** Radar of the per-dimension scores — one axis per DIMENSION. Pure SVG. */
 export function Radar({ dimensions, size = 132, showLabels = true }) {
   const cx = size / 2
   const cy = size / 2

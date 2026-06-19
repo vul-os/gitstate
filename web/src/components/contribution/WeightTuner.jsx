@@ -1,5 +1,5 @@
 /**
- * WeightTuner — five sliders that live re-rank contributors.
+ * WeightTuner — six sliders that live re-rank contributors.
  *
  * Weights are kept raw; the composite recompute normalises them to sum 1, so the
  * displayed "effective %" reflects how much each axis actually pulls the ranking.

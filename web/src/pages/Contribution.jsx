@@ -6,7 +6,7 @@
  *
  * Sections:
  *   1. Header + period selector + honest advisory caveat banner.
- *   2. Live weight tuning — five sliders re-rank everyone client-side; owners/admins
+ *   2. Live weight tuning — six sliders re-rank everyone client-side; owners/admins
  *      can persist via PUT /api/contribution/weights.
  *   3. People roster (sorted by the live composite) with composite ring, radar,
  *      dimension bars, and human/agent authorship split.
@@ -41,7 +41,7 @@ const PRESETS = [
   { key: 'custom', label: 'Custom', days: null },
 ]
 
-const DEFAULT_WEIGHTS = { shipped: 5, review: 4, effort: 3, quality: 4, ownership: 3 }
+const DEFAULT_WEIGHTS = { shipped: 5, review: 4, effort: 3, quality: 4, ownership: 3, durability: 3 }
 
 function weightsEqual(a, b) {
   return DIMENSION_KEYS.every((k) => Number(a?.[k] ?? 0) === Number(b?.[k] ?? 0))
@@ -100,6 +100,9 @@ function CaveatBanner() {
         <p className="text-[13px] text-[var(--text-dim)] leading-relaxed">
           <span className="font-semibold text-[var(--text)]">Advisory, multi-dimensional, evidence-backed.</span>{' '}
           Every number drills down to the underlying merged PRs, reviews and commits.
+          Two of the six axes are deliberately gaming-resistant — <span className="text-[var(--text-dim)] font-medium">durability</span> rewards
+          code that still survives at HEAD, and <span className="text-[var(--text-dim)] font-medium">quality</span> counts
+          bug-introductions (SZZ) — so churn and agent-spam don’t inflate a score.
           This view informs allocation conversations — it is deliberately <em>not</em> an
           automatic ranking, and weighting is a judgement the org makes together.
         </p>

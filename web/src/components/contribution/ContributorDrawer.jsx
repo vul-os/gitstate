@@ -10,7 +10,7 @@ import { useContributionMember, DIMENSIONS, dimColor } from '../../lib/useContri
 import { Avatar, CompositeRing, Radar, AuthorshipBar } from './parts.jsx'
 import { fmtNum, relTime, clamp01to100 } from './helpers.js'
 import { Badge } from '../ui/index.js'
-import { X, Bot, GitMerge, GitPullRequest, Undo2, Gauge, ExternalLink } from 'lucide-react'
+import { X, Bot, GitMerge, GitPullRequest, Undo2, Gauge, ExternalLink, Sprout, Bug } from 'lucide-react'
 
 function Spinner({ size = 16 }) {
   return (
@@ -31,9 +31,16 @@ const RAW_FIELDS = {
   effort: [['effortPoints', 'Effort points']],
   quality: [
     ['reverts', 'Reverts'],
+    ['bugsIntroduced', 'Bugs (SZZ)'],
+    ['testCoupling', 'Tested %', (v) => (v == null ? '—' : `${Math.round(Number(v) * 100)}%`)],
     ['avgCycleHours', 'Avg cycle (h)', (v) => (v == null ? '—' : Number(v).toFixed(1))],
   ],
   ownership: [['areasOwned', 'Areas owned']],
+  durability: [
+    ['survivingLines', 'Surviving lines'],
+    ['authoredLines', 'Authored lines'],
+    ['survivalPct', 'Still live', (v) => (v == null ? '—' : `${Math.round(Number(v) * 100)}%`)],
+  ],
 }
 
 const EVIDENCE_ICON = {
@@ -41,6 +48,7 @@ const EVIDENCE_ICON = {
   review: GitPullRequest,
   quality: Undo2,
   effort: Gauge,
+  durability: Sprout,
 }
 
 function RawStat({ label, value }) {
@@ -82,6 +90,95 @@ function EvidenceList({ dimKey, items }) {
   )
 }
 
+// ── durability evidence — per-repo line survival, with a survival % bar ───────
+
+function shortSha(s) {
+  return s ? String(s).slice(0, 7) : '—'
+}
+
+function DurabilityEvidence({ items }) {
+  if (!items || items.length === 0) {
+    return <p className="text-[11px] text-[var(--text-faint)] italic px-1">No blame-survival data in this period.</p>
+  }
+  return (
+    <ul className="space-y-2">
+      {items.slice(0, 12).map((it, i) => {
+        const surviving = Math.max(0, it.survivingLines ?? 0)
+        const authored = Math.max(0, it.authoredLines ?? 0)
+        const pct = authored > 0 ? Math.round((surviving / authored) * 100) : 0
+        return (
+          <li key={i} className="rounded-[var(--radius-badge)] px-2.5 py-2 hover:bg-[var(--bg-surface2)] transition-colors">
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2 min-w-0">
+                <Sprout size={13} className="shrink-0" style={{ color: dimColor('durability', 62) }} />
+                <span className="text-[12px] text-[var(--text-dim)] font-mono truncate">{it.repo || 'repo'}</span>
+              </div>
+              <span className="text-[11px] font-mono tabular-nums shrink-0" style={{ color: dimColor('durability', 62) }}>{pct}%</span>
+            </div>
+            <div className="mt-1.5 h-1.5 w-full rounded-full bg-[var(--bg-surface3)] overflow-hidden">
+              <div
+                className="h-full rounded-full"
+                style={{
+                  width: `${pct}%`,
+                  background: `linear-gradient(90deg, ${dimColor('durability', 52)}, ${dimColor('durability', 66)})`,
+                  transition: 'width 0.45s cubic-bezier(0.22,1,0.36,1)',
+                }}
+              />
+            </div>
+            <p className="text-[10px] font-mono text-[var(--text-faint)] mt-1 tabular-nums">
+              {fmtNum(surviving)} of {fmtNum(authored)} authored lines still live
+            </p>
+          </li>
+        )
+      })}
+      {items.length > 12 && (
+        <li className="text-[10px] font-mono text-[var(--text-faint)] px-2.5 pt-1">+{items.length - 12} more</li>
+      )}
+    </ul>
+  )
+}
+
+// ── SZZ bug-introductions — fix↔introduced sha pairs the member authored ───────
+
+function BugIntroEvidence({ items }) {
+  if (!items || items.length === 0) {
+    return <p className="text-[11px] text-[var(--text-faint)] italic px-1">No bug-introducing changes traced (SZZ) — clean record.</p>
+  }
+  return (
+    <ul className="space-y-1">
+      {items.slice(0, 12).map((it, i) => (
+        <li
+          key={i}
+          className="flex items-start gap-2.5 rounded-[var(--radius-badge)] px-2.5 py-2 hover:bg-[var(--bg-surface2)] transition-colors"
+        >
+          <Bug size={13} className="mt-0.5 shrink-0 text-red-400/80" />
+          <div className="min-w-0 flex-1">
+            <p className="text-[12px] text-[var(--text-dim)] leading-snug font-mono">
+              <span className="text-[var(--text-faint)]">introduced</span> {shortSha(it.introducedSha)}
+              <span className="text-[var(--text-faint)]"> → fixed</span> {shortSha(it.fixSha)}
+            </p>
+            <p className="text-[10px] font-mono text-[var(--text-faint)] mt-0.5 tabular-nums">
+              {fmtNum(it.lines ?? 0)} line{(it.lines ?? 0) === 1 ? '' : 's'} later corrected
+            </p>
+          </div>
+        </li>
+      ))}
+      {items.length > 12 && (
+        <li className="text-[10px] font-mono text-[var(--text-faint)] px-2.5 pt-1">+{items.length - 12} more</li>
+      )}
+    </ul>
+  )
+}
+
+function EvidenceHeader({ children }) {
+  return (
+    <div className="flex items-center gap-1.5 mb-1.5">
+      <ExternalLink size={11} className="text-[var(--text-faint)]" />
+      <span className="text-[10px] font-mono uppercase tracking-wide text-[var(--text-faint)]">{children}</span>
+    </div>
+  )
+}
+
 function DimensionBlock({ dim, dimData, evidence }) {
   const score = clamp01to100(dimData?.score)
   const raw = dimData?.raw ?? {}
@@ -114,15 +211,28 @@ function DimensionBlock({ dim, dimData, evidence }) {
             ))}
           </div>
         )}
-        {dim.key !== 'ownership' && (
+        {dim.key === 'durability' ? (
           <div>
-            <div className="flex items-center gap-1.5 mb-1.5">
-              <ExternalLink size={11} className="text-[var(--text-faint)]" />
-              <span className="text-[10px] font-mono uppercase tracking-wide text-[var(--text-faint)]">Evidence</span>
+            <EvidenceHeader>Line survival · by repo</EvidenceHeader>
+            <DurabilityEvidence items={evidence?.durability} />
+          </div>
+        ) : dim.key === 'quality' ? (
+          <>
+            <div>
+              <EvidenceHeader>Revert commits</EvidenceHeader>
+              <EvidenceList dimKey={dim.key} items={evItems} />
             </div>
+            <div>
+              <EvidenceHeader>Bug-introductions · SZZ</EvidenceHeader>
+              <BugIntroEvidence items={evidence?.bugIntroductions} />
+            </div>
+          </>
+        ) : dim.key !== 'ownership' ? (
+          <div>
+            <EvidenceHeader>Evidence</EvidenceHeader>
             <EvidenceList dimKey={dim.key} items={evItems} />
           </div>
-        )}
+        ) : null}
       </div>
     </section>
   )

@@ -1,13 +1,44 @@
 /**
  * ContributorCard — one row in the roster.
  *
- * Shows avatar + identity, the live composite ring, a compact 5-axis radar,
+ * Shows avatar + identity, the live composite ring, a compact 6-axis radar,
  * stacked dimension bars, and the human/agent authorship split. Clicking opens
  * the evidence drawer. `rank` and `delta` reflect the *live* (re-weighted) order.
  */
 import { Card } from '../ui/index.js'
 import { Avatar, CompositeRing, Radar, DimensionBars, AuthorshipBar } from './parts.jsx'
-import { Bot, ChevronRight } from 'lucide-react'
+import { Bot, ChevronRight, Bug, FlaskConical } from 'lucide-react'
+
+/**
+ * Tiny captions making the multi-signal quality axis legible at a glance:
+ * bug-introductions (SZZ) and the share of touches that are tests. Only renders
+ * when the backend has supplied the raw numbers.
+ */
+function QualitySignals({ dimensions }) {
+  const raw = dimensions?.quality?.raw
+  if (!raw) return null
+  const szz = raw.bugsIntroduced
+  const tested = raw.testCoupling
+  const hasSzz = szz != null
+  const hasTested = tested != null
+  if (!hasSzz && !hasTested) return null
+  return (
+    <div className="flex items-center gap-3 text-[10px] font-mono text-[var(--text-faint)]">
+      {hasSzz && (
+        <span className="inline-flex items-center gap-1" title="Changes later implicated in a bug-fix (SZZ)">
+          <Bug size={11} className={szz > 0 ? 'text-red-400/80' : 'text-[var(--text-faint)]'} />
+          <span className="tabular-nums">{szz} SZZ</span>
+        </span>
+      )}
+      {hasTested && (
+        <span className="inline-flex items-center gap-1" title="Share of file-touches that are tests">
+          <FlaskConical size={11} className="text-[var(--brand-teal)]" />
+          <span className="tabular-nums">{Math.round(tested * 100)}% tested</span>
+        </span>
+      )}
+    </div>
+  )
+}
 
 export function ContributorCard({ member, rank, liveComposite, delta, onOpen }) {
   const isBot = member.isAgentBot
@@ -50,6 +81,7 @@ export function ContributorCard({ member, rank, liveComposite, delta, onOpen }) 
         {/* bars + authorship */}
         <div className="flex-1 min-w-0 space-y-3">
           <DimensionBars dimensions={member.dimensions} compact />
+          <QualitySignals dimensions={member.dimensions} />
           <div className="pt-1">
             <AuthorshipBar authorship={member.authorship} />
           </div>
