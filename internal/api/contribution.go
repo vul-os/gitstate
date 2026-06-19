@@ -1,0 +1,322 @@
+// Package api — contribution.go
+// REST handlers for the "dev contribution to outcomes" engine: a multi-dimensional,
+// evidence-backed, gaming-resistant view used to *inform* (never auto-decide)
+// share allocation in an employee-owned company.
+//
+// Every route is behind RequireAuth + OrgScope; reads run inside db.WithOrg so
+// RLS enforces the org boundary (A2/S1). The composite is a weighted sum of five
+// within-project-normalized 0–100 dimension scores; agent-bot identities are
+// flagged so they never silently inflate a human (decisions P2/P5). Each member
+// object always carries the RAW facts behind every dimension, and the per-member
+// drill-down adds the real evidence rows — texture is never a hidden rank (P2).
+package api
+
+import (
+	"errors"
+	"log/slog"
+	"net/http"
+	"time"
+
+	"github.com/exo/gitstate/internal/config"
+	"github.com/exo/gitstate/internal/contribution"
+	"github.com/exo/gitstate/internal/db"
+	"github.com/exo/gitstate/internal/middleware"
+	"github.com/exo/gitstate/internal/store"
+)
+
+// RegisterContributionRoutes wires the contribution endpoints onto mux.
+//
+// Routes (all behind RequireAuth + OrgScope):
+//
+//	GET /api/contribution?from=&to=          → period, weights, scored members (composite desc)
+//	GET /api/contribution/{userId}?from=&to= → one member + evidence drill-down
+//	GET /api/contribution/weights            → the org's dimension weights
+//	PUT /api/contribution/weights            → set weights (owner/admin only)
+//
+// Default period = last 90 days when from/to are omitted.
+func RegisterContributionRoutes(mux *http.ServeMux, database *db.DB, cfg *config.Config) {
+	svc := contribution.New(database)
+	h := &contributionHandlers{db: database, svc: svc}
+
+	requireAuth := middleware.RequireAuth(cfg.Auth.JWTSigningKey)
+	orgScope := middleware.OrgScope(database.Pool())
+	auth := func(handler http.Handler) http.Handler {
+		return requireAuth(orgScope(handler))
+	}
+
+	// NOTE: register the more specific /weights routes before the {userId}
+	// wildcard so they aren't shadowed. (Go 1.22 mux prefers the more specific
+	// pattern regardless, but ordering keeps intent clear.)
+	mux.Handle("GET /api/contribution/weights", auth(http.HandlerFunc(h.getWeights)))
+	mux.Handle("PUT /api/contribution/weights", auth(http.HandlerFunc(h.putWeights)))
+	mux.Handle("GET /api/contribution/{userId}", auth(http.HandlerFunc(h.member)))
+	mux.Handle("GET /api/contribution", auth(http.HandlerFunc(h.report)))
+}
+
+type contributionHandlers struct {
+	db  *db.DB
+	svc *contribution.Service
+}
+
+// parsePeriod pulls ?from=&to= (RFC3339 or YYYY-MM-DD), defaulting to last 90d.
+func (h *contributionHandlers) parsePeriod(w http.ResponseWriter, r *http.Request) (contribution.Period, bool) {
+	q := r.URL.Query()
+	var from, to time.Time
+	if s := q.Get("from"); s != "" {
+		t, err := parseContribDate(s)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid 'from' date: "+err.Error())
+			return contribution.Period{}, false
+		}
+		from = t
+	}
+	if s := q.Get("to"); s != "" {
+		t, err := parseContribDate(s)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid 'to' date: "+err.Error())
+			return contribution.Period{}, false
+		}
+		to = t
+	}
+	return contribution.ResolvePeriod(from, to, time.Now().UTC()), true
+}
+
+func parseContribDate(s string) (time.Time, error) {
+	if t, err := time.Parse(time.RFC3339, s); err == nil {
+		return t.UTC(), nil
+	}
+	if t, err := time.Parse("2006-01-02", s); err == nil {
+		return t.UTC(), nil
+	}
+	return time.Time{}, errors.New("expected RFC3339 or YYYY-MM-DD")
+}
+
+// ── JSON shapes (the exact API contract) ────────────────────────────────────────
+
+type dimDetailJSON struct {
+	Score float64 `json:"score"`
+	Raw   any     `json:"raw"`
+}
+
+type shippedRawJSON struct {
+	MergedPRs       int `json:"mergedPRs"`
+	IssuesClosed    int `json:"issuesClosed"`
+	FeaturesShipped int `json:"featuresShipped"`
+}
+type reviewRawJSON struct {
+	ReviewsDone int `json:"reviewsDone"`
+}
+type effortRawJSON struct {
+	EffortPoints float64 `json:"effortPoints"`
+}
+type qualityRawJSON struct {
+	Reverts       int     `json:"reverts"`
+	AvgCycleHours float64 `json:"avgCycleHours"`
+}
+type ownershipRawJSON struct {
+	AreasOwned int `json:"areasOwned"`
+}
+
+type dimensionsJSON struct {
+	Shipped   dimDetailJSON `json:"shipped"`
+	Review    dimDetailJSON `json:"review"`
+	Effort    dimDetailJSON `json:"effort"`
+	Quality   dimDetailJSON `json:"quality"`
+	Ownership dimDetailJSON `json:"ownership"`
+}
+
+type authorshipJSON struct {
+	HumanCommits int     `json:"humanCommits"`
+	AgentCommits int     `json:"agentCommits"`
+	AgentPct     float64 `json:"agentPct"`
+}
+
+type memberJSON struct {
+	UserID     string         `json:"userId"`
+	Name       string         `json:"name"`
+	Email      string         `json:"email"`
+	IsAgentBot bool           `json:"isAgentBot"`
+	Composite  float64        `json:"composite"`
+	Dimensions dimensionsJSON `json:"dimensions"`
+	Authorship authorshipJSON `json:"authorship"`
+}
+
+type weightsJSON struct {
+	Shipped   float64 `json:"shipped"`
+	Review    float64 `json:"review"`
+	Effort    float64 `json:"effort"`
+	Quality   float64 `json:"quality"`
+	Ownership float64 `json:"ownership"`
+}
+
+func toMemberJSON(m contribution.Member) memberJSON {
+	return memberJSON{
+		UserID:     m.UserID,
+		Name:       m.Name,
+		Email:      m.Email,
+		IsAgentBot: m.IsAgentBot,
+		Composite:  m.Composite,
+		Dimensions: dimensionsJSON{
+			Shipped: dimDetailJSON{Score: m.Dimensions.Shipped, Raw: shippedRawJSON{
+				MergedPRs: m.Raw.MergedPRs, IssuesClosed: m.Raw.IssuesClosed, FeaturesShipped: m.Raw.FeaturesShipped,
+			}},
+			Review: dimDetailJSON{Score: m.Dimensions.Review, Raw: reviewRawJSON{ReviewsDone: m.Raw.ReviewsDone}},
+			Effort: dimDetailJSON{Score: m.Dimensions.Effort, Raw: effortRawJSON{EffortPoints: m.Raw.EffortPoints}},
+			Quality: dimDetailJSON{Score: m.Dimensions.Quality, Raw: qualityRawJSON{
+				Reverts: m.Raw.Reverts, AvgCycleHours: round1(m.Raw.AvgCycleHours),
+			}},
+			Ownership: dimDetailJSON{Score: m.Dimensions.Ownership, Raw: ownershipRawJSON{AreasOwned: m.Raw.AreasOwned}},
+		},
+		Authorship: authorshipJSON{
+			HumanCommits: m.Raw.HumanCommits,
+			AgentCommits: m.Raw.AgentCommits,
+			AgentPct:     m.Raw.AgentPct(),
+		},
+	}
+}
+
+func toWeightsJSON(w contribution.Weights) weightsJSON {
+	return weightsJSON{Shipped: w.Shipped, Review: w.Review, Effort: w.Effort, Quality: w.Quality, Ownership: w.Ownership}
+}
+
+func round1(v float64) float64 {
+	return float64(int64(v*10+0.5)) / 10
+}
+
+// ── Handlers ────────────────────────────────────────────────────────────────
+
+// GET /api/contribution
+func (h *contributionHandlers) report(w http.ResponseWriter, r *http.Request) {
+	orgID := middleware.OrgFromContext(r.Context())
+	if orgID == "" {
+		writeError(w, http.StatusBadRequest, "X-Org-ID header required")
+		return
+	}
+	p, ok := h.parsePeriod(w, r)
+	if !ok {
+		return
+	}
+	rep, err := h.svc.Compute(r.Context(), orgID, p)
+	if err != nil {
+		slog.Error("contribution report", "err", err)
+		writeError(w, http.StatusInternalServerError, "could not compute contribution")
+		return
+	}
+	members := make([]memberJSON, 0, len(rep.Members))
+	for _, m := range rep.Members {
+		members = append(members, toMemberJSON(m))
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"period":  rep.Period,
+		"weights": toWeightsJSON(rep.Weights),
+		"members": members,
+	})
+}
+
+// GET /api/contribution/{userId}
+func (h *contributionHandlers) member(w http.ResponseWriter, r *http.Request) {
+	orgID := middleware.OrgFromContext(r.Context())
+	if orgID == "" {
+		writeError(w, http.StatusBadRequest, "X-Org-ID header required")
+		return
+	}
+	userID := r.PathValue("userId")
+	if userID == "" {
+		writeError(w, http.StatusBadRequest, "userId required")
+		return
+	}
+	p, ok := h.parsePeriod(w, r)
+	if !ok {
+		return
+	}
+	detail, found, err := h.svc.ComputeMember(r.Context(), orgID, userID, p)
+	if err != nil {
+		slog.Error("contribution member", "err", err)
+		writeError(w, http.StatusInternalServerError, "could not compute member contribution")
+		return
+	}
+	if !found {
+		writeError(w, http.StatusNotFound, "no contribution data for this member in the period")
+		return
+	}
+
+	mj := toMemberJSON(detail.Member)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"userId":     mj.UserID,
+		"name":       mj.Name,
+		"email":      mj.Email,
+		"isAgentBot": mj.IsAgentBot,
+		"composite":  mj.Composite,
+		"dimensions": mj.Dimensions,
+		"authorship": mj.Authorship,
+		"evidence": map[string]any{
+			"shipped": evItems(detail.Evidence.Shipped),
+			"review":  evItems(detail.Evidence.Review),
+			"quality": evItems(detail.Evidence.Quality),
+			"effort":  evItems(detail.Evidence.Effort),
+		},
+	})
+}
+
+// evItems guarantees [] (never null) for each evidence list.
+func evItems(in []store.ContribEvidenceItem) []store.ContribEvidenceItem {
+	if in == nil {
+		return []store.ContribEvidenceItem{}
+	}
+	return in
+}
+
+// GET /api/contribution/weights
+func (h *contributionHandlers) getWeights(w http.ResponseWriter, r *http.Request) {
+	orgID := middleware.OrgFromContext(r.Context())
+	if orgID == "" {
+		writeError(w, http.StatusBadRequest, "X-Org-ID header required")
+		return
+	}
+	wts, err := h.svc.GetWeights(r.Context(), orgID)
+	if err != nil {
+		slog.Error("contribution get weights", "err", err)
+		writeError(w, http.StatusInternalServerError, "could not load weights")
+		return
+	}
+	writeJSON(w, http.StatusOK, toWeightsJSON(wts))
+}
+
+// PUT /api/contribution/weights — owner/admin only.
+func (h *contributionHandlers) putWeights(w http.ResponseWriter, r *http.Request) {
+	orgID := middleware.OrgFromContext(r.Context())
+	if orgID == "" {
+		writeError(w, http.StatusBadRequest, "X-Org-ID header required")
+		return
+	}
+	user := middleware.UserFromContext(r.Context())
+	if user == nil {
+		writeError(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+	role, err := store.GetMemberRole(r.Context(), h.db.Pool(), orgID, user.ID)
+	if err != nil || !canManageMembers(role) {
+		writeError(w, http.StatusForbidden, "only owners and admins can set contribution weights")
+		return
+	}
+
+	var body weightsJSON
+	if err := decodeJSON(r, &body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if body.Shipped < 0 || body.Review < 0 || body.Effort < 0 || body.Quality < 0 || body.Ownership < 0 {
+		writeError(w, http.StatusBadRequest, "weights must be non-negative")
+		return
+	}
+	out, err := h.svc.SetWeights(r.Context(), orgID, contribution.Weights{
+		Shipped: body.Shipped, Review: body.Review, Effort: body.Effort,
+		Quality: body.Quality, Ownership: body.Ownership,
+	})
+	if err != nil {
+		slog.Error("contribution set weights", "err", err)
+		writeError(w, http.StatusInternalServerError, "could not save weights")
+		return
+	}
+	writeJSON(w, http.StatusOK, toWeightsJSON(out))
+}

@@ -42,6 +42,7 @@ func NewRouter(cfg *config.Config, database *db.DB) http.Handler {
 		RegisterCalendarRoutes(mux, database, cfg)
 		RegisterMetricsRoutes(mux, database, cfg)
 		RegisterAnalyticsRoutes(mux, database, cfg)
+		RegisterContributionRoutes(mux, database, cfg)
 		RegisterReportRoutes(mux, database, cfg)
 		RegisterCapacityRoutes(mux, database, cfg)
 		RegisterBillingRoutes(mux, database, cfg)

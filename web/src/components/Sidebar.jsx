@@ -56,6 +56,15 @@ const NAV = [
     ),
   },
   {
+    label: 'Contribution',
+    to: '/contribution',
+    icon: (
+      <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8">
+        <path strokeLinecap="round" strokeLinejoin="round" d="M12 3v18m0-18 7 3m-7-3-7 3m7 12c2.21 0 4-.5 4-.5L19 6m-7 15c-2.21 0-4-.5-4-.5L5 6m14 0 2.25 6a3.25 3.25 0 0 1-6.5 0L19 6ZM5 6l2.25 6a3.25 3.25 0 0 1-6.5 0L5 6Z" />
+      </svg>
+    ),
+  },
+  {
     label: 'Cycle Time',
     to: '/cycle-time',
     icon: (

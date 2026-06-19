@@ -72,6 +72,34 @@ var rng = rand.New(rand.NewSource(seedRNG))
 
 // ── people ────────────────────────────────────────────────────────────────────
 
+// profile encodes a member's *behavioural archetype* so the multi-dimensional
+// Contribution view shows clearly different leaders per dimension instead of a
+// flat field of near-equal scores. Each field is a multiplier/level applied
+// deterministically on top of the commit-derived baseline:
+//
+//   - ship      → features_shipped + merged-PR footprint (the "shipper")
+//   - review    → reviews_done (the senior who unblocks everyone)
+//   - own       → areas_owned (the deep specialist)
+//   - effort    → difficulty bias on this author's merged PRs (lands hard work)
+//   - revertPct → share of this member's commits that are reverts/hotfixes/
+//     rollbacks (drives the quality dimension: higher ⇒ noisier ⇒ lower quality)
+//   - cycleBias → multiplier on merged-PR lead time (>1 slower, <1 faster) so the
+//     quality dimension also reflects how cleanly/quickly their work lands.
+//
+// Profiles are intentionally spiky: a strong shipper is a weak reviewer, the
+// senior reviewer ships little, the specialist owns many areas but ships fewer
+// features, one member carries visible quality debt, and the agent bots commit
+// plenty while their merged-PR / review footprint stays modest (gaming-resistant
+// story: raw agent activity must NOT inflate human-style credit).
+type profile struct {
+	ship      float64
+	review    float64
+	own       float64
+	effort    float64
+	revertPct float64
+	cycleBias float64
+}
+
 // member describes a synthetic org member and their behavioural profile.
 type member struct {
 	email   string
@@ -80,25 +108,53 @@ type member struct {
 	role    string  // owner | admin | member | stakeholder | agent
 	isAgent bool    // contributes is_agent=true commits
 	weight  float64 // relative share of commit/PR volume (0 ⇒ no git output)
+	prof    profile // behavioural archetype driving per-dimension spread
 	user    *store.User
 }
 
 // members defines ~12 people: a few heavy builders, a long tail, two PMs/stake-
-// holders, and two bot-ish agent identities. weight drives commit distribution.
+// holders, and two bot-ish agent identities. weight drives commit distribution;
+// prof drives the per-dimension Contribution spread (see profile docs).
 var members = []*member{
-	{email: "demo@gitstate.dev", name: "Alex Rivera", login: "arivera", role: "owner", weight: 1.6},
-	{email: "priya.nair@acme.dev", name: "Priya Nair", login: "pnair", role: "admin", weight: 1.9},
-	{email: "marcus.lee@acme.dev", name: "Marcus Lee", login: "mlee", role: "member", weight: 2.2},
-	{email: "sofia.gomez@acme.dev", name: "Sofia Gómez", login: "sgomez", role: "member", weight: 1.4},
-	{email: "tom.fischer@acme.dev", name: "Tom Fischer", login: "tfischer", role: "member", weight: 1.1},
-	{email: "aisha.khan@acme.dev", name: "Aisha Khan", login: "akhan", role: "member", weight: 1.3},
-	{email: "diego.santos@acme.dev", name: "Diego Santos", login: "dsantos", role: "member", weight: 0.7},
-	{email: "yuki.tanaka@acme.dev", name: "Yuki Tanaka", login: "ytanaka", role: "member", weight: 0.5},
-	{email: "noah.brooks@acme.dev", name: "Noah Brooks", login: "nbrooks", role: "member", weight: 0.35},
-	{email: "riley.pm@acme.dev", name: "Riley Okonkwo", login: "rokonkwo", role: "admin", weight: 0.15},
-	{email: "sam.stake@acme.dev", name: "Sam Whitfield", login: "swhitfield", role: "stakeholder", weight: 0},
-	{email: "claude-bot@acme.dev", name: "Claude Agent", login: "claude-bot", role: "agent", isAgent: true, weight: 1.2},
-	{email: "dependabot@acme.dev", name: "Acme Build Bot", login: "acme-bot", role: "agent", isAgent: true, weight: 0.6},
+	// Alex — balanced owner, light quality debt.
+	{email: "demo@gitstate.dev", name: "Alex Rivera", login: "arivera", role: "owner", weight: 1.6,
+		prof: profile{ship: 1.0, review: 1.1, own: 1.2, effort: 1.0, revertPct: 0.05, cycleBias: 1.0}},
+	// Priya — senior reviewer + deep owner, ships fewer features (the unblocker).
+	{email: "priya.nair@acme.dev", name: "Priya Nair", login: "pnair", role: "admin", weight: 1.9,
+		prof: profile{ship: 0.5, review: 2.6, own: 2.2, effort: 1.2, revertPct: 0.02, cycleBias: 0.85}},
+	// Marcus — the heavy shipper: tons of merged features, light on review.
+	{email: "marcus.lee@acme.dev", name: "Marcus Lee", login: "mlee", role: "member", weight: 2.2,
+		prof: profile{ship: 2.4, review: 0.5, own: 0.9, effort: 1.0, revertPct: 0.08, cycleBias: 0.95}},
+	// Sofia — the high-effort, high-quality engineer: lands hard PRs cleanly.
+	{email: "sofia.gomez@acme.dev", name: "Sofia Gómez", login: "sgomez", role: "member", weight: 1.4,
+		prof: profile{ship: 1.1, review: 1.0, own: 1.0, effort: 2.3, revertPct: 0.02, cycleBias: 0.7}},
+	// Tom — the member carrying visible quality debt: many reverts/hotfixes, slow.
+	{email: "tom.fischer@acme.dev", name: "Tom Fischer", login: "tfischer", role: "member", weight: 1.1,
+		prof: profile{ship: 0.9, review: 0.6, own: 0.8, effort: 0.9, revertPct: 0.28, cycleBias: 1.6}},
+	// Aisha — deep specialist/owner of many areas, moderate shipping.
+	{email: "aisha.khan@acme.dev", name: "Aisha Khan", login: "akhan", role: "member", weight: 1.3,
+		prof: profile{ship: 0.7, review: 0.9, own: 2.6, effort: 1.3, revertPct: 0.04, cycleBias: 0.9}},
+	// Diego — solid mid shipper, clean record.
+	{email: "diego.santos@acme.dev", name: "Diego Santos", login: "dsantos", role: "member", weight: 0.7,
+		prof: profile{ship: 1.3, review: 0.7, own: 0.9, effort: 1.0, revertPct: 0.03, cycleBias: 0.95}},
+	// Yuki — secondary reviewer, light shipping.
+	{email: "yuki.tanaka@acme.dev", name: "Yuki Tanaka", login: "ytanaka", role: "member", weight: 0.5,
+		prof: profile{ship: 0.6, review: 1.8, own: 1.0, effort: 1.1, revertPct: 0.05, cycleBias: 0.9}},
+	// Noah — junior: low volume, some quality debt.
+	{email: "noah.brooks@acme.dev", name: "Noah Brooks", login: "nbrooks", role: "member", weight: 0.35,
+		prof: profile{ship: 0.8, review: 0.4, own: 0.6, effort: 0.8, revertPct: 0.18, cycleBias: 1.3}},
+	// Riley — PM/admin: reviews lots, ships almost nothing.
+	{email: "riley.pm@acme.dev", name: "Riley Okonkwo", login: "rokonkwo", role: "admin", weight: 0.15,
+		prof: profile{ship: 0.2, review: 2.2, own: 1.4, effort: 1.0, revertPct: 0.0, cycleBias: 1.0}},
+	// Sam — read-only stakeholder, no git output.
+	{email: "sam.stake@acme.dev", name: "Sam Whitfield", login: "swhitfield", role: "stakeholder", weight: 0,
+		prof: profile{ship: 0, review: 0, own: 0, effort: 1.0, revertPct: 0.0, cycleBias: 1.0}},
+	// Claude Agent — commits a LOT but merged-PR/review footprint is gated/modest.
+	{email: "claude-bot@acme.dev", name: "Claude Agent", login: "claude-bot", role: "agent", isAgent: true, weight: 1.2,
+		prof: profile{ship: 0.25, review: 0.15, own: 0.4, effort: 0.7, revertPct: 0.12, cycleBias: 1.0}},
+	// Acme Build Bot — dependency bumps; tons of churn, negligible credit.
+	{email: "dependabot@acme.dev", name: "Acme Build Bot", login: "acme-bot", role: "agent", isAgent: true, weight: 0.6,
+		prof: profile{ship: 0.1, review: 0.05, own: 0.2, effort: 0.4, revertPct: 0.06, cycleBias: 1.0}},
 }
 
 // ── entry point ───────────────────────────────────────────────────────────────
@@ -223,6 +279,7 @@ type commitTally struct {
 	total      int
 	agent      int
 	human      int
+	reverts    int            // revert/hotfix/rollback commits (quality signal)
 	perUser    map[string]int // userID → commit count
 	perUserAdd map[string]int // userID → lines added
 	perUserDel map[string]int // userID → lines deleted
@@ -280,7 +337,7 @@ var (
 	}
 )
 
-func (s *seeder) commitMessage(m *member) (string, int, int) {
+func (s *seeder) commitMessage(m *member) (msgOut string, add, del int, isRevert bool) {
 	typ := commitTypes[rng.Intn(len(commitTypes))]
 	scope := commitScopes[rng.Intn(len(commitScopes))]
 	var subj string
@@ -291,10 +348,27 @@ func (s *seeder) commitMessage(m *member) (string, int, int) {
 	}
 	msg := fmt.Sprintf("%s(%s): %s", typ, scope, subj)
 
+	// Quality signal: a member-specific share of commits are reverts / hotfixes /
+	// rollbacks. The Contribution "quality" dimension keys off these prefixes, so
+	// members with a higher prof.revertPct (e.g. Tom, Noah) read as noisier while
+	// clean operators (Priya, Sofia) read as higher quality. Prefixes match what
+	// the scorer scans for: "Revert " / "hotfix:" / "rollback".
+	if m.prof.revertPct > 0 && rng.Float64() < m.prof.revertPct {
+		isRevert = true
+		switch rng.Intn(3) {
+		case 0:
+			msg = fmt.Sprintf("Revert \"%s(%s): %s\"", typ, scope, subj)
+		case 1:
+			msg = fmt.Sprintf("hotfix: %s(%s): %s", typ, scope, subj)
+		default:
+			msg = fmt.Sprintf("rollback %s change after regression", scope)
+		}
+	}
+
 	// Size distribution: mostly small, occasionally large; agents skew bigger
 	// on additions (generated code) and bigger on deletions for refactors.
-	add := 5 + rng.Intn(60)
-	del := rng.Intn(25)
+	add = 5 + rng.Intn(60)
+	del = rng.Intn(25)
 	switch {
 	case rng.Float64() < 0.08: // big change
 		add = 200 + rng.Intn(900)
@@ -309,7 +383,7 @@ func (s *seeder) commitMessage(m *member) (string, int, int) {
 			del = int(float64(del) * (1.5 + rng.Float64()))
 		}
 	}
-	return msg, add, del
+	return msg, add, del, isRevert
 }
 
 // dayIntensity returns a 0..1 activity multiplier for a given calendar day so
@@ -446,7 +520,10 @@ func (s *seeder) seedCommits(orgID string, repos []*store.Repo) commitTally {
 			at := time.Date(day.Year(), day.Month(), day.Day(),
 				hour, rng.Intn(60), rng.Intn(60), 0, day.Location())
 
-			msg, add, del := s.commitMessage(m)
+			msg, add, del, isRevert := s.commitMessage(m)
+			if isRevert {
+				tally.reverts++
+			}
 			isAgent := m.isAgent
 			// A small share of human commits are co-authored/automated agent runs.
 			if !isAgent && rng.Float64() < 0.04 {
@@ -524,11 +601,34 @@ func (s *seeder) seedPullRequests(orgID string, repos []*store.Repo, projects []
 	var tally prTally
 
 	// Contributors eligible to author PRs (everyone with weight, plus PMs).
+	// Authorship share is weighted by the member's shipping archetype so the
+	// MERGED-PR footprint differentiates: strong shippers (Marcus, Diego) author
+	// the most PRs while agent bots — though they commit plenty — author very few
+	// (gaming-resistance: raw agent commit churn must not become merged credit).
 	var authors []*member
+	var authorW []float64
+	var awSum float64
 	for _, m := range members {
-		if m.weight > 0 || m.role == "admin" {
-			authors = append(authors, m)
+		if m.weight <= 0 && m.role != "admin" {
+			continue
 		}
+		// Share ∝ shipping level; agents are damped hard so they stay modest.
+		w := 0.3 + m.prof.ship
+		if m.isAgent {
+			w *= 0.2
+		}
+		authors = append(authors, m)
+		awSum += w
+		authorW = append(authorW, awSum)
+	}
+	pickAuthor := func() *member {
+		r := rng.Float64() * awSum
+		for i, w := range authorW {
+			if r <= w {
+				return authors[i]
+			}
+		}
+		return authors[len(authors)-1]
 	}
 
 	const targetPRs = 210
@@ -540,12 +640,13 @@ func (s *seeder) seedPullRequests(orgID string, repos []*store.Repo, projects []
 		firstCommit                                  time.Time
 		merged                                       *time.Time
 		leadSecs, reviewSecs                         int64
+		effortBias                                   float64 // author archetype → difficulty bias
 	}
 	var gens []prGen
 
 	for i := 0; i < targetPRs; i++ {
 		repo := repos[rng.Intn(len(repos))]
-		author := authors[rng.Intn(len(authors))]
+		author := pickAuthor()
 
 		// Spread first_commit_at across the whole history window.
 		daysBack := rng.Intn(historyDays - 1)
@@ -574,6 +675,13 @@ func (s *seeder) seedPullRequests(orgID string, repos []*store.Repo, projects []
 				lead = time.Duration(2+rng.Intn(46)) * time.Hour // 2h–2d
 			} else {
 				lead = time.Duration(2+rng.Intn(19)) * 24 * time.Hour // 2d–3w
+			}
+			// Quality bias: clean operators (cycleBias<1) land work faster; members
+			// carrying debt (cycleBias>1) drag cycle time out. Feeds the quality
+			// dimension (faster, fewer reverts ⇒ higher quality).
+			lead = time.Duration(float64(lead) * author.prof.cycleBias)
+			if lead < time.Hour {
+				lead = time.Hour
 			}
 			// Never merge in the future.
 			mt := firstCommit.Add(lead)
@@ -609,6 +717,7 @@ func (s *seeder) seedPullRequests(orgID string, repos []*store.Repo, projects []
 			merged:      merged,
 			leadSecs:    leadSecs,
 			reviewSecs:  reviewSecs,
+			effortBias:  author.prof.effort,
 		})
 		tally.total++
 	}
@@ -687,9 +796,19 @@ func (s *seeder) seedPullRequests(orgID string, repos []*store.Repo, projects []
 			if rng.Float64() > 0.55 { // estimate ~55% of PRs
 				continue
 			}
-			diff := 1.5 + rng.Float64()*8.0
+			// Author archetype shifts difficulty so the "effort" dimension isn't
+			// flat: high-effort engineers (Sofia, Aisha) land harder PRs; bots and
+			// dependency-bump churn skew easy. Base spread stays, bias re-centres it.
+			diff := 1.5 + rng.Float64()*6.0
+			diff *= g.effortBias
 			if g.add+g.del > 800 {
 				diff = math.Min(10, diff+2)
+			}
+			if diff < 1 {
+				diff = 1
+			}
+			if diff > 10 {
+				diff = 10
 			}
 			ev := fmt.Sprintf(
 				`{"files_changed":%d,"additions":%d,"deletions":%d,"pr_number":%d}`,
@@ -988,13 +1107,34 @@ func (s *seeder) seedInvolvement(orgID string, projects []*projectRow, ct commit
 				total := ct.perUser[m.user.ID]
 				// Scale per-month roughly from total/9 with jitter.
 				monthly := int(float64(total)/9.0*(0.6+rng.Float64()*0.9)) + 1
-				features := monthly/12 + rng.Intn(3)
-				reviews := monthly/8 + rng.Intn(5)
-				if m.role == "admin" { // PMs review more, ship less
+
+				// Per-dimension texture is shaped by the member's archetype so the
+				// Contribution view shows different leaders per dimension instead of
+				// a flat field. Baselines come from commit volume; prof.* multipliers
+				// pull each dimension apart (a shipper ≠ a reviewer ≠ an owner).
+				p := m.prof
+				features := int(float64(monthly)/12.0*p.ship) + rng.Intn(2)
+				reviews := int(float64(monthly)/8.0*p.review) + rng.Intn(2)
+				// areas_owned: small integer (1..~7) scaled by the ownership level.
+				areas := int(math.Round(float64(1+rng.Intn(2)) * p.own))
+				if m.role == "admin" { // PMs review heavily, ship almost nothing
 					features = rng.Intn(2)
-					reviews = 4 + rng.Intn(10)
+					reviews = int(float64(6+rng.Intn(8)) * p.review)
 				}
-				areas := 1 + rng.Intn(3)
+				if m.isAgent {
+					// Gaming-resistance: bots churn commits but earn little human-
+					// style credit. Cap their merged-feature / review footprint hard
+					// regardless of raw commit volume.
+					if features > 1 {
+						features = rng.Intn(2)
+					}
+					if reviews > 1 {
+						reviews = rng.Intn(2)
+					}
+				}
+				if areas < 1 && (m.weight > 0 || m.role == "admin") {
+					areas = 1
+				}
 				added := ct.perUserAdd[m.user.ID] / 9
 				deleted := ct.perUserDel[m.user.ID] / 9
 				dims := fmt.Sprintf(
@@ -1317,7 +1457,7 @@ func (s *seeder) printSummary(
 ║
 ║  Repos:      %d   (GitHub + GitLab)
 ║  Projects:   %d
-║  Commits:    %d   (%d human · %d agent)  over ~%d months
+║  Commits:    %d   (%d human · %d agent · %d revert/hotfix)  over ~%d months
 ║  Pull reqs:  %d   (%d merged · %d open · %d closed)
 ║  Cycle times:%d   Effort estimates: %d
 ║  Issues:     %d   (%d git · %d native)
@@ -1331,7 +1471,7 @@ func (s *seeder) printSummary(
 `,
 		org.Name, org.Slug, len(members),
 		repos, projects,
-		ct.total, ct.human, ct.agent, historyDays/30,
+		ct.total, ct.human, ct.agent, ct.reverts, historyDays/30,
 		pr.total, pr.merged, pr.open, pr.closed,
 		pr.cycleTimes, pr.estimates,
 		iss.total, iss.git, iss.native,
