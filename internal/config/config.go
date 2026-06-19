@@ -138,6 +138,20 @@ type PlanConfig struct {
 type AdminConfig struct {
 	SuperAdminEmails string `yaml:"super_admin_emails"`
 	Realtime         bool   `yaml:"realtime"`
+
+	// DatabaseURL is an optional, separate Postgres connection string for the
+	// super-admin's legitimate CROSS-ORG aggregate reads (MRR, revenue, plan
+	// distribution, signups-by-day, org list). It is expected to point at a
+	// dedicated BYPASSRLS role (e.g. gitstate_admin) so these instance-wide
+	// aggregates can read RLS-protected tables (subscriptions, usage_events,
+	// org_members, …) without a single org context — which the non-superuser
+	// app role cannot do (RLS hides cross-org rows, so MRR/revenue read 0).
+	//
+	// This is the audited service path of decisions S2 — used ONLY for admin
+	// cross-org aggregates, never for normal org-scoped app traffic. When empty,
+	// admin reads fall back to the main pool (current behavior; no special bypass).
+	// Populated from the ADMIN_DATABASE_URL env var.
+	DatabaseURL string `yaml:"-"`
 }
 
 // envVarRe matches ${ENV_VAR} references in YAML values.
@@ -331,4 +345,7 @@ func overlayEnv(cfg *Config) {
 
 	// Admin
 	setStr(&cfg.Admin.SuperAdminEmails, "SUPER_ADMIN_EMAILS")
+	// Separate audited BYPASSRLS service connection for cross-org admin
+	// aggregates (decisions S2). Empty → fall back to the main pool.
+	setStr(&cfg.Admin.DatabaseURL, "ADMIN_DATABASE_URL")
 }

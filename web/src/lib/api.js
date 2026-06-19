@@ -301,6 +301,43 @@ export function disconnectPlatform(platform) {
   return del(`/api/connect/${platform}`)
 }
 
+// ── Calendar connection (Google / Microsoft) helpers ───────────────────────────
+
+/**
+ * Build the top-level navigation URL that starts the Google/Microsoft calendar
+ * connect flow. The /start endpoint self-authenticates from these query params
+ * because a browser navigation can't send Bearer/X-Org-ID headers.
+ * @param {string} provider 'google' | 'microsoft'
+ * @returns {string|null} the URL, or null if not authenticated / no active org
+ */
+export function calendarStartUrl(provider) {
+  const token = getToken()
+  const orgId = getActiveOrgId()
+  if (!token || !orgId) return null
+  const qs = new URLSearchParams({ token, org: orgId })
+  return `${BASE}/api/calendar/${provider}/start?${qs.toString()}`
+}
+
+/** Fetch the member's calendar status: [{provider, connected, configured, email, pushLeave, pullBusy}]. */
+export function fetchCalendarStatus() {
+  return get('/api/calendar/status')
+}
+
+/** Toggle pushLeave/pullBusy on a calendar connection. */
+export function patchCalendar(provider, body) {
+  return patch(`/api/calendar/${provider}`, body)
+}
+
+/** Disconnect a calendar provider (deletes the stored encrypted tokens). */
+export function disconnectCalendar(provider) {
+  return del(`/api/calendar/${provider}`)
+}
+
+/** Pull busy windows from connected calendars into availability for a period. */
+export function syncCalendar(body) {
+  return post('/api/calendar/sync', body ?? {})
+}
+
 /**
  * Fetch public config — used by login page to discover enabled OAuth providers.
  * Shape: { publicUrl, auth: { password, providers: { google, microsoft } }, billing: { chargeCurrency } }

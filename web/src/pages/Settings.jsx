@@ -3,12 +3,16 @@ import { useNavigate, Link } from 'react-router-dom'
 import {
   User, Building2, Plug, AlertTriangle, LogOut, Users, CreditCard,
   ChevronRight, Pencil, Sparkles, KeyRound, Server, Check, Loader2,
+  CalendarDays, Link2, Unlink, ArrowUpFromLine, ArrowDownToLine,
 } from 'lucide-react'
 import { useAuth } from '../lib/useAuth.js'
 import { useOrg } from '../lib/useOrg.js'
 import { Card, Badge, Button } from '../components/ui/index.js'
 import { Reveal } from '../components/Reveal.jsx'
-import { get, put } from '../lib/api.js'
+import {
+  get, put,
+  calendarStartUrl, fetchCalendarStatus, patchCalendar, disconnectCalendar,
+} from '../lib/api.js'
 
 function SectionCard({ icon: Icon, title, description, children, delay = 0, tone = 'default' }) {
   const iconColor = tone === 'danger' ? 'text-red-400' : 'text-[var(--text-faint)]'
@@ -232,6 +236,192 @@ function LLMSettingsSection({ delay }) {
   )
 }
 
+// Inline brand marks (no extra deps).
+function GoogleCalendarMark() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden>
+      <rect x="4" y="4" width="16" height="16" rx="2" fill="#fff" stroke="#dadce0" />
+      <path d="M4 6a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v2H4V6z" fill="#4285F4" />
+      <path d="M16 12.6c0 .9-.7 1.6-1.8 1.6-.9 0-1.6-.5-1.8-1.2l.9-.4c.1.4.4.7.9.7.4 0 .8-.2.8-.7s-.4-.7-.9-.7h-.4v-.8h.4c.4 0 .7-.2.7-.6 0-.3-.3-.6-.7-.6-.4 0-.6.2-.8.6l-.9-.4c.3-.7.9-1 1.7-1 1 0 1.7.6 1.7 1.4 0 .5-.2.9-.6 1.1.5.2.8.6.8 1.2z" fill="#4285F4" />
+    </svg>
+  )
+}
+
+function OutlookMark() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden>
+      <rect x="9" y="4" width="11" height="16" rx="1.5" fill="#fff" stroke="#dadce0" />
+      <rect x="11" y="6" width="7" height="2" fill="#0F6CBD" opacity=".5" />
+      <rect x="11" y="9" width="7" height="2" fill="#0F6CBD" opacity=".5" />
+      <rect x="2" y="6" width="11" height="12" rx="2.5" fill="#0F6CBD" />
+      <path d="M7.5 9.2c-1.5 0-2.5 1.2-2.5 2.8s1 2.8 2.5 2.8S10 13.6 10 12s-1-2.8-2.5-2.8zm0 4.6c-.8 0-1.3-.8-1.3-1.8s.5-1.8 1.3-1.8 1.3.8 1.3 1.8-.5 1.8-1.3 1.8z" fill="#fff" />
+    </svg>
+  )
+}
+
+// CalendarRow — one provider's connect/disconnect + push/pull toggles.
+function CalendarRow({ status, onChanged, brand, label, border }) {
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState(null)
+  const connected = status?.connected
+  const configured = status?.configured
+
+  function connect() {
+    const url = calendarStartUrl(status.provider)
+    if (url) window.location.href = url
+  }
+
+  async function disconnect() {
+    setBusy(true); setError(null)
+    try {
+      await disconnectCalendar(status.provider)
+      onChanged()
+    } catch (e) {
+      setError(e.message ?? 'Failed to disconnect')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function toggle(field) {
+    setBusy(true); setError(null)
+    try {
+      await patchCalendar(status.provider, { [field]: !status[field] })
+      onChanged()
+    } catch (e) {
+      setError(e.message ?? 'Failed to update')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className={`py-3 ${border ? 'border-t border-[var(--border)]' : ''}`}>
+      <div className="flex items-center gap-3">
+        <div className="w-9 h-9 rounded-[var(--radius-btn)] bg-[var(--bg)] border border-[var(--border)] flex items-center justify-center shrink-0">
+          {brand}
+        </div>
+        <div className="flex-1 min-w-0">
+          <p className="text-sm text-[var(--text)]">{label}</p>
+          {!configured ? (
+            <p className="text-xs text-[var(--text-faint)]">Not configured on this server</p>
+          ) : connected ? (
+            <p className="text-xs text-[var(--text-faint)] truncate">{status.email || 'Connected'}</p>
+          ) : (
+            <p className="text-xs text-[var(--text-faint)]">Sync leave &amp; availability two ways</p>
+          )}
+        </div>
+        {configured && (connected ? (
+          <Button
+            variant="outline" size="sm" onClick={disconnect} disabled={busy}
+            leftIcon={busy ? <Loader2 size={13} className="animate-spin" /> : <Unlink size={13} />}
+            className="hover:border-red-500/30 hover:text-red-400 shrink-0"
+          >
+            Disconnect
+          </Button>
+        ) : (
+          <Button
+            variant="outline" size="sm" onClick={connect}
+            leftIcon={<Link2 size={13} />} className="shrink-0"
+          >
+            Connect
+          </Button>
+        ))}
+      </div>
+
+      {connected && (
+        <div className="mt-3 ml-12 flex flex-col sm:flex-row gap-2">
+          <ToggleChip
+            active={status.pushLeave} disabled={busy} onClick={() => toggle('pushLeave')}
+            icon={ArrowUpFromLine} label="Push approved leave"
+          />
+          <ToggleChip
+            active={status.pullBusy} disabled={busy} onClick={() => toggle('pullBusy')}
+            icon={ArrowDownToLine} label="Pull busy into availability"
+          />
+        </div>
+      )}
+
+      {error && <p className="text-xs text-red-400 mt-2 ml-12">{error}</p>}
+    </div>
+  )
+}
+
+function ToggleChip({ active, disabled, onClick, icon: Icon, label }) {
+  return (
+    <button
+      type="button" onClick={onClick} disabled={disabled}
+      className={[
+        'flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs transition-all duration-150',
+        disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer',
+        active
+          ? 'border-[var(--brand-teal)] bg-[var(--brand-teal)]/10 text-[var(--brand-teal)]'
+          : 'border-[var(--border)] text-[var(--text-faint)] hover:border-[var(--border2)]',
+      ].join(' ')}
+    >
+      <Icon size={12} />
+      {label}
+      {active && <Check size={12} className="ml-0.5" />}
+    </button>
+  )
+}
+
+// CalendarSection — connect/disconnect Google & Microsoft calendars and control
+// the two-way (push leave / pull busy) sync per provider.
+function CalendarSection({ delay }) {
+  const [statuses, setStatuses] = useState(null)
+  const [error, setError] = useState(null)
+
+  function reload() {
+    fetchCalendarStatus()
+      .then(setStatuses)
+      .catch((e) => setError(e.message ?? 'Failed to load calendars'))
+  }
+
+  useEffect(() => {
+    let active = true
+    fetchCalendarStatus()
+      .then((s) => active && setStatuses(s))
+      .catch((e) => active && setError(e.message ?? 'Failed to load calendars'))
+    return () => { active = false }
+  }, [])
+
+  const google = statuses?.find((s) => s.provider === 'google')
+  const microsoft = statuses?.find((s) => s.provider === 'microsoft')
+  const anyConfigured = google?.configured || microsoft?.configured
+
+  return (
+    <SectionCard
+      icon={CalendarDays}
+      title="Calendars"
+      description="Two-way sync: approved leave becomes an out-of-office event; calendar busy time feeds your availability."
+      delay={delay}
+    >
+      {!statuses ? (
+        <div className="flex items-center gap-2 py-4 text-xs text-[var(--text-faint)]">
+          <Loader2 size={14} className="animate-spin" /> Loading…
+        </div>
+      ) : !anyConfigured ? (
+        <p className="py-2 text-xs text-[var(--text-faint)]">
+          No calendar provider is configured on this server. Add Google or Microsoft OAuth credentials to enable calendar sync.
+        </p>
+      ) : (
+        <>
+          <CalendarRow
+            status={google ?? { provider: 'google', configured: false }}
+            onChanged={reload} brand={<GoogleCalendarMark />} label="Google Calendar" border={false}
+          />
+          <CalendarRow
+            status={microsoft ?? { provider: 'microsoft', configured: false }}
+            onChanged={reload} brand={<OutlookMark />} label="Microsoft / Outlook" border
+          />
+        </>
+      )}
+      {error && <p className="text-xs text-red-400 mt-2">{error}</p>}
+    </SectionCard>
+  )
+}
+
 export default function Settings() {
   const { user, logout } = useAuth()
   const { activeOrg, orgRole } = useOrg()
@@ -344,6 +534,8 @@ export default function Settings() {
           </Link>
         </div>
       </SectionCard>
+
+      <CalendarSection delay={0.22} />
 
       <SectionCard icon={AlertTriangle} title="Danger zone" description="Irreversible actions." delay={0.25} tone="danger">
         <div className="flex items-center justify-between py-2">

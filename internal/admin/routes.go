@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"html/template"
+	"log/slog"
 	"math"
 	"net/http"
 	"strconv"
@@ -161,10 +162,29 @@ func getTemplates(page string) (*template.Template, error) {
 // ── Handlers struct ───────────────────────────────────────────────────────────
 
 type adminHandlers struct {
-	db     *db.DB
-	cfg    *config.Config
-	pool   *pgxpool.Pool
+	db   *db.DB
+	cfg  *config.Config
+	pool *pgxpool.Pool
+
+	// adminPool is the audited cross-org service pool (decisions S2). When
+	// cfg.Admin.DatabaseURL is set it points at a dedicated BYPASSRLS role so
+	// instance-wide aggregates (MRR, plan distribution, signups-by-day, org
+	// list) can read RLS-protected tables across every org. It is used ONLY for
+	// those cross-org aggregate reads — never for org-scoped traffic. When the
+	// admin URL is unset, adminPool falls back to the main pool (current
+	// behavior, may read 0 under a non-superuser app role).
+	adminPool *pgxpool.Pool
+
 	broker *sseBroker // nil when Realtime=false
+}
+
+// aggPool returns the pool to use for cross-org aggregate reads: the dedicated
+// audited service pool when configured, otherwise the main pool.
+func (h *adminHandlers) aggPool() *pgxpool.Pool {
+	if h.adminPool != nil {
+		return h.adminPool
+	}
+	return h.pool
 }
 
 // ── RegisterAdminRoutes ───────────────────────────────────────────────────────
@@ -191,6 +211,19 @@ func RegisterAdminRoutes(mux *http.ServeMux, database *db.DB, cfg *config.Config
 	}
 
 	h := &adminHandlers{db: database, cfg: cfg, pool: pool}
+
+	// Open the audited cross-org service pool when ADMIN_DATABASE_URL is set
+	// (decisions S2). This pool connects as a dedicated BYPASSRLS role so the
+	// instance-wide aggregate reads below can see across all orgs; without it
+	// the non-superuser app pool returns 0 for MRR/revenue. On failure we log
+	// (never the URL/password) and fall back to the main pool.
+	if cfg.Admin.DatabaseURL != "" {
+		if ap, err := db.NewPool(context.Background(), cfg.Admin.DatabaseURL, cfg.Database.MaxConns); err != nil {
+			slog.Error("admin: failed to open admin service pool; falling back to main pool", "error", err)
+		} else {
+			h.adminPool = ap
+		}
+	}
 
 	if cfg.Admin.Realtime {
 		h.broker = newSSEBroker()
@@ -235,6 +268,31 @@ func renderErr(w http.ResponseWriter, msg string, status int) {
 	http.Error(w, msg, status)
 }
 
+// auditCrossOrgView writes an audit_log row when a super-admin loads a cross-org
+// aggregate view (decisions S2: cross-org access must be audited, never ambient).
+// orgID is empty because the action spans all orgs. The audit row is written via
+// the request-scoped main pool; a write failure is logged but never denies the
+// view. Skips htmx partial re-fetches (the full page load already audited) and
+// no-ops when there is no authenticated actor or no DB.
+func (h *adminHandlers) auditCrossOrgView(ctx context.Context, r *http.Request, action string) {
+	if h.pool == nil {
+		return
+	}
+	if r.Header.Get("HX-Request") == "true" {
+		return
+	}
+	actor := middleware.UserFromContext(ctx)
+	if actor == nil {
+		return
+	}
+	if err := store.WriteAudit(ctx, h.pool, actor.ID, "", action, "", map[string]any{
+		"actor_email": actor.Email,
+	}); err != nil {
+		slog.WarnContext(ctx, "admin: audit write failed for cross-org view",
+			"actor_id", actor.ID, "action", action, "error", err)
+	}
+}
+
 // ── Analytics page ────────────────────────────────────────────────────────────
 
 type analyticsData struct {
@@ -254,16 +312,23 @@ func (h *adminHandlers) analytics(w http.ResponseWriter, r *http.Request) {
 
 	data := analyticsData{baseData: h.base(r, "analytics")}
 
-	if h.pool != nil {
+	// Cross-org aggregates read through the audited service pool (decisions S2).
+	if agg := h.aggPool(); agg != nil {
 		ctx := r.Context()
-		data.Stats, _ = store.GetAdminStats(ctx, h.pool)
-		data.Signups, _ = store.GetSignupsByDay(ctx, h.pool, 30)
-		data.Plans, _ = store.GetPlanDistribution(ctx, h.pool)
+		data.Stats, _ = store.GetAdminStats(ctx, agg)
+		data.Signups, _ = store.GetSignupsByDay(ctx, agg, 30)
+		data.Plans, _ = store.GetPlanDistribution(ctx, agg)
 		for _, p := range data.Plans {
 			if p.Count > data.MaxPlanCount {
 				data.MaxPlanCount = p.Count
 			}
 		}
+
+		// S2: cross-org aggregate access is audited. Write on the (non-htmx)
+		// page load. Use the main pool for the audit write so audit_log is
+		// always written via the request-scoped path; failure must not deny the
+		// view.
+		h.auditCrossOrgView(ctx, r, "admin.analytics.view")
 	}
 	if data.Stats == nil {
 		data.Stats = &store.AdminStats{}
@@ -358,10 +423,12 @@ func (h *adminHandlers) orgs(w http.ResponseWriter, r *http.Request) {
 		Page:     page,
 	}
 
-	if h.pool != nil {
+	// The org list is an instance-wide cross-org read → audited service pool (S2).
+	if agg := h.aggPool(); agg != nil {
 		ctx := r.Context()
-		data.Total, _ = store.CountAdminOrgs(ctx, h.pool)
-		data.Orgs, _ = store.ListAdminOrgs(ctx, h.pool, orgsPageSize, (page-1)*orgsPageSize)
+		data.Total, _ = store.CountAdminOrgs(ctx, agg)
+		data.Orgs, _ = store.ListAdminOrgs(ctx, agg, orgsPageSize, (page-1)*orgsPageSize)
+		h.auditCrossOrgView(ctx, r, "admin.orgs.view")
 	}
 	data.TotalPages = intMax(1, int(math.Ceil(float64(data.Total)/float64(orgsPageSize))))
 
@@ -524,10 +591,13 @@ func (h *adminHandlers) realtimePusher() {
 	defer ticker.Stop()
 
 	for range ticker.C {
-		if h.pool == nil || h.broker == nil {
+		agg := h.aggPool()
+		if agg == nil || h.broker == nil {
 			continue
 		}
-		stats, err := store.GetAdminStats(context.Background(), h.pool)
+		// Cross-org aggregate refresh → service pool (S2). Not audited here:
+		// this is a background refresh, not an interactive super-admin view.
+		stats, err := store.GetAdminStats(context.Background(), agg)
 		if err != nil {
 			continue
 		}

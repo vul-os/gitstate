@@ -205,9 +205,11 @@ func main() {
 	// ── 10. Involvement texture (per member/project, monthly) ─────────────
 	s.seedInvolvement(org.ID, projects, commitStats)
 
-	// ── 11. Capacity: availability · leave · time entries ─────────────────
+	// ── 11. Capacity: availability · leave types · leave · balances · time ─
 	s.seedAvailability(org.ID)
-	leaveCount := s.seedLeave(org.ID)
+	leaveTypes := s.seedLeaveTypes(org.ID)
+	leaveCount := s.seedLeave(org.ID, leaveTypes)
+	s.seedLeaveBalances(org.ID, leaveTypes)
 	timeCount := s.seedTimeEntries(org.ID, issueIDs)
 
 	// ── Summary ───────────────────────────────────────────────────────────
@@ -228,7 +230,7 @@ type commitTally struct {
 
 // commitVerbs / scopes / subjects compose plausible conventional-commit messages.
 var (
-	commitTypes = []string{"feat", "fix", "refactor", "chore", "test", "docs", "perf", "style", "build", "ci"}
+	commitTypes  = []string{"feat", "fix", "refactor", "chore", "test", "docs", "perf", "style", "build", "ci"}
 	commitScopes = []string{
 		"auth", "api", "ui", "db", "billing", "search", "cache", "metrics",
 		"router", "config", "worker", "pipeline", "schema", "deps", "ci",
@@ -537,7 +539,7 @@ func (s *seeder) seedPullRequests(orgID string, repos []*store.Repo, projects []
 		add, del, files                              int
 		firstCommit                                  time.Time
 		merged                                       *time.Time
-		leadSecs, reviewSecs                          int64
+		leadSecs, reviewSecs                         int64
 	}
 	var gens []prGen
 
@@ -718,7 +720,7 @@ func (s *seeder) seedPullRequests(orgID string, repos []*store.Repo, projects []
 // ── issues ──────────────────────────────────────────────────────────────────
 
 type issueTally struct {
-	total, git, native            int
+	total, git, native             int
 	open, inProgress, done, closed int
 }
 
@@ -795,18 +797,18 @@ func (s *seeder) seedIssues(orgID string, repos []*store.Repo, projects []*proje
 
 	const targetIssues = 120
 	type issueGen struct {
-		projectID  string
-		repoID     *string
-		source     string
-		platform   string
-		extID      string
-		number     int
-		title      string
-		body       string
-		state      string
-		derived    string
-		assignee   *string
-		labels     []string
+		projectID string
+		repoID    *string
+		source    string
+		platform  string
+		extID     string
+		number    int
+		title     string
+		body      string
+		state     string
+		derived   string
+		assignee  *string
+		labels    []string
 	}
 	var gens []issueGen
 
@@ -987,47 +989,106 @@ func (s *seeder) seedAvailability(orgID string) {
 	}))
 }
 
-// seedLeave writes a scattering of PTO / sick / holiday entries across members
-// and across the period so the capacity calendar shows real gaps.
-func (s *seeder) seedLeave(orgID string) int {
-	kinds := []string{"pto", "pto", "pto", "sick", "holiday"}
-	notes := map[string]string{
-		"pto": "Annual leave", "sick": "", "holiday": "Public holiday",
+// leaveTypeSeed is a configurable leave type plus the legacy `kind` it maps to
+// (so existing capacity math, which still keys off `kind`, stays coherent).
+type leaveTypeSeed struct {
+	id          string  // filled in after insert
+	name        string  // Vacation, Sick, Personal, Parental
+	kind        string  // legacy classifier: pto | sick | holiday
+	color       string  // hex
+	defaultDays float64 // annual entitlement
+	carryover   float64
+	paid        bool
+}
+
+// seedLeaveTypes inserts the configurable leave-type catalogue for the org and
+// returns it with ids resolved. Vacation/Sick/Personal/Parental, each colour-
+// coded so the team calendar reads at a glance.
+func (s *seeder) seedLeaveTypes(orgID string) []*leaveTypeSeed {
+	types := []*leaveTypeSeed{
+		{name: "Vacation", kind: "pto", color: "#2DD4BF", defaultDays: 25, carryover: 5, paid: true},
+		{name: "Sick", kind: "sick", color: "#F59E0B", defaultDays: 10, carryover: 0, paid: true},
+		{name: "Personal", kind: "pto", color: "#6366F1", defaultDays: 5, carryover: 0, paid: true},
+		{name: "Parental", kind: "holiday", color: "#EC4899", defaultDays: 90, carryover: 0, paid: true},
 	}
+	s.must(s.db.WithOrg(s.ctx, orgID, func(tx pgx.Tx) error {
+		const q = `
+			INSERT INTO leave_types
+			    (org_id, name, color, default_days, requires_approval, accrues, carryover_max, paid)
+			VALUES ($1, $2, $3, $4, true, false, $5, $6)
+			ON CONFLICT (org_id, name) DO UPDATE SET
+			    color         = EXCLUDED.color,
+			    default_days  = EXCLUDED.default_days,
+			    carryover_max = EXCLUDED.carryover_max,
+			    paid          = EXCLUDED.paid
+			RETURNING id`
+		for _, t := range types {
+			if err := tx.QueryRow(s.ctx, q,
+				orgID, t.name, t.color, t.defaultDays, t.carryover, t.paid,
+			).Scan(&t.id); err != nil {
+				return fmt.Errorf("seed: insert leave_type %s: %w", t.name, err)
+			}
+		}
+		return nil
+	}))
+	return types
+}
+
+// seedLeave writes a scattering of typed leave entries across members and across
+// the period so the team calendar shows real gaps. Each entry carries both the
+// legacy `kind` (for capacity math) and a `leave_type_id` (for the richer UI),
+// and a minority are half-days.
+func (s *seeder) seedLeave(orgID string, types []*leaveTypeSeed) int {
 	type leave struct {
-		userID, kind, start, end, note string
+		userID, kind, typeID, start, end, note, portion string
+		halfDay                                         bool
+	}
+	notes := map[string]string{
+		"Vacation": "Annual leave", "Sick": "Out sick",
+		"Personal": "Personal day", "Parental": "Parental leave",
 	}
 	var rows []leave
 	for _, m := range members {
 		if m.role == "stakeholder" || m.isAgent {
 			continue
 		}
-		// 1–3 leave entries per person across the window.
-		for k := 0; k < 1+rng.Intn(3); k++ {
-			kind := kinds[rng.Intn(len(kinds))]
+		// 2–4 leave entries per person across the window.
+		for k := 0; k < 2+rng.Intn(3); k++ {
+			t := types[rng.Intn(len(types))]
 			daysBack := rng.Intn(historyDays) - 14 // can be slightly future
 			start := now.AddDate(0, 0, -daysBack)
+
+			// ~20% of non-parental leave is a single half-day.
+			halfDay := t.name != "Parental" && rng.Float64() < 0.2
+			portion := "full"
 			span := 0
-			if kind == "pto" {
+			switch {
+			case halfDay:
+				portion = []string{"am", "pm"}[rng.Intn(2)]
+			case t.name == "Parental":
+				span = 20 + rng.Intn(40) // long block
+			case t.kind == "pto":
 				span = rng.Intn(5)
 			}
 			end := start.AddDate(0, 0, span)
 			rows = append(rows, leave{
-				userID: m.user.ID, kind: kind,
-				start: start.Format("2006-01-02"),
-				end:   end.Format("2006-01-02"),
-				note:  notes[kind],
+				userID: m.user.ID, kind: t.kind, typeID: t.id,
+				start:   start.Format("2006-01-02"),
+				end:     end.Format("2006-01-02"),
+				note:    notes[t.name],
+				halfDay: halfDay, portion: portion,
 			})
 		}
 	}
 	s.must(s.db.WithOrg(s.ctx, orgID, func(tx pgx.Tx) error {
 		const q = `
-			INSERT INTO leave_entries (org_id, user_id, kind, start_date, end_date, status, note)
-			VALUES ($1, $2, $3, $4, $5, 'approved', $6)
+			INSERT INTO leave_entries
+			    (org_id, user_id, kind, leave_type_id, start_date, end_date, half_day, portion, status, note)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'approved', $9)
 			ON CONFLICT DO NOTHING`
 		batch := &pgx.Batch{}
 		for _, r := range rows {
-			batch.Queue(q, orgID, r.userID, r.kind, r.start, r.end, r.note)
+			batch.Queue(q, orgID, r.userID, r.kind, r.typeID, r.start, r.end, r.halfDay, r.portion, r.note)
 		}
 		br := tx.SendBatch(s.ctx, batch)
 		defer br.Close()
@@ -1039,6 +1100,70 @@ func (s *seeder) seedLeave(orgID string) int {
 		return nil
 	}))
 	return len(rows)
+}
+
+// seedLeaveBalances writes a per-member, per-type balance for the current year.
+// entitled_days comes from the type default (with a little jitter for realism),
+// carried_days from prior-year carryover, and used_days is computed from the
+// approved leave just seeded — so remaining (entitled+carried−used) reads true.
+func (s *seeder) seedLeaveBalances(orgID string, types []*leaveTypeSeed) {
+	year := now.Year()
+	s.must(s.db.WithOrg(s.ctx, orgID, func(tx pgx.Tx) error {
+		const upsert = `
+			INSERT INTO leave_balances
+			    (org_id, user_id, leave_type_id, year, entitled_days, carried_days)
+			VALUES ($1, $2, $3, $4, $5, $6)
+			ON CONFLICT (org_id, user_id, leave_type_id, year) DO UPDATE SET
+			    entitled_days = EXCLUDED.entitled_days,
+			    carried_days  = EXCLUDED.carried_days`
+		// used_days is the SUM of approved leave days of this type this year
+		// (half-days count as 0.5), matching store.RecomputeUsedDays.
+		const recompute = `
+			UPDATE leave_balances b SET used_days = COALESCE((
+			    SELECT SUM(CASE WHEN e.half_day THEN 0.5 ELSE (e.end_date - e.start_date) + 1 END)
+			    FROM leave_entries e
+			    WHERE e.org_id = b.org_id AND e.user_id = b.user_id
+			      AND e.leave_type_id = b.leave_type_id
+			      AND e.status = 'approved'
+			      AND EXTRACT(YEAR FROM e.start_date) = b.year
+			), 0)
+			WHERE b.org_id = $1 AND b.year = $2`
+
+		batch := &pgx.Batch{}
+		n := 0
+		for _, m := range members {
+			if m.role == "stakeholder" || m.isAgent {
+				continue
+			}
+			for _, t := range types {
+				// Jitter entitlement slightly so cards vary; carryover only for
+				// types that allow it.
+				entitled := t.defaultDays
+				if t.name == "Vacation" {
+					entitled = t.defaultDays - float64(rng.Intn(4)) // some used last year
+				}
+				carried := 0.0
+				if t.carryover > 0 && rng.Float64() < 0.6 {
+					carried = math.Round(rng.Float64()*t.carryover*10) / 10
+				}
+				batch.Queue(upsert, orgID, m.user.ID, t.id, year, entitled, carried)
+				n++
+			}
+		}
+		br := tx.SendBatch(s.ctx, batch)
+		for j := 0; j < n; j++ {
+			if _, err := br.Exec(); err != nil {
+				br.Close()
+				return fmt.Errorf("seed: batch insert leave_balance: %w", err)
+			}
+		}
+		br.Close()
+		// Backfill used_days from the approved leave entries.
+		if _, err := tx.Exec(s.ctx, recompute, orgID, year); err != nil {
+			return fmt.Errorf("seed: recompute leave_balance used_days: %w", err)
+		}
+		return nil
+	}))
 }
 
 // seedTimeEntries logs manual/git time across the last ~8 weeks against issues.

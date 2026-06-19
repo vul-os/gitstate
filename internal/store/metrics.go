@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // ── CycleTime ────────────────────────────────────────────────────────────────
@@ -63,10 +62,16 @@ type CycleTimeFilter struct {
 	To     time.Time // optional — computed_at <= To
 }
 
+// Querier is satisfied by both *pgxpool.Pool and pgx.Tx, so these reads can run
+// inside a db.WithOrg transaction (which sets app.current_org for RLS). Running
+// them on a bare pool returns ZERO rows now that RLS is enforced.
+type Querier interface {
+	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
+}
+
 // ListCycleTimes returns cycle_time rows for an org, newest-computed first.
-// The pool is used directly; the caller must ensure the connection carries the
-// RLS context (OrgScope middleware sets it per-request).
-func ListCycleTimes(ctx context.Context, pool *pgxpool.Pool, orgID string, f CycleTimeFilter) ([]*CycleTime, error) {
+// MUST be called inside db.WithOrg(ctx, orgID, …) so the RLS context is set.
+func ListCycleTimes(ctx context.Context, qr Querier, orgID string, f CycleTimeFilter) ([]*CycleTime, error) {
 	// Build a parameterised query; extra predicates are appended as needed.
 	baseQ := `
 		SELECT ct.id, ct.org_id, ct.pr_id::text,
@@ -96,7 +101,7 @@ func ListCycleTimes(ctx context.Context, pool *pgxpool.Pool, orgID string, f Cyc
 	}
 
 	q := baseQ + where + " ORDER BY ct.computed_at DESC"
-	rows, err := pool.Query(ctx, q, args...)
+	rows, err := qr.Query(ctx, q, args...)
 	if err != nil {
 		return nil, fmt.Errorf("store.metrics: list cycle_times: %w", err)
 	}
@@ -205,8 +210,8 @@ type InvolvementFilter struct {
 }
 
 // ListInvolvement returns involvement rows for an org, sorted by user_id then
-// period_start descending. Uses the pool directly; caller sets RLS context.
-func ListInvolvement(ctx context.Context, pool *pgxpool.Pool, orgID string, f InvolvementFilter) ([]*Involvement, error) {
+// period_start descending. MUST be called inside db.WithOrg so RLS context is set.
+func ListInvolvement(ctx context.Context, qr Querier, orgID string, f InvolvementFilter) ([]*Involvement, error) {
 	q := `
 		SELECT id, org_id, project_id::text, user_id::text,
 		       period_start, features_shipped, reviews_done, areas_owned,
@@ -230,7 +235,7 @@ func ListInvolvement(ctx context.Context, pool *pgxpool.Pool, orgID string, f In
 
 	q += " ORDER BY user_id, period_start DESC"
 
-	rows, err := pool.Query(ctx, q, args...)
+	rows, err := qr.Query(ctx, q, args...)
 	if err != nil {
 		return nil, fmt.Errorf("store.metrics: list involvement: %w", err)
 	}

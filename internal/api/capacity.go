@@ -5,6 +5,7 @@ package api
 
 import (
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -20,8 +21,12 @@ import (
 // endpoints onto mux. All routes are guarded by RequireAuth + OrgScope.
 //
 //	GET  /api/leave                — list leave entries (org or user-scoped)
-//	POST /api/leave                — submit a leave request
+//	POST /api/leave                — submit a leave request (type, half-day, portion)
 //	PATCH /api/leave/{id}          — approve or reject a leave request
+//	GET  /api/leave-types          — list configurable leave types
+//	POST /api/leave-types          — create a leave type (owner/admin)
+//	PATCH /api/leave-types/{id}    — update / archive a leave type (owner/admin)
+//	GET  /api/leave-balances       — per-user balances (entitled/carried/used/remaining)
 //	GET  /api/availability         — get current member availability
 //	PUT  /api/availability         — set member availability
 //	GET  /api/time-entries         — list time entries
@@ -36,6 +41,10 @@ func RegisterCapacityRoutes(mux *http.ServeMux, database *db.DB, cfg *config.Con
 	mux.Handle("GET /api/leave", auth(http.HandlerFunc(h.listLeave)))
 	mux.Handle("POST /api/leave", auth(http.HandlerFunc(h.createLeave)))
 	mux.Handle("PATCH /api/leave/{id}", auth(http.HandlerFunc(h.approveLeave)))
+	mux.Handle("GET /api/leave-types", auth(http.HandlerFunc(h.listLeaveTypes)))
+	mux.Handle("POST /api/leave-types", auth(http.HandlerFunc(h.createLeaveType)))
+	mux.Handle("PATCH /api/leave-types/{id}", auth(http.HandlerFunc(h.updateLeaveType)))
+	mux.Handle("GET /api/leave-balances", auth(http.HandlerFunc(h.listLeaveBalances)))
 	mux.Handle("GET /api/availability", auth(http.HandlerFunc(h.getAvailability)))
 	mux.Handle("PUT /api/availability", auth(http.HandlerFunc(h.putAvailability)))
 	mux.Handle("GET /api/time-entries", auth(http.HandlerFunc(h.listTimeEntries)))
@@ -51,24 +60,30 @@ type capacityHandlers struct {
 // ── Leave ─────────────────────────────────────────────────────────────────
 
 type leaveResponse struct {
-	ID        string `json:"id"`
-	UserID    string `json:"userId"`
-	Kind      string `json:"kind"`
-	StartDate string `json:"startDate"` // YYYY-MM-DD
-	EndDate   string `json:"endDate"`
-	Status    string `json:"status"`
-	Note      string `json:"note,omitempty"`
+	ID          string `json:"id"`
+	UserID      string `json:"userId"`
+	Kind        string `json:"kind"`
+	LeaveTypeID string `json:"leaveTypeId,omitempty"`
+	StartDate   string `json:"startDate"` // YYYY-MM-DD
+	EndDate     string `json:"endDate"`
+	HalfDay     bool   `json:"halfDay"`
+	Portion     string `json:"portion"` // full | am | pm
+	Status      string `json:"status"`
+	Note        string `json:"note,omitempty"`
 }
 
 func leaveToResponse(e *store.LeaveEntry) leaveResponse {
 	return leaveResponse{
-		ID:        e.ID,
-		UserID:    e.UserID,
-		Kind:      e.Kind,
-		StartDate: e.StartDate.Format("2006-01-02"),
-		EndDate:   e.EndDate.Format("2006-01-02"),
-		Status:    e.Status,
-		Note:      e.Note,
+		ID:          e.ID,
+		UserID:      e.UserID,
+		Kind:        e.Kind,
+		LeaveTypeID: e.LeaveTypeID,
+		StartDate:   e.StartDate.Format("2006-01-02"),
+		EndDate:     e.EndDate.Format("2006-01-02"),
+		HalfDay:     e.HalfDay,
+		Portion:     e.Portion,
+		Status:      e.Status,
+		Note:        e.Note,
 	}
 }
 
@@ -114,11 +129,14 @@ func (h *capacityHandlers) createLeave(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var body struct {
-		UserID    string `json:"userId"`    // defaults to authenticated user
-		Kind      string `json:"kind"`      // pto | sick | holiday
-		StartDate string `json:"startDate"` // YYYY-MM-DD
-		EndDate   string `json:"endDate"`
-		Note      string `json:"note"`
+		UserID      string `json:"userId"`      // defaults to authenticated user
+		Kind        string `json:"kind"`        // pto | sick | holiday (legacy classifier)
+		LeaveTypeID string `json:"leaveTypeId"` // configurable leave type (optional)
+		StartDate   string `json:"startDate"`   // YYYY-MM-DD
+		EndDate     string `json:"endDate"`
+		HalfDay     bool   `json:"halfDay"` // single half-day off
+		Portion     string `json:"portion"` // full | am | pm
+		Note        string `json:"note"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
@@ -130,6 +148,13 @@ func (h *capacityHandlers) createLeave(w http.ResponseWriter, r *http.Request) {
 	}
 	if body.Kind == "" {
 		body.Kind = "pto"
+	}
+	if body.Portion == "" {
+		body.Portion = "full"
+	}
+	if body.Portion != "full" && body.Portion != "am" && body.Portion != "pm" {
+		writeError(w, http.StatusBadRequest, "portion must be 'full', 'am', or 'pm'")
+		return
 	}
 	if body.StartDate == "" || body.EndDate == "" {
 		writeError(w, http.StatusBadRequest, "startDate and endDate are required")
@@ -149,10 +174,19 @@ func (h *capacityHandlers) createLeave(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "endDate must be >= startDate")
 		return
 	}
+	// A half-day request is, by definition, a single day.
+	if body.HalfDay && !start.Equal(end) {
+		writeError(w, http.StatusBadRequest, "halfDay leave must have equal start and end dates")
+		return
+	}
+	if body.Portion != "full" {
+		body.HalfDay = true
+	}
 
 	var resp leaveResponse
 	err = h.db.WithOrg(r.Context(), orgID, func(tx pgx.Tx) error {
-		e, err := store.CreateLeaveEntry(r.Context(), tx, orgID, body.UserID, body.Kind, body.Note, start, end)
+		e, err := store.CreateLeaveEntry(r.Context(), tx, orgID, body.UserID, body.Kind,
+			body.LeaveTypeID, body.Note, start, end, body.HalfDay, body.Portion)
 		if err != nil {
 			return err
 		}
@@ -199,6 +233,15 @@ func (h *capacityHandlers) approveLeave(w http.ResponseWriter, r *http.Request) 
 		if err != nil {
 			return err
 		}
+		// A status change (approve OR reject) shifts how many days count as
+		// "used". If the entry carries a configurable leave type, recompute the
+		// affected balance so remaining-days stays accurate.
+		if e.LeaveTypeID != "" {
+			year := e.StartDate.Year()
+			if _, rerr := store.RecomputeUsedDays(r.Context(), tx, orgID, e.UserID, e.LeaveTypeID, year); rerr != nil {
+				return rerr
+			}
+		}
 		resp = leaveToResponse(e)
 		return nil
 	})
@@ -210,7 +253,272 @@ func (h *capacityHandlers) approveLeave(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusInternalServerError, "could not update leave entry")
 		return
 	}
+
+	// Best-effort two-way sync: mirror an approved leave onto the member's connected
+	// Google/Microsoft calendars (OOO event). A calendar failure must NOT fail the
+	// approval — it's logged and the response still succeeds.
+	if body.Status == "approved" {
+		if perr := PushApprovedLeave(r.Context(), h.db, h.cfg, orgID, id); perr != nil {
+			slog.Warn("calendar: push approved leave failed (non-fatal)",
+				"org_id", orgID, "leave_id", id, "err", perr)
+		}
+	}
+
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// ── Leave types ─────────────────────────────────────────────────────────────
+
+type leaveTypeResponse struct {
+	ID               string  `json:"id"`
+	Name             string  `json:"name"`
+	Color            string  `json:"color"`
+	DefaultDays      float64 `json:"defaultDays"`
+	RequiresApproval bool    `json:"requiresApproval"`
+	Accrues          bool    `json:"accrues"`
+	CarryoverMax     float64 `json:"carryoverMax"`
+	Paid             bool    `json:"paid"`
+	Archived         bool    `json:"archived"`
+}
+
+func leaveTypeToResponse(t *store.LeaveType) leaveTypeResponse {
+	return leaveTypeResponse{
+		ID:               t.ID,
+		Name:             t.Name,
+		Color:            t.Color,
+		DefaultDays:      t.DefaultDays,
+		RequiresApproval: t.RequiresApproval,
+		Accrues:          t.Accrues,
+		CarryoverMax:     t.CarryoverMax,
+		Paid:             t.Paid,
+		Archived:         t.Archived,
+	}
+}
+
+func (h *capacityHandlers) listLeaveTypes(w http.ResponseWriter, r *http.Request) {
+	orgID := middleware.OrgFromContext(r.Context())
+	if orgID == "" {
+		writeError(w, http.StatusBadRequest, "X-Org-ID header required")
+		return
+	}
+	includeArchived := r.URL.Query().Get("archived") == "true"
+
+	var out []leaveTypeResponse
+	err := h.db.WithOrg(r.Context(), orgID, func(tx pgx.Tx) error {
+		types, err := store.ListLeaveTypes(r.Context(), tx, orgID, includeArchived)
+		if err != nil {
+			return err
+		}
+		for _, t := range types {
+			out = append(out, leaveTypeToResponse(t))
+		}
+		return nil
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not list leave types")
+		return
+	}
+	if out == nil {
+		out = []leaveTypeResponse{}
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+func (h *capacityHandlers) createLeaveType(w http.ResponseWriter, r *http.Request) {
+	orgID := middleware.OrgFromContext(r.Context())
+	if orgID == "" {
+		writeError(w, http.StatusBadRequest, "X-Org-ID header required")
+		return
+	}
+	user := middleware.UserFromContext(r.Context())
+	if user == nil {
+		writeError(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+	// Only owners/admins may configure leave types.
+	role, err := store.GetMemberRole(r.Context(), h.db.Pool(), orgID, user.ID)
+	if err != nil || !canManageMembers(role) {
+		writeError(w, http.StatusForbidden, "only owners and admins can manage leave types")
+		return
+	}
+
+	var body struct {
+		Name             string  `json:"name"`
+		Color            string  `json:"color"`
+		DefaultDays      float64 `json:"defaultDays"`
+		RequiresApproval *bool   `json:"requiresApproval"`
+		Accrues          bool    `json:"accrues"`
+		CarryoverMax     float64 `json:"carryoverMax"`
+		Paid             *bool   `json:"paid"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if body.Name == "" {
+		writeError(w, http.StatusBadRequest, "name is required")
+		return
+	}
+	requiresApproval := true
+	if body.RequiresApproval != nil {
+		requiresApproval = *body.RequiresApproval
+	}
+	paid := true
+	if body.Paid != nil {
+		paid = *body.Paid
+	}
+
+	var resp leaveTypeResponse
+	err = h.db.WithOrg(r.Context(), orgID, func(tx pgx.Tx) error {
+		t, err := store.CreateLeaveType(r.Context(), tx, &store.LeaveType{
+			OrgID:            orgID,
+			Name:             body.Name,
+			Color:            body.Color,
+			DefaultDays:      body.DefaultDays,
+			RequiresApproval: requiresApproval,
+			Accrues:          body.Accrues,
+			CarryoverMax:     body.CarryoverMax,
+			Paid:             paid,
+		})
+		if err != nil {
+			return err
+		}
+		resp = leaveTypeToResponse(t)
+		return nil
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not create leave type")
+		return
+	}
+	writeJSON(w, http.StatusCreated, resp)
+}
+
+func (h *capacityHandlers) updateLeaveType(w http.ResponseWriter, r *http.Request) {
+	orgID := middleware.OrgFromContext(r.Context())
+	if orgID == "" {
+		writeError(w, http.StatusBadRequest, "X-Org-ID header required")
+		return
+	}
+	user := middleware.UserFromContext(r.Context())
+	if user == nil {
+		writeError(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+	role, err := store.GetMemberRole(r.Context(), h.db.Pool(), orgID, user.ID)
+	if err != nil || !canManageMembers(role) {
+		writeError(w, http.StatusForbidden, "only owners and admins can manage leave types")
+		return
+	}
+	id := r.PathValue("id")
+	if id == "" {
+		writeError(w, http.StatusBadRequest, "leave type id is required")
+		return
+	}
+
+	var body struct {
+		Name             *string  `json:"name"`
+		Color            *string  `json:"color"`
+		DefaultDays      *float64 `json:"defaultDays"`
+		RequiresApproval *bool    `json:"requiresApproval"`
+		Accrues          *bool    `json:"accrues"`
+		CarryoverMax     *float64 `json:"carryoverMax"`
+		Paid             *bool    `json:"paid"`
+		Archived         *bool    `json:"archived"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	var resp leaveTypeResponse
+	err = h.db.WithOrg(r.Context(), orgID, func(tx pgx.Tx) error {
+		t, err := store.UpdateLeaveType(r.Context(), tx, orgID, id, store.LeaveTypePatch{
+			Name:             body.Name,
+			Color:            body.Color,
+			DefaultDays:      body.DefaultDays,
+			RequiresApproval: body.RequiresApproval,
+			Accrues:          body.Accrues,
+			CarryoverMax:     body.CarryoverMax,
+			Paid:             body.Paid,
+			Archived:         body.Archived,
+		})
+		if err != nil {
+			return err
+		}
+		resp = leaveTypeToResponse(t)
+		return nil
+	})
+	if err == store.ErrNotFound {
+		writeError(w, http.StatusNotFound, "leave type not found")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not update leave type")
+		return
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// ── Leave balances ──────────────────────────────────────────────────────────
+
+type leaveBalanceResponse struct {
+	UserID       string  `json:"userId"`
+	LeaveTypeID  string  `json:"leaveTypeId"`
+	Year         int     `json:"year"`
+	EntitledDays float64 `json:"entitledDays"`
+	CarriedDays  float64 `json:"carriedDays"`
+	UsedDays     float64 `json:"usedDays"`
+	Remaining    float64 `json:"remainingDays"`
+}
+
+func leaveBalanceToResponse(b *store.LeaveBalance) leaveBalanceResponse {
+	return leaveBalanceResponse{
+		UserID:       b.UserID,
+		LeaveTypeID:  b.LeaveTypeID,
+		Year:         b.Year,
+		EntitledDays: b.EntitledDays,
+		CarriedDays:  b.CarriedDays,
+		UsedDays:     b.UsedDays,
+		Remaining:    b.Remaining(),
+	}
+}
+
+// listLeaveBalances handles GET /api/leave-balances?user=&year=
+// When user is omitted it returns balances for the whole org; year defaults to
+// the current year.
+func (h *capacityHandlers) listLeaveBalances(w http.ResponseWriter, r *http.Request) {
+	orgID := middleware.OrgFromContext(r.Context())
+	if orgID == "" {
+		writeError(w, http.StatusBadRequest, "X-Org-ID header required")
+		return
+	}
+	userID := r.URL.Query().Get("user")
+	year := time.Now().UTC().Year()
+	if y := r.URL.Query().Get("year"); y != "" {
+		if parsed, err := time.Parse("2006", y); err == nil {
+			year = parsed.Year()
+		}
+	}
+
+	var out []leaveBalanceResponse
+	err := h.db.WithOrg(r.Context(), orgID, func(tx pgx.Tx) error {
+		balances, err := store.ListLeaveBalances(r.Context(), tx, orgID, userID, year)
+		if err != nil {
+			return err
+		}
+		for _, b := range balances {
+			out = append(out, leaveBalanceToResponse(b))
+		}
+		return nil
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not list leave balances")
+		return
+	}
+	if out == nil {
+		out = []leaveBalanceResponse{}
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 // ── Availability ──────────────────────────────────────────────────────────

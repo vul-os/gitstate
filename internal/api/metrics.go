@@ -17,6 +17,8 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/jackc/pgx/v5"
+
 	"github.com/exo/gitstate/internal/config"
 	"github.com/exo/gitstate/internal/db"
 	"github.com/exo/gitstate/internal/llm"
@@ -133,12 +135,18 @@ func (h *metricsHandlers) cycleTime(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	cts, err := store.ListCycleTimes(r.Context(), h.db.Pool(), orgID, store.CycleTimeFilter{
-		RepoID: repoID,
-		From:   from,
-		To:     to,
-	})
-	if err != nil {
+	// Run inside WithOrg so app.current_org is set — cycle_times has RLS enabled and
+	// a bare pool (no org context) returns ZERO rows under the non-superuser role.
+	var cts []*store.CycleTime
+	if err := h.db.WithOrg(r.Context(), orgID, func(tx pgx.Tx) error {
+		var e error
+		cts, e = store.ListCycleTimes(r.Context(), tx, orgID, store.CycleTimeFilter{
+			RepoID: repoID,
+			From:   from,
+			To:     to,
+		})
+		return e
+	}); err != nil {
 		writeMetricsError(w, "list cycle times", err)
 		return
 	}
@@ -187,11 +195,17 @@ func (h *metricsHandlers) involvement(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	invs, err := store.ListInvolvement(r.Context(), h.db.Pool(), orgID, store.InvolvementFilter{
-		ProjectID:   projectID,
-		PeriodStart: periodStart,
-	})
-	if err != nil {
+	// WithOrg sets the RLS org context — involvement has RLS enabled, so a bare pool
+	// would return zero rows under the non-superuser role.
+	var invs []*store.Involvement
+	if err := h.db.WithOrg(r.Context(), orgID, func(tx pgx.Tx) error {
+		var e error
+		invs, e = store.ListInvolvement(r.Context(), tx, orgID, store.InvolvementFilter{
+			ProjectID:   projectID,
+			PeriodStart: periodStart,
+		})
+		return e
+	}); err != nil {
 		writeMetricsError(w, "list involvement", err)
 		return
 	}

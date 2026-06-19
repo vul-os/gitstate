@@ -7,6 +7,7 @@
 package eeadmin
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"html/template"
@@ -35,6 +36,20 @@ import (
 func RegisterEEAdminRoutes(mux *http.ServeMux, database *db.DB, cfg *config.Config) {
 	svc := &eeAdminService{db: database, cfg: cfg}
 
+	// Open the audited cross-org service pool when ADMIN_DATABASE_URL is set
+	// (decisions S2). The EE revenue dashboard is an instance-wide aggregate
+	// over subscriptions/org_members/payments; under the non-superuser app role
+	// RLS hides cross-org rows and MRR reads 0. The dedicated BYPASSRLS role
+	// sees across orgs. On failure we log (never the URL) and fall back to the
+	// main pool. The org drilldown keeps using WithOrg(targetOrg) — unchanged.
+	if cfg.Admin.DatabaseURL != "" {
+		if ap, err := db.NewPool(context.Background(), cfg.Admin.DatabaseURL, cfg.Database.MaxConns); err != nil {
+			slog.Error("ee/admin: failed to open admin service pool; falling back to main pool", "error", err)
+		} else {
+			svc.adminPool = ap
+		}
+	}
+
 	// Cookie-aware gate (shared with internal/admin) so these EE pages are
 	// reachable by a browser navigation from the console, redirecting to
 	// /admin/login when unauthenticated. Falls back to Bearer for APIs.
@@ -49,6 +64,20 @@ func RegisterEEAdminRoutes(mux *http.ServeMux, database *db.DB, cfg *config.Conf
 type eeAdminService struct {
 	db  *db.DB
 	cfg *config.Config
+
+	// adminPool is the audited cross-org service pool (decisions S2), used ONLY
+	// for the instance-wide revenue aggregate. nil when ADMIN_DATABASE_URL is
+	// unset; aggPool() then falls back to the main pool.
+	adminPool *pgxpool.Pool
+}
+
+// aggPool returns the pool for cross-org aggregate reads: the dedicated audited
+// BYPASSRLS service pool when configured, otherwise the main pool.
+func (s *eeAdminService) aggPool() *pgxpool.Pool {
+	if s.adminPool != nil {
+		return s.adminPool
+	}
+	return s.db.Pool()
 }
 
 // ─── GET /admin/orgs/{id} — cross-org drilldown ─────────────────────────────
@@ -264,7 +293,10 @@ func (s *eeAdminService) handleRevenue(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ctx := r.Context()
-	pool := s.db.Pool()
+	// Cross-org aggregate reads (MRR by plan, recent payments) go through the
+	// audited BYPASSRLS service pool when configured (decisions S2) so they see
+	// across all orgs; otherwise they fall back to the main pool.
+	pool := s.aggPool()
 
 	data := revenueDashData{Now: time.Now().UTC()}
 
@@ -336,9 +368,11 @@ func (s *eeAdminService) handleRevenue(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Audit the revenue view (actor = super-admin, orgID = "" for global action).
+	// Write via the main pool (not the bypass service pool) so audit_log writes
+	// stay on the request-scoped path (decisions S2).
 	if auditErr := store.WriteAudit(
 		ctx,
-		pool,
+		s.db.Pool(),
 		actor.ID,
 		"",
 		"admin.revenue.view",

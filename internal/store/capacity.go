@@ -13,25 +13,43 @@ import (
 
 // LeaveEntry mirrors a row from leave_entries.
 type LeaveEntry struct {
-	ID        string
-	OrgID     string
-	UserID    string
-	Kind      string    // pto | sick | holiday
-	StartDate time.Time // date stored as timestamptz midnight UTC
-	EndDate   time.Time
-	Status    string // pending | approved | rejected
-	Note      string
-	CreatedAt time.Time
-	UpdatedAt time.Time
+	ID          string
+	OrgID       string
+	UserID      string
+	Kind        string    // pto | sick | holiday (legacy classifier; kept for back-compat)
+	LeaveTypeID string    // configurable leave type (may be empty for legacy rows)
+	StartDate   time.Time // date stored as timestamptz midnight UTC
+	EndDate     time.Time
+	HalfDay     bool   // a single half-day off
+	Portion     string // full | am | pm
+	Status      string // pending | approved | rejected
+	Note        string
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
+}
+
+// leaveEntryCols is the canonical column projection for a LeaveEntry, matching
+// the scan order in scanLeaveEntry.
+const leaveEntryCols = `id, org_id, user_id, kind, COALESCE(leave_type_id::text,''),
+	start_date, end_date, half_day, portion, status, COALESCE(note,''), created_at, updated_at`
+
+func scanLeaveEntry(row pgx.Row) (*LeaveEntry, error) {
+	var e LeaveEntry
+	err := row.Scan(
+		&e.ID, &e.OrgID, &e.UserID, &e.Kind, &e.LeaveTypeID,
+		&e.StartDate, &e.EndDate, &e.HalfDay, &e.Portion,
+		&e.Status, &e.Note, &e.CreatedAt, &e.UpdatedAt,
+	)
+	if err != nil {
+		return nil, err
+	}
+	return &e, nil
 }
 
 // ListLeaveEntries returns all leave entries for the org, optionally filtered
 // to a single user when userID is non-empty.
 func ListLeaveEntries(ctx context.Context, tx pgx.Tx, orgID, userID string) ([]*LeaveEntry, error) {
-	query := `
-		SELECT id, org_id, user_id, kind, start_date, end_date, status, COALESCE(note,''), created_at, updated_at
-		FROM leave_entries
-		WHERE org_id = $1`
+	query := `SELECT ` + leaveEntryCols + ` FROM leave_entries WHERE org_id = $1`
 	args := []any{orgID}
 	if userID != "" {
 		query += ` AND user_id = $2`
@@ -46,60 +64,48 @@ func ListLeaveEntries(ctx context.Context, tx pgx.Tx, orgID, userID string) ([]*
 	defer rows.Close()
 	var out []*LeaveEntry
 	for rows.Next() {
-		var e LeaveEntry
-		if err := rows.Scan(
-			&e.ID, &e.OrgID, &e.UserID, &e.Kind,
-			&e.StartDate, &e.EndDate, &e.Status, &e.Note,
-			&e.CreatedAt, &e.UpdatedAt,
-		); err != nil {
+		e, err := scanLeaveEntry(rows)
+		if err != nil {
 			return nil, err
 		}
-		out = append(out, &e)
+		out = append(out, e)
 	}
 	return out, rows.Err()
 }
 
-// CreateLeaveEntry inserts a new leave entry.
-func CreateLeaveEntry(ctx context.Context, tx pgx.Tx, orgID, userID, kind, note string, start, end time.Time) (*LeaveEntry, error) {
-	var e LeaveEntry
-	err := tx.QueryRow(ctx, `
-		INSERT INTO leave_entries (org_id, user_id, kind, start_date, end_date, note)
-		VALUES ($1, $2, $3, $4, $5, NULLIF($6,''))
-		RETURNING id, org_id, user_id, kind, start_date, end_date, status, COALESCE(note,''), created_at, updated_at`,
-		orgID, userID, kind, start, end, note).
-		Scan(
-			&e.ID, &e.OrgID, &e.UserID, &e.Kind,
-			&e.StartDate, &e.EndDate, &e.Status, &e.Note,
-			&e.CreatedAt, &e.UpdatedAt,
-		)
-	return &e, err
+// CreateLeaveEntry inserts a new leave entry. leaveTypeID may be empty (legacy
+// rows keyed only by kind); portion defaults to "full". When halfDay is set the
+// entry represents a single half-day off.
+func CreateLeaveEntry(ctx context.Context, tx pgx.Tx, orgID, userID, kind, leaveTypeID, note string, start, end time.Time, halfDay bool, portion string) (*LeaveEntry, error) {
+	if portion == "" {
+		portion = "full"
+	}
+	return scanLeaveEntry(tx.QueryRow(ctx, `
+		INSERT INTO leave_entries
+		    (org_id, user_id, kind, leave_type_id, start_date, end_date, half_day, portion, note)
+		VALUES ($1, $2, $3, NULLIF($4,'')::uuid, $5, $6, $7, $8, NULLIF($9,''))
+		RETURNING `+leaveEntryCols,
+		orgID, userID, kind, leaveTypeID, start, end, halfDay, portion, note))
 }
 
 // ApproveLeaveEntry sets the status of a leave entry (approved | rejected).
 func ApproveLeaveEntry(ctx context.Context, tx pgx.Tx, orgID, id, status string) (*LeaveEntry, error) {
-	var e LeaveEntry
-	err := tx.QueryRow(ctx, `
+	e, err := scanLeaveEntry(tx.QueryRow(ctx, `
 		UPDATE leave_entries
 		SET status = $1, updated_at = now()
 		WHERE id = $2 AND org_id = $3
-		RETURNING id, org_id, user_id, kind, start_date, end_date, status, COALESCE(note,''), created_at, updated_at`,
-		status, id, orgID).
-		Scan(
-			&e.ID, &e.OrgID, &e.UserID, &e.Kind,
-			&e.StartDate, &e.EndDate, &e.Status, &e.Note,
-			&e.CreatedAt, &e.UpdatedAt,
-		)
+		RETURNING `+leaveEntryCols,
+		status, id, orgID))
 	if err == pgx.ErrNoRows {
 		return nil, ErrNotFound
 	}
-	return &e, err
+	return e, err
 }
 
 // ApprovedLeaveInPeriod returns approved leave entries for a user that overlap
 // the half-open period [from, to).
 func ApprovedLeaveInPeriod(ctx context.Context, tx pgx.Tx, orgID, userID string, from, to time.Time) ([]*LeaveEntry, error) {
-	rows, err := tx.Query(ctx, `
-		SELECT id, org_id, user_id, kind, start_date, end_date, status, COALESCE(note,''), created_at, updated_at
+	rows, err := tx.Query(ctx, `SELECT `+leaveEntryCols+`
 		FROM leave_entries
 		WHERE org_id = $1
 		  AND user_id = $2
@@ -114,15 +120,11 @@ func ApprovedLeaveInPeriod(ctx context.Context, tx pgx.Tx, orgID, userID string,
 	defer rows.Close()
 	var out []*LeaveEntry
 	for rows.Next() {
-		var e LeaveEntry
-		if err := rows.Scan(
-			&e.ID, &e.OrgID, &e.UserID, &e.Kind,
-			&e.StartDate, &e.EndDate, &e.Status, &e.Note,
-			&e.CreatedAt, &e.UpdatedAt,
-		); err != nil {
+		e, err := scanLeaveEntry(rows)
+		if err != nil {
 			return nil, err
 		}
-		out = append(out, &e)
+		out = append(out, e)
 	}
 	return out, rows.Err()
 }

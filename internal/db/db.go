@@ -43,6 +43,37 @@ func New(ctx context.Context, cfg *config.Config) (*DB, error) {
 	return &DB{pool: pool}, nil
 }
 
+// NewPool opens a standalone pgxpool.Pool from an arbitrary connection URL.
+// It is used for the audited super-admin cross-org service pool (decisions S2):
+// a second pool, connected as a dedicated BYPASSRLS role, that the admin console
+// uses ONLY for instance-wide aggregate reads (MRR/revenue/plan-distribution),
+// never for normal org-scoped app traffic.
+//
+// The caller owns the returned pool and must Close() it on shutdown. maxConns
+// of 0 leaves the pgx default in place. The URL (which embeds the password) is
+// never logged here — callers must not log it either.
+func NewPool(ctx context.Context, url string, maxConns int) (*pgxpool.Pool, error) {
+	if url == "" {
+		return nil, fmt.Errorf("db: NewPool: empty connection URL")
+	}
+
+	poolCfg, err := pgxpool.ParseConfig(url)
+	if err != nil {
+		// Do not wrap with the URL — it contains the password.
+		return nil, fmt.Errorf("db: NewPool: parse connection URL: %w", err)
+	}
+
+	if maxConns > 0 {
+		poolCfg.MaxConns = int32(maxConns)
+	}
+
+	pool, err := pgxpool.NewWithConfig(ctx, poolCfg)
+	if err != nil {
+		return nil, fmt.Errorf("db: NewPool: open pool: %w", err)
+	}
+	return pool, nil
+}
+
 // Pool returns the underlying pgxpool.Pool for callers that need direct access
 // (e.g. store queries that run outside an org-scoped tx).
 func (d *DB) Pool() *pgxpool.Pool {

@@ -1,19 +1,33 @@
 /**
- * Capacity page — /capacity
- * Effective capacity per member = available hours − approved leave.
- * Data: GET /api/capacity?period=YYYY-MM-DD/YYYY-MM-DD (userId-keyed),
- * GET /api/leave, POST /api/leave, PUT /api/availability.
- * Member names are resolved from GET /api/orgs/:id/members.
+ * Leave & Capacity — /capacity
+ *
+ * A real leave-management experience plus the capacity summary:
+ *   • My leave     — balances per type (ring) + a request-leave form
+ *   • Team calendar — month grid of who's off, coloured by leave type
+ *   • Approvals     — pending requests with approve/reject (owner/admin)
+ *   • Capacity      — effective capacity (availability − approved leave) + editor
+ *
+ * Data:
+ *   GET /api/leave-types · GET /api/leave-balances?user=&year= · GET /api/leave
+ *   POST /api/leave · PATCH /api/leave/{id} · GET /api/capacity · PUT /api/availability
+ *   Member identities from GET /api/orgs/:id/members.
  */
 import { useState, useEffect, useMemo } from 'react'
 import {
-  Loader2, Plus, X, CalendarDays, Clock, Plane, Pencil, AlertCircle, Users,
+  Loader2, X, CalendarDays, Clock, Plane, Pencil, AlertCircle, Users,
+  CalendarHeart, CalendarCheck, Gauge, Link2, CircleCheck,
 } from 'lucide-react'
 import { useCapacity } from '../lib/useCapacity.js'
+import { useLeave } from '../lib/useLeave.js'
 import { useOrg } from '../lib/useOrg.js'
+import { useAuth } from '../lib/useAuth.js'
 import * as api from '../lib/api.js'
 import { Card, Badge, Button } from '../components/ui/index.js'
 import { Reveal, RevealList } from '../components/Reveal.jsx'
+import {
+  BalanceRing, RequestLeaveForm, TeamCalendar, ApprovalQueue,
+} from '../components/leave/index.js'
+import { typeIndex, shortDate, leaveDays, statusColor } from '../components/leave/leaveUtils.js'
 
 const PERIODS = [
   { id: '7d', label: '7 days', days: 7 },
@@ -29,16 +43,6 @@ function periodToInterval(id) {
   start.setDate(start.getDate() - def.days)
   const fmt = d => d.toISOString().slice(0, 10)
   return `${fmt(start)}/${fmt(end)}`
-}
-
-const LEAVE_KINDS = [
-  { id: 'pto', label: 'PTO', color: 'teal' },
-  { id: 'sick', label: 'Sick', color: 'yellow' },
-  { id: 'holiday', label: 'Holiday', color: 'indigo' },
-]
-
-function leaveKindMeta(kind) {
-  return LEAVE_KINDS.find(k => k.id === kind) ?? { id: kind, label: kind ?? '—', color: 'default' }
 }
 
 function initials(name, email) {
@@ -179,126 +183,61 @@ function CapacityCard({ member, maxHours }) {
   )
 }
 
-function AddLeaveForm({ onAdd, members }) {
-  const [open, setOpen] = useState(false)
-  const [userId, setUserId] = useState('')
-  const [kind, setKind] = useState('pto')
-  const [startDate, setStartDate] = useState('')
-  const [endDate, setEndDate] = useState('')
-  const [note, setNote] = useState('')
-  const [saving, setSaving] = useState(false)
-  const [err, setErr] = useState(null)
-
-  async function handleSubmit(e) {
-    e.preventDefault()
-    if (!userId || !startDate || !endDate) return
-    setSaving(true)
-    setErr(null)
-    try {
-      await onAdd({ userId, kind, startDate, endDate, note })
-      setUserId(''); setKind('pto'); setStartDate(''); setEndDate(''); setNote('')
-      setOpen(false)
-    } catch (e) {
-      setErr(e.message ?? 'Failed to add leave')
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  const inputCls = 'bg-[var(--bg)] text-sm text-[var(--text)] rounded-[var(--radius-btn)] px-3 py-2 border border-[var(--border)] outline-none focus:border-[var(--brand-teal)]/50 focus:ring-2 focus:ring-[var(--brand-teal)]/15 transition-all w-full'
-
-  return (
-    <div>
-      <Button
-        variant={open ? 'outline' : 'primary'}
-        size="sm"
-        onClick={() => setOpen(v => !v)}
-        leftIcon={open ? <X size={13} /> : <Plus size={13} strokeWidth={2.5} />}
-      >
-        {open ? 'Cancel' : 'Add leave'}
-      </Button>
-
-      {open && (
-        <form onSubmit={handleSubmit} className="mt-4">
-          <Card padding="md" className="flex flex-col gap-4">
-            <div className="grid sm:grid-cols-2 gap-4">
-              <div className="flex flex-col gap-1.5">
-                <label className="text-[10px] text-[var(--text-faint)] uppercase tracking-widest">Member</label>
-                {members.length > 0 ? (
-                  <select required className={inputCls + ' cursor-pointer'} value={userId} onChange={e => setUserId(e.target.value)}>
-                    <option value="">Select member…</option>
-                    {members.map(m => (
-                      <option key={m.userId} value={m.userId}>{m.name ?? m.email ?? m.userId}</option>
-                    ))}
-                  </select>
-                ) : (
-                  <input required className={inputCls} placeholder="user@example.com" value={userId} onChange={e => setUserId(e.target.value)} />
-                )}
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <label className="text-[10px] text-[var(--text-faint)] uppercase tracking-widest">Kind</label>
-                <select className={inputCls + ' cursor-pointer'} value={kind} onChange={e => setKind(e.target.value)}>
-                  {LEAVE_KINDS.map(k => <option key={k.id} value={k.id}>{k.label}</option>)}
-                </select>
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <label className="text-[10px] text-[var(--text-faint)] uppercase tracking-widest">Start date</label>
-                <input type="date" required className={inputCls} value={startDate} onChange={e => setStartDate(e.target.value)} />
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <label className="text-[10px] text-[var(--text-faint)] uppercase tracking-widest">End date</label>
-                <input type="date" required className={inputCls} value={endDate} onChange={e => setEndDate(e.target.value)} />
-              </div>
-              <div className="flex flex-col gap-1.5 sm:col-span-2">
-                <label className="text-[10px] text-[var(--text-faint)] uppercase tracking-widest">Note (optional)</label>
-                <input className={inputCls} placeholder="e.g. Annual leave" value={note} onChange={e => setNote(e.target.value)} />
-              </div>
-            </div>
-            {err && (
-              <p className="flex items-center gap-2 text-xs text-red-400"><AlertCircle size={13} /> {err}</p>
-            )}
-            <Button type="submit" disabled={saving || !userId || !startDate || !endDate} className="self-start" leftIcon={saving ? <Loader2 size={12} className="animate-spin" /> : null}>
-              Add leave
-            </Button>
-          </Card>
-        </form>
-      )}
-    </div>
-  )
-}
-
-function LeaveRow({ entry, nameFor }) {
-  const meta = leaveKindMeta(entry.kind)
-  const fmt = d => (d ? new Date(d).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : '—')
-  const display = entry.userName ?? nameFor(entry.userId) ?? entry.userId ?? '—'
+/** A single leave-history row for the My-leave list. */
+function LeaveHistoryRow({ entry, type, nameFor, showMember }) {
+  const days = leaveDays(entry)
   return (
     <tr className="border-b border-[var(--border)] hover:bg-[var(--bg-surface2)]/60 transition-colors last:border-0">
+      {showMember && (
+        <td className="px-4 py-3">
+          <div className="flex items-center gap-2.5">
+            <Avatar name={nameFor?.(entry.userId)} email={entry.userId} size={26} />
+            <span className="text-sm text-[var(--text)] truncate">{nameFor?.(entry.userId) ?? entry.userId}</span>
+          </div>
+        </td>
+      )}
       <td className="px-4 py-3">
-        <div className="flex items-center gap-2.5">
-          <Avatar name={entry.userName ?? nameFor(entry.userId)} email={entry.userId} size={26} />
-          <span className="text-sm text-[var(--text)] truncate">{display}</span>
-        </div>
-      </td>
-      <td className="px-4 py-3"><Badge color={meta.color}>{meta.label}</Badge></td>
-      <td className="px-4 py-3 text-xs text-[var(--text-muted)] font-mono whitespace-nowrap">
-        {fmt(entry.startDate)} → {fmt(entry.endDate)}
-      </td>
-      <td className="px-4 py-3">
-        {entry.status && (
-          <Badge color={entry.status === 'approved' ? 'green' : entry.status === 'rejected' ? 'red' : 'default'}>{entry.status}</Badge>
+        {type ? (
+          <span className="inline-flex items-center gap-1.5 text-[11px] font-mono px-2 py-0.5 rounded-[var(--radius-badge)] border" style={{ borderColor: type.color + '55', color: type.color }}>
+            <span className="w-1.5 h-1.5 rounded-full" style={{ background: type.color }} /> {type.name}
+          </span>
+        ) : (
+          <Badge>{entry.kind ?? '—'}</Badge>
         )}
       </td>
-      <td className="px-4 py-3 text-xs text-[var(--text-faint)] truncate max-w-[180px]">{entry.note ?? '—'}</td>
+      <td className="px-4 py-3 text-xs text-[var(--text-muted)] font-mono whitespace-nowrap">
+        {shortDate(entry.startDate)} → {shortDate(entry.endDate)}
+        {entry.halfDay && <span className="text-[var(--text-faint)]"> · ½ {entry.portion}</span>}
+      </td>
+      <td className="px-4 py-3 text-xs text-[var(--text-muted)] font-mono tabular-nums whitespace-nowrap">{days}{days === 1 ? ' day' : ' days'}</td>
+      <td className="px-4 py-3"><Badge color={statusColor(entry.status)}>{entry.status}</Badge></td>
+      <td className="px-4 py-3 text-xs text-[var(--text-faint)] truncate max-w-[180px]">{entry.note || '—'}</td>
     </tr>
   )
 }
 
-export default function Capacity() {
-  const [period, setPeriod] = useState('30d')
-  const { activeOrg } = useOrg()
-  const { capacity, leave, capacityLoading, leaveLoading, error, addLeave } = useCapacity({ period: periodToInterval(period) })
+const TABS = [
+  { id: 'mine', label: 'My leave', icon: CalendarHeart },
+  { id: 'calendar', label: 'Team calendar', icon: CalendarDays },
+  { id: 'approvals', label: 'Approvals', icon: CalendarCheck, manage: true },
+  { id: 'capacity', label: 'Capacity', icon: Gauge },
+]
 
-  // Resolve userId → member identity (additive; capacity API is userId-keyed only).
+export default function Capacity() {
+  const [tab, setTab] = useState('mine')
+  const [period, setPeriod] = useState('30d')
+  const { activeOrg, orgRole } = useOrg()
+  const { user } = useAuth()
+  const meId = user?.id ?? null
+  const canManage = orgRole === 'owner' || orgRole === 'admin'
+
+  const { capacity, capacityLoading, error: capError } = useCapacity({ period: periodToInterval(period) })
+  const {
+    types, balances, leave, loading: leaveLoading, error: leaveError,
+    requestLeave, decideLeave,
+  } = useLeave({})
+
+  // Resolve userId → member identity.
   const [memberMap, setMemberMap] = useState({})
   useEffect(() => {
     const orgId = activeOrg?.id
@@ -316,6 +255,12 @@ export default function Capacity() {
   }, [activeOrg?.id])
 
   const nameFor = id => memberMap[id]?.name ?? memberMap[id]?.email ?? null
+  const tIdx = useMemo(() => typeIndex(types), [types])
+
+  const memberList = useMemo(
+    () => Object.values(memberMap).map(m => ({ userId: m.userId, name: m.name, email: m.email })),
+    [memberMap],
+  )
 
   const enriched = useMemo(() => capacity.map(m => ({
     ...m,
@@ -323,12 +268,21 @@ export default function Capacity() {
     email: m.email ?? memberMap[m.userId]?.email,
   })), [capacity, memberMap])
 
-  const memberList = useMemo(
-    () => Object.values(memberMap).map(m => ({ userId: m.userId, name: m.name, email: m.email })),
-    [memberMap],
-  )
-
   const maxHours = Math.max(1, ...enriched.map(m => Math.max(m.availableHours ?? 0, m.effectiveHours ?? 0)))
+
+  // My balances: when we know who "me" is, scope balances; otherwise show all.
+  const myBalances = useMemo(() => {
+    if (!meId) return balances
+    const mine = balances.filter(b => b.userId === meId)
+    return mine.length ? mine : balances
+  }, [balances, meId])
+
+  const myLeave = useMemo(() => {
+    const rows = meId ? leave.filter(e => e.userId === meId) : leave
+    return rows.length || !meId ? rows : leave
+  }, [leave, meId])
+
+  const pending = useMemo(() => leave.filter(e => e.status === 'pending'), [leave])
 
   const totals = useMemo(() => ({
     effective: Math.round(enriched.reduce((s, m) => s + (m.effectiveHours ?? 0), 0)),
@@ -336,136 +290,237 @@ export default function Capacity() {
     members: enriched.length,
   }), [enriched])
 
+  const visibleTabs = TABS.filter(t => !t.manage || canManage)
+
   return (
     <div className="w-full space-y-8">
       {/* Header */}
       <Reveal>
         <div className="flex items-end justify-between gap-4 flex-wrap">
           <div>
-            <h1 className="font-display text-2xl font-semibold text-[var(--text)] tracking-tight">Capacity</h1>
+            <h1 className="font-display text-2xl font-semibold text-[var(--text)] tracking-tight">Leave &amp; Capacity</h1>
             <p className="text-sm text-[var(--text-faint)] mt-1">
-              Effective capacity per member — available hours minus approved leave.
+              Configurable leave types, per-person balances, a team calendar, and effective capacity.
             </p>
           </div>
-          {/* Period filter */}
-          <div className="flex items-center rounded-[var(--radius-btn)] p-0.5 gap-0.5 w-fit bg-[var(--bg)] border border-[var(--border)]">
-            {PERIODS.map(p => (
-              <button
-                key={p.id}
-                onClick={() => setPeriod(p.id)}
-                className={[
-                  'px-3 py-1.5 rounded-[6px] text-xs font-medium transition-all duration-150',
-                  period === p.id ? 'bg-[var(--bg-surface2)] text-[var(--brand-teal)]' : 'text-[var(--text-faint)] hover:text-[var(--text-muted)]',
-                ].join(' ')}
-              >
-                {p.label}
-              </button>
-            ))}
-          </div>
+          <CalendarConnectedHint />
         </div>
       </Reveal>
 
-      {/* Totals strip */}
-      {!capacityLoading && enriched.length > 0 && (
-        <Reveal delay={0.05}>
-          <div className="grid grid-cols-3 gap-3">
-            <Card padding="sm" className="flex flex-col gap-1">
-              <span className="text-[10px] font-mono uppercase tracking-widest text-[var(--text-faint)] flex items-center gap-1"><Users size={11} /> Team</span>
-              <span className="text-2xl font-display font-semibold text-[var(--text)] tabular-nums leading-none">{totals.members}</span>
-            </Card>
-            <Card padding="sm" className="flex flex-col gap-1">
-              <span className="text-[10px] font-mono uppercase tracking-widest text-[var(--text-faint)] flex items-center gap-1"><Clock size={11} /> Effective</span>
-              <span className="text-2xl font-display font-semibold text-[var(--text)] tabular-nums leading-none">{totals.effective}<span className="text-sm text-[var(--text-faint)]">h</span></span>
-            </Card>
-            <Card padding="sm" className="flex flex-col gap-1">
-              <span className="text-[10px] font-mono uppercase tracking-widest text-[var(--text-faint)] flex items-center gap-1"><Plane size={11} /> On leave</span>
-              <span className="text-2xl font-display font-semibold text-[var(--text)] tabular-nums leading-none">{totals.leave}<span className="text-sm text-[var(--text-faint)]">h</span></span>
-            </Card>
-          </div>
-        </Reveal>
-      )}
+      {/* Tabs */}
+      <Reveal delay={0.04}>
+        <div className="flex items-center gap-1 border-b border-[var(--border)]">
+          {visibleTabs.map(t => {
+            const Icon = t.icon
+            const active = tab === t.id
+            return (
+              <button
+                key={t.id}
+                onClick={() => setTab(t.id)}
+                className={[
+                  'inline-flex items-center gap-1.5 px-3.5 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors',
+                  active
+                    ? 'border-[var(--brand-teal)] text-[var(--text)]'
+                    : 'border-transparent text-[var(--text-faint)] hover:text-[var(--text-muted)]',
+                ].join(' ')}
+              >
+                <Icon size={14} className={active ? 'text-[var(--brand-teal)]' : ''} />
+                {t.label}
+                {t.id === 'approvals' && pending.length > 0 && (
+                  <span className="ml-0.5 text-[10px] font-mono px-1.5 py-0.5 rounded-full bg-[var(--brand-teal)]/15 text-[var(--brand-teal)]">{pending.length}</span>
+                )}
+              </button>
+            )
+          })}
+        </div>
+      </Reveal>
 
-      {/* Error */}
-      {error && (
+      {(leaveError || capError) && (
         <Card className="border-red-500/20 bg-red-500/[0.04]">
-          <p className="flex items-center gap-2 text-sm text-red-400"><AlertCircle size={15} /> {error} — the backend may not be running yet.</p>
+          <p className="flex items-center gap-2 text-sm text-red-400"><AlertCircle size={15} /> {leaveError || capError} — the backend may not be running yet.</p>
         </Card>
       )}
 
-      {/* Capacity grid */}
-      <section>
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-sm font-semibold text-[var(--text)]">Team capacity</h2>
-          {capacityLoading && <Loader2 size={15} className="animate-spin text-[var(--brand-teal)]" />}
+      {/* ── My leave ─────────────────────────────────────────────── */}
+      {tab === 'mine' && (
+        <div className="space-y-8">
+          <section>
+            <div className="flex items-center justify-between mb-4 gap-4 flex-wrap">
+              <div>
+                <h2 className="text-sm font-semibold text-[var(--text)]">Your balances</h2>
+                <p className="text-xs text-[var(--text-faint)] mt-0.5">Days remaining this year, per leave type.</p>
+              </div>
+              <RequestLeaveForm types={types} members={memberList} canPickMember={canManage} onSubmit={requestLeave} />
+            </div>
+
+            {leaveLoading && myBalances.length === 0 && (
+              <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+                {Array.from({ length: 4 }).map((_, i) => (
+                  <div key={i} className="rounded-[var(--radius-card)] h-28 animate-pulse bg-[var(--bg-surface)] border border-[var(--border)]" />
+                ))}
+              </div>
+            )}
+
+            {!leaveLoading && myBalances.length === 0 && (
+              <Card padding="xl" className="border-dashed text-center">
+                <CalendarHeart size={22} className="mx-auto text-[var(--text-faint)] mb-2" />
+                <p className="text-sm text-[var(--text)] mb-1">No balances yet</p>
+                <p className="text-xs text-[var(--text-faint)]">Leave-type entitlements will show up here once configured.</p>
+              </Card>
+            )}
+
+            {myBalances.length > 0 && (
+              <RevealList className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4" staggerDelay={0.04}>
+                {myBalances.map(b => (
+                  <Card key={b.leaveTypeId + b.userId} padding="md">
+                    <BalanceRing type={tIdx[b.leaveTypeId]} balance={b} />
+                  </Card>
+                ))}
+              </RevealList>
+            )}
+          </section>
+
+          <section>
+            <h2 className="text-sm font-semibold text-[var(--text)] mb-4">
+              {meId ? 'Your leave history' : 'Recent leave'}
+            </h2>
+            {myLeave.length === 0 ? (
+              <Card padding="xl" className="border-dashed text-center">
+                <Plane size={22} className="mx-auto text-[var(--text-faint)] mb-2" />
+                <p className="text-sm text-[var(--text)] mb-1">No leave recorded</p>
+                <p className="text-xs text-[var(--text-faint)]">Request leave above to get started.</p>
+              </Card>
+            ) : (
+              <Card padding="none" className="overflow-hidden">
+                <table className="w-full">
+                  <thead>
+                    <tr className="bg-[var(--bg-surface2)]/40 border-b border-[var(--border)]">
+                      {[...(meId ? [] : ['Member']), 'Type', 'Dates', 'Days', 'Status', 'Note'].map(h => (
+                        <th key={h} className="text-left px-4 py-2.5 text-[10px] font-semibold text-[var(--text-faint)] uppercase tracking-widest">{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {myLeave.map((e, i) => (
+                      <LeaveHistoryRow key={e.id ?? i} entry={e} type={tIdx[e.leaveTypeId]} nameFor={nameFor} showMember={!meId} />
+                    ))}
+                  </tbody>
+                </table>
+              </Card>
+            )}
+          </section>
         </div>
+      )}
 
-        {capacityLoading && enriched.length === 0 && (
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-            {Array.from({ length: 6 }).map((_, i) => (
-              <div key={i} className="rounded-[var(--radius-card)] h-44 animate-pulse bg-[var(--bg-surface)] border border-[var(--border)]" />
-            ))}
+      {/* ── Team calendar ────────────────────────────────────────── */}
+      {tab === 'calendar' && (
+        <section>
+          <TeamCalendar leave={leave} types={types} nameFor={nameFor} />
+        </section>
+      )}
+
+      {/* ── Approvals ────────────────────────────────────────────── */}
+      {tab === 'approvals' && canManage && (
+        <section>
+          <div className="mb-4">
+            <h2 className="text-sm font-semibold text-[var(--text)]">Pending requests</h2>
+            <p className="text-xs text-[var(--text-faint)] mt-0.5">Approve or reject. Approving updates the member&apos;s balance.</p>
           </div>
-        )}
+          <ApprovalQueue pending={pending} types={types} nameFor={nameFor} onDecide={decideLeave} />
+        </section>
+      )}
 
-        {!capacityLoading && enriched.length === 0 && !error && (
-          <Card padding="xl" className="border-dashed text-center">
-            <Users size={22} className="mx-auto text-[var(--text-faint)] mb-2" />
-            <p className="text-sm text-[var(--text)] mb-1">No capacity data yet</p>
-            <p className="text-xs text-[var(--text-faint)]">Invite team members to calculate availability and leave.</p>
-          </Card>
-        )}
+      {/* ── Capacity ─────────────────────────────────────────────── */}
+      {tab === 'capacity' && (
+        <div className="space-y-8">
+          <section>
+            <div className="flex items-center justify-between mb-4 gap-4 flex-wrap">
+              <div>
+                <h2 className="text-sm font-semibold text-[var(--text)]">Effective capacity</h2>
+                <p className="text-xs text-[var(--text-faint)] mt-0.5">Available hours minus approved leave, over the selected window.</p>
+              </div>
+              <div className="flex items-center rounded-[var(--radius-btn)] p-0.5 gap-0.5 w-fit bg-[var(--bg)] border border-[var(--border)]">
+                {PERIODS.map(p => (
+                  <button
+                    key={p.id}
+                    onClick={() => setPeriod(p.id)}
+                    className={[
+                      'px-3 py-1.5 rounded-[6px] text-xs font-medium transition-all duration-150',
+                      period === p.id ? 'bg-[var(--bg-surface2)] text-[var(--brand-teal)]' : 'text-[var(--text-faint)] hover:text-[var(--text-muted)]',
+                    ].join(' ')}
+                  >
+                    {p.label}
+                  </button>
+                ))}
+              </div>
+            </div>
 
-        {enriched.length > 0 && (
-          <RevealList className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4" staggerDelay={0.04}>
-            {enriched.map(m => (
-              <CapacityCard key={m.userId ?? m.email} member={m} maxHours={maxHours} />
-            ))}
-          </RevealList>
-        )}
-      </section>
+            {!capacityLoading && enriched.length > 0 && (
+              <div className="grid grid-cols-3 gap-3 mb-4">
+                <Card padding="sm" className="flex flex-col gap-1">
+                  <span className="text-[10px] font-mono uppercase tracking-widest text-[var(--text-faint)] flex items-center gap-1"><Users size={11} /> Team</span>
+                  <span className="text-2xl font-display font-semibold text-[var(--text)] tabular-nums leading-none">{totals.members}</span>
+                </Card>
+                <Card padding="sm" className="flex flex-col gap-1">
+                  <span className="text-[10px] font-mono uppercase tracking-widest text-[var(--text-faint)] flex items-center gap-1"><Clock size={11} /> Effective</span>
+                  <span className="text-2xl font-display font-semibold text-[var(--text)] tabular-nums leading-none">{totals.effective}<span className="text-sm text-[var(--text-faint)]">h</span></span>
+                </Card>
+                <Card padding="sm" className="flex flex-col gap-1">
+                  <span className="text-[10px] font-mono uppercase tracking-widest text-[var(--text-faint)] flex items-center gap-1"><Plane size={11} /> On leave</span>
+                  <span className="text-2xl font-display font-semibold text-[var(--text)] tabular-nums leading-none">{totals.leave}<span className="text-sm text-[var(--text-faint)]">h</span></span>
+                </Card>
+              </div>
+            )}
 
-      {/* Leave */}
-      <section>
-        <div className="flex items-center justify-between mb-4 gap-4 flex-wrap">
-          <div>
-            <h2 className="text-sm font-semibold text-[var(--text)]">Leave schedule</h2>
-            <p className="text-xs text-[var(--text-faint)] mt-0.5">Planned absences that reduce effective capacity.</p>
-          </div>
-          <AddLeaveForm onAdd={addLeave} members={memberList} />
+            {capacityLoading && enriched.length === 0 && (
+              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                {Array.from({ length: 6 }).map((_, i) => (
+                  <div key={i} className="rounded-[var(--radius-card)] h-44 animate-pulse bg-[var(--bg-surface)] border border-[var(--border)]" />
+                ))}
+              </div>
+            )}
+
+            {!capacityLoading && enriched.length === 0 && !capError && (
+              <Card padding="xl" className="border-dashed text-center">
+                <Users size={22} className="mx-auto text-[var(--text-faint)] mb-2" />
+                <p className="text-sm text-[var(--text)] mb-1">No capacity data yet</p>
+                <p className="text-xs text-[var(--text-faint)]">Invite team members to calculate availability and leave.</p>
+              </Card>
+            )}
+
+            {enriched.length > 0 && (
+              <RevealList className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4" staggerDelay={0.04}>
+                {enriched.map(m => (
+                  <CapacityCard key={m.userId ?? m.email} member={m} maxHours={maxHours} />
+                ))}
+              </RevealList>
+            )}
+          </section>
         </div>
-
-        {leaveLoading && (
-          <div className="flex items-center gap-3 py-6">
-            <Loader2 size={15} className="animate-spin text-[var(--brand-teal)]" />
-            <span className="text-xs text-[var(--text-faint)]">Loading leave schedule…</span>
-          </div>
-        )}
-
-        {!leaveLoading && leave.length === 0 && (
-          <Card padding="xl" className="border-dashed text-center">
-            <CalendarDays size={22} className="mx-auto text-[var(--text-faint)] mb-2" />
-            <p className="text-sm text-[var(--text)] mb-1">No leave scheduled</p>
-            <p className="text-xs text-[var(--text-faint)]">Add leave to show how it affects team capacity.</p>
-          </Card>
-        )}
-
-        {!leaveLoading && leave.length > 0 && (
-          <Card padding="none" className="overflow-hidden">
-            <table className="w-full">
-              <thead>
-                <tr className="bg-[var(--bg-surface2)]/40 border-b border-[var(--border)]">
-                  {['Member', 'Kind', 'Dates', 'Status', 'Note'].map(h => (
-                    <th key={h} className="text-left px-4 py-2.5 text-[10px] font-semibold text-[var(--text-faint)] uppercase tracking-widest">{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {leave.map((entry, i) => <LeaveRow key={entry.id ?? i} entry={entry} nameFor={nameFor} />)}
-              </tbody>
-            </table>
-          </Card>
-        )}
-      </section>
+      )}
     </div>
+  )
+}
+
+/** A subtle "calendar connected" hint that links to Settings, shown only when
+ *  the (optional, read-only) /api/calendar/status endpoint reports connected. */
+function CalendarConnectedHint() {
+  const [connected, setConnected] = useState(false)
+  useEffect(() => {
+    let cancelled = false
+    api.get('/api/calendar/status')
+      .then(s => { if (!cancelled) setConnected(Boolean(s?.connected)) })
+      .catch(() => {}) // endpoint may not exist — stay hidden
+    return () => { cancelled = true }
+  }, [])
+  if (!connected) return null
+  return (
+    <a
+      href="/settings"
+      className="inline-flex items-center gap-1.5 text-xs text-[var(--text-muted)] hover:text-[var(--brand-teal)] transition-colors px-2.5 py-1.5 rounded-[var(--radius-badge)] border border-[var(--border)]"
+    >
+      <CircleCheck size={13} className="text-[var(--brand-teal)]" /> Calendar connected
+      <Link2 size={11} className="opacity-60" />
+    </a>
   )
 }
