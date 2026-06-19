@@ -16,15 +16,22 @@
  * All charts hand-rolled SVG. Both themes. Loading / empty / error states.
  */
 import { useState, useMemo } from 'react'
-import { useContribution, saveWeights, DIMENSION_KEYS } from '../lib/useContribution.js'
+import {
+  useContribution, saveWeights, DIMENSION_KEYS,
+  useContributionTrends, useEquity, useKudos,
+} from '../lib/useContribution.js'
 import { useOrg } from '../lib/useOrg.js'
-import { Card, Badge } from '../components/ui/index.js'
+import { useAuth } from '../lib/useAuth.js'
+import { Button, Card, Badge } from '../components/ui/index.js'
 import { Reveal, RevealList } from '../components/Reveal.jsx'
 import { WeightTuner } from '../components/contribution/WeightTuner.jsx'
 import { ContributorCard } from '../components/contribution/ContributorCard.jsx'
 import { ContributorDrawer } from '../components/contribution/ContributorDrawer.jsx'
+import { TrendsChart } from '../components/contribution/TrendsChart.jsx'
+import { EquityLedger } from '../components/contribution/EquityLedger.jsx'
+import { KudosModal, KudosFeed } from '../components/contribution/Kudos.jsx'
 import { computeComposite } from '../components/contribution/helpers.js'
-import { ShieldCheck, Info, Scale, Bot, Users, Sparkles } from 'lucide-react'
+import { ShieldCheck, Info, Scale, Bot, Users, Sparkles, TrendingUp, Heart } from 'lucide-react'
 
 // ── period presets ────────────────────────────────────────────────────────────
 
@@ -178,15 +185,44 @@ function rankMembers(members, weights, serverOrderById) {
 
 // ── page ──────────────────────────────────────────────────────────────────────
 
+const TABS = [
+  { key: 'people', label: 'People', icon: Users },
+  { key: 'trends', label: 'Over time', icon: TrendingUp },
+  { key: 'equity', label: 'Equity (advisory)', icon: Scale },
+]
+
 export default function Contribution() {
   const { orgRole } = useOrg()
+  const { user } = useAuth()
+  const selfId = user?.id ?? null
   const canEdit = orgRole === 'owner' || orgRole === 'admin'
 
+  const [tab, setTab] = useState('people')
   const [preset, setPreset] = useState('90d')
   const [range, setRange] = useState({ from: isoDaysAgo(90), to: todayISO() })
   const [openId, setOpenId] = useState(null)
+  const [kudosOpen, setKudosOpen] = useState(false)
+  const [kudosTo, setKudosTo] = useState(null)
 
   const { data, loading, error } = useContribution(range)
+  const trends = useContributionTrends({ periods: 6, interval: 'month' })
+  const equity = useEquity({})
+  const kudos = useKudos({})
+
+  const kudosCounts = kudos.data?.counts ?? {}
+  // userId → array of composites (oldest→newest) for per-member sparklines.
+  const trendByUser = useMemo(() => {
+    const map = new Map()
+    for (const s of trends.data?.series ?? []) {
+      map.set(s.userId, (s.points ?? []).map((p) => p.composite))
+    }
+    return map
+  }, [trends.data])
+
+  function openKudos(toUser) {
+    setKudosTo(toUser ?? null)
+    setKudosOpen(true)
+  }
 
   // Live weights, seeded from the server once data arrives.
   const [weights, setWeights] = useState(DEFAULT_WEIGHTS)
@@ -269,21 +305,96 @@ export default function Contribution() {
                 built to inform share-allocation conversations, not to crown a leaderboard.
               </p>
             </div>
-            <PeriodSelector preset={preset} setPreset={setPreset} range={range} setRange={setRange} />
+            <div className="flex flex-wrap items-center gap-3">
+              <Button variant="outline" size="sm" leftIcon={<Heart size={14} />} onClick={() => openKudos(null)}>
+                Give kudos
+              </Button>
+              {tab !== 'equity' && (
+                <PeriodSelector preset={preset} setPreset={setPreset} range={range} setRange={setRange} />
+              )}
+            </div>
           </div>
         </div>
       </Reveal>
 
-      <Reveal delay={0.05}><CaveatBanner /></Reveal>
+      {/* tabs */}
+      <Reveal delay={0.03}>
+        <div className="inline-flex items-center rounded-[var(--radius-btn)] border border-[var(--border)] bg-[var(--bg-surface)] p-0.5">
+          {TABS.map((t) => {
+            const Icon = t.icon
+            return (
+              <button
+                key={t.key}
+                onClick={() => setTab(t.key)}
+                className={[
+                  'inline-flex items-center gap-1.5 px-3.5 py-1.5 text-[12px] font-medium rounded-[6px] transition-colors cursor-pointer',
+                  tab === t.key ? 'bg-[#2DD4BF]/15 text-[#2DD4BF]' : 'text-[var(--text-faint)] hover:text-[var(--text-dim)]',
+                ].join(' ')}
+              >
+                <Icon size={13} /> {t.label}
+              </button>
+            )
+          })}
+        </div>
+      </Reveal>
+
+      {tab === 'people' && <Reveal delay={0.05}><CaveatBanner /></Reveal>}
 
       {/* Error */}
-      {error && (
+      {tab === 'people' && error && (
         <Card className="border-red-500/20 bg-red-500/[0.04]">
           <p className="text-sm text-red-400">{error} — the backend may not be running yet.</p>
         </Card>
       )}
 
+      {/* ── Over time ─────────────────────────────────────────────── */}
+      {tab === 'trends' && (
+        <div className="grid grid-cols-1 xl:grid-cols-[1fr_340px] gap-6 items-start">
+          <Card padding="lg" className="min-w-0">
+            <SectionHeading
+              icon={<TrendingUp size={15} className="text-[var(--brand-teal)]" />}
+              title="Composite over time"
+              hint="last 6 months · each line is a member"
+            />
+            {trends.error ? (
+              <p className="text-sm text-red-400 py-6">{trends.error}</p>
+            ) : trends.loading && !trends.data ? (
+              <div className="h-[240px] rounded-[var(--radius-card)] bg-[var(--bg-surface3)] animate-pulse" />
+            ) : (
+              <TrendsChart series={(trends.data?.series ?? []).filter((s) => !s.isAgentBot)} />
+            )}
+            <p className="text-[11px] text-[var(--text-faint)] mt-4 leading-relaxed">
+              Trends are computed per period with the same evidence-backed engine, then cached
+              as snapshots. Rising lines mean a member’s contribution grew relative to the team.
+            </p>
+          </Card>
+
+          {/* kudos feed alongside */}
+          <Card padding="lg">
+            <div className="flex items-center justify-between mb-3">
+              <SectionHeading icon={<Heart size={15} className="text-[var(--brand-indigo)]" />} title="Recent kudos" />
+            </div>
+            <KudosFeed kudos={kudos.data?.kudos ?? []} loading={kudos.loading} />
+          </Card>
+        </div>
+      )}
+
+      {/* ── Equity (advisory) ─────────────────────────────────────── */}
+      {tab === 'equity' && (
+        <Reveal>
+          <EquityLedger
+            data={equity.data}
+            loading={equity.loading}
+            error={equity.error}
+            period={undefined}
+            canEdit={canEdit}
+            onRefetch={equity.refetch}
+          />
+        </Reveal>
+      )}
+
       {/* Main layout: roster + sticky tuner */}
+      {tab === 'people' && (
       <div className="grid grid-cols-1 xl:grid-cols-[1fr_320px] gap-6 items-start">
         {/* Roster */}
         <div className="space-y-8 min-w-0">
@@ -312,6 +423,8 @@ export default function Contribution() {
                     liveComposite={live}
                     delta={delta}
                     onOpen={setOpenId}
+                    kudosCount={kudosCounts[member.userId] ?? 0}
+                    trend={trendByUser.get(member.userId)}
                   />
                 ))}
               </RevealList>
@@ -336,6 +449,7 @@ export default function Contribution() {
                     liveComposite={live}
                     delta={delta}
                     onOpen={setOpenId}
+                    kudosCount={kudosCounts[member.userId] ?? 0}
                   />
                 ))}
               </RevealList>
@@ -367,10 +481,28 @@ export default function Contribution() {
           </Card>
         </div>
       </div>
+      )}
 
       {/* Drill-down drawer */}
       {openId && (
-        <ContributorDrawer userId={openId} range={range} onClose={() => setOpenId(null)} />
+        <ContributorDrawer
+          userId={openId}
+          range={range}
+          onClose={() => setOpenId(null)}
+          kudosCount={kudosCounts[openId] ?? 0}
+          onGiveKudos={(uid) => openKudos(uid)}
+        />
+      )}
+
+      {/* Give-kudos modal */}
+      {kudosOpen && (
+        <KudosModal
+          members={members}
+          selfId={selfId}
+          defaultToUser={kudosTo}
+          onClose={() => setKudosOpen(false)}
+          onDone={() => kudos.refetch()}
+        />
       )}
     </div>
   )

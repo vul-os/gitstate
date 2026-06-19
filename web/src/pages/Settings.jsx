@@ -3,12 +3,13 @@ import { useNavigate, Link } from 'react-router-dom'
 import {
   User, Building2, Plug, AlertTriangle, LogOut, Users, CreditCard,
   ChevronRight, Pencil, Sparkles, KeyRound, Server, Check, Loader2,
-  CalendarDays, Link2, Unlink, ArrowUpFromLine, ArrowDownToLine,
+  CalendarDays, Link2, Unlink, ArrowUpFromLine, ArrowDownToLine, Bell,
 } from 'lucide-react'
 import { useAuth } from '../lib/useAuth.js'
 import { useOrg } from '../lib/useOrg.js'
 import { Card, Badge, Button } from '../components/ui/index.js'
 import { Reveal } from '../components/Reveal.jsx'
+import { NotificationsBody } from '../components/notifications/NotificationsSection.jsx'
 import {
   get, put,
   calendarStartUrl, fetchCalendarStatus, patchCalendar, disconnectCalendar,
@@ -544,6 +545,15 @@ export default function Settings() {
       </SectionCard>
 
       <CalendarSection delay={0.22} />
+
+      <SectionCard
+        icon={Bell}
+        title="Notifications"
+        description="Push evidence-based status to where your team works — Slack, a webhook, or email."
+        delay={0.24}
+      >
+        <NotificationsBody />
+      </SectionCard>
 
       <SectionCard icon={AlertTriangle} title="Danger zone" description="Irreversible actions." delay={0.25} tone="danger">
         <div className="flex items-center justify-between py-2">

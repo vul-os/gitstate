@@ -49,8 +49,15 @@ func RegisterContributionRoutes(mux *http.ServeMux, database *db.DB, cfg *config
 	// pattern regardless, but ordering keeps intent clear.)
 	mux.Handle("GET /api/contribution/weights", auth(http.HandlerFunc(h.getWeights)))
 	mux.Handle("PUT /api/contribution/weights", auth(http.HandlerFunc(h.putWeights)))
+	mux.Handle("GET /api/contribution/trends", auth(http.HandlerFunc(h.trends)))
 	mux.Handle("GET /api/contribution/{userId}", auth(http.HandlerFunc(h.member)))
 	mux.Handle("GET /api/contribution", auth(http.HandlerFunc(h.report)))
+
+	// Equity ledger (advisory) + peer kudos — same auth chain, same Service.
+	mux.Handle("GET /api/equity", auth(http.HandlerFunc(h.equity)))
+	mux.Handle("PUT /api/equity", auth(http.HandlerFunc(h.putEquity)))
+	mux.Handle("GET /api/kudos", auth(http.HandlerFunc(h.listKudos)))
+	mux.Handle("POST /api/kudos", auth(http.HandlerFunc(h.postKudos)))
 }
 
 type contributionHandlers struct {

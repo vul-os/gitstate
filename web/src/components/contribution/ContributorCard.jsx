@@ -7,6 +7,8 @@
  */
 import { Card } from '../ui/index.js'
 import { Avatar, CompositeRing, Radar, DimensionBars, AuthorshipBar } from './parts.jsx'
+import { Sparkline } from './TrendsChart.jsx'
+import { KudosBadge } from './Kudos.jsx'
 import { Bot, ChevronRight, Bug, FlaskConical } from 'lucide-react'
 
 /**
@@ -40,7 +42,7 @@ function QualitySignals({ dimensions }) {
   )
 }
 
-export function ContributorCard({ member, rank, liveComposite, delta, onOpen }) {
+export function ContributorCard({ member, rank, liveComposite, delta, onOpen, kudosCount = 0, trend }) {
   const isBot = member.isAgentBot
   return (
     <Card
@@ -63,10 +65,19 @@ export function ContributorCard({ member, rank, liveComposite, delta, onOpen }) 
             <div className="flex items-center gap-1.5">
               <p className="text-sm font-semibold text-[var(--text)] truncate">{member.name || member.email}</p>
               {isBot && <Bot size={13} className="text-[var(--brand-indigo)] shrink-0" />}
+              <KudosBadge count={kudosCount} className="shrink-0" />
             </div>
             <p className="text-[11px] text-[var(--text-faint)] truncate font-mono">{member.email}</p>
           </div>
         </div>
+
+        {/* trend sparkline */}
+        {trend && trend.length >= 2 && (
+          <div className="hidden md:flex flex-col items-center justify-center shrink-0" title="Composite over recent periods">
+            <Sparkline points={trend} width={84} height={26} />
+            <span className="text-[9px] font-mono uppercase tracking-wide text-[var(--text-faint)] mt-0.5">trend</span>
+          </div>
+        )}
 
         {/* composite */}
         <div className="flex items-center justify-center sm:justify-start shrink-0">

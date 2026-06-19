@@ -129,3 +129,115 @@ export function useContributionMember(userId, { from, to } = {}) {
 export function saveWeights(weights) {
   return api.put('/api/contribution/weights', weights)
 }
+
+// ── Trends over time ───────────────────────────────────────────────────────────
+
+/**
+ * Contribution over time. `data` shape:
+ *   { interval, periods, series:[{ userId, name, email, isAgentBot,
+ *       points:[{ periodStart, periodEnd, composite, dimensions:{...} }] }] }   (oldest→newest)
+ * Members ordered by their latest composite (desc). data: object|null.
+ */
+export function useContributionTrends({ periods = 6, interval = 'month' } = {}) {
+  const { activeOrgId } = useOrg()
+  const [state, dispatch] = useReducer(reducer, null, makeInit)
+  const genRef = useRef(0)
+
+  const doFetch = useCallback(async () => {
+    if (!activeOrgId) return
+    const gen = ++genRef.current
+    dispatch({ type: 'FETCH_START' })
+    try {
+      const params = new URLSearchParams({ periods: String(periods), interval })
+      const raw = await api.get(`/api/contribution/trends?${params.toString()}`)
+      if (genRef.current !== gen) return
+      dispatch({ type: 'FETCH_DONE', data: raw ?? null })
+    } catch (e) {
+      if (genRef.current !== gen) return
+      dispatch({ type: 'FETCH_ERROR', error: e.message ?? 'Failed to load trends' })
+    }
+  }, [activeOrgId, periods, interval])
+
+  useEffect(() => { doFetch().catch(() => {}) }, [doFetch])
+
+  return { data: state.data, loading: state.loading, error: state.error, refetch: doFetch }
+}
+
+// ── Equity ledger (advisory) ─────────────────────────────────────────────────
+
+/**
+ * Advisory equity ledger for a period. `data` shape:
+ *   { period, advisory:true, note, rows:[{ userId, name, email, composite,
+ *       suggestedPct, actualPct|null, poolLabel, note }] }
+ * `period` is a YYYY-MM-DD inside the target month (omitted ⇒ current month).
+ */
+export function useEquity({ period } = {}) {
+  const { activeOrgId } = useOrg()
+  const [state, dispatch] = useReducer(reducer, null, makeInit)
+  const genRef = useRef(0)
+
+  const doFetch = useCallback(async () => {
+    if (!activeOrgId) return
+    const gen = ++genRef.current
+    dispatch({ type: 'FETCH_START' })
+    try {
+      const qs = period ? `?period=${encodeURIComponent(period)}` : ''
+      const raw = await api.get(`/api/equity${qs}`)
+      if (genRef.current !== gen) return
+      dispatch({ type: 'FETCH_DONE', data: raw ?? null })
+    } catch (e) {
+      if (genRef.current !== gen) return
+      dispatch({ type: 'FETCH_ERROR', error: e.message ?? 'Failed to load equity ledger' })
+    }
+  }, [activeOrgId, period])
+
+  useEffect(() => { doFetch().catch(() => {}) }, [doFetch])
+
+  return { data: state.data, loading: state.loading, error: state.error, refetch: doFetch }
+}
+
+/**
+ * Record an admin-entered actual grant (owner/admin). `actualPct` null clears it.
+ * Resolves to the refreshed ledger.
+ */
+export function saveEquity({ userId, period, actualPct, poolLabel, note }) {
+  return api.put('/api/equity', { userId, period, actualPct, poolLabel, note })
+}
+
+// ── Kudos (peer recognition) ──────────────────────────────────────────────────
+
+/**
+ * Kudos feed + counts. `data` shape:
+ *   { kudos:[{ id, fromUser, fromName, toUser, toName, dimension, message, createdAt }],
+ *     counts:{ [userId]: number } }
+ * When `user` is set, kudos is filtered to that recipient (counts stay org-wide).
+ */
+export function useKudos({ user } = {}) {
+  const { activeOrgId } = useOrg()
+  const [state, dispatch] = useReducer(reducer, null, makeInit)
+  const genRef = useRef(0)
+
+  const doFetch = useCallback(async () => {
+    if (!activeOrgId) return
+    const gen = ++genRef.current
+    dispatch({ type: 'FETCH_START' })
+    try {
+      const qs = user ? `?user=${encodeURIComponent(user)}` : ''
+      const raw = await api.get(`/api/kudos${qs}`)
+      if (genRef.current !== gen) return
+      dispatch({ type: 'FETCH_DONE', data: raw ?? null })
+    } catch (e) {
+      if (genRef.current !== gen) return
+      dispatch({ type: 'FETCH_ERROR', error: e.message ?? 'Failed to load kudos' })
+    }
+  }, [activeOrgId, user])
+
+  useEffect(() => { doFetch().catch(() => {}) }, [doFetch])
+
+  return { data: state.data, loading: state.loading, error: state.error, refetch: doFetch }
+}
+
+/** Give kudos to a teammate. Resolves to the created kudo. */
+export function giveKudos({ toUser, dimension, message }) {
+  return api.post('/api/kudos', { toUser, dimension: dimension || undefined, message })
+}

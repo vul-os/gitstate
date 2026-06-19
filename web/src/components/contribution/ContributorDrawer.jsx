@@ -9,8 +9,9 @@ import { useEffect } from 'react'
 import { useContributionMember, DIMENSIONS, dimColor } from '../../lib/useContribution.js'
 import { Avatar, CompositeRing, Radar, AuthorshipBar } from './parts.jsx'
 import { fmtNum, relTime, clamp01to100 } from './helpers.js'
-import { Badge } from '../ui/index.js'
-import { X, Bot, GitMerge, GitPullRequest, Undo2, Gauge, ExternalLink, Sprout, Bug } from 'lucide-react'
+import { Badge, Button } from '../ui/index.js'
+import { KudosBadge } from './Kudos.jsx'
+import { X, Bot, GitMerge, GitPullRequest, Undo2, Gauge, ExternalLink, Sprout, Bug, Heart } from 'lucide-react'
 
 function Spinner({ size = 16 }) {
   return (
@@ -238,7 +239,7 @@ function DimensionBlock({ dim, dimData, evidence }) {
   )
 }
 
-export function ContributorDrawer({ userId, range, onClose }) {
+export function ContributorDrawer({ userId, range, onClose, kudosCount = 0, onGiveKudos }) {
   const { data, loading, error } = useContributionMember(userId, range)
 
   useEffect(() => {
@@ -278,12 +279,19 @@ export function ContributorDrawer({ userId, range, onClose }) {
                 <div className="flex items-center gap-1.5">
                   <h3 className="text-base font-semibold text-[var(--text)] truncate">{member.name || member.email}</h3>
                   {isBot && <Badge color="indigo"><Bot size={11} /> agent</Badge>}
+                  <KudosBadge count={kudosCount} className="shrink-0" />
                 </div>
                 <p className="text-[11px] font-mono text-[var(--text-faint)] truncate">{member.email}</p>
               </div>
             </div>
           ) : (
             <h3 className="text-base font-semibold text-[var(--text)]">Contributor</h3>
+          )}
+          <div className="flex items-center gap-1.5 shrink-0">
+          {member && !isBot && onGiveKudos && (
+            <Button variant="ghost" size="xs" leftIcon={<Heart size={13} />} onClick={() => onGiveKudos(member.userId)}>
+              Kudos
+            </Button>
           )}
           <button
             onClick={onClose}
@@ -292,6 +300,7 @@ export function ContributorDrawer({ userId, range, onClose }) {
           >
             <X size={18} />
           </button>
+          </div>
         </div>
 
         {/* body */}

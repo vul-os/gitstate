@@ -265,6 +265,9 @@ func main() {
 	// ── 10. Involvement texture (per member/project, monthly) ─────────────
 	s.seedInvolvement(org.ID, projects, commitStats)
 
+	// ── 10a. Contribution extras: trends snapshots · kudos · equity ledger ─
+	s.seedContributionExtras(org.ID)
+
 	// ── 10b. Client invoicing: demo clients + one generated invoice ───────
 	s.seedInvoicing(org.ID, projects)
 
@@ -1081,6 +1084,144 @@ func (s *seeder) seedIssues(orgID string, repos []*store.Repo, projects []*proje
 
 // ── involvement texture ─────────────────────────────────────────────────────
 
+// seedContributionExtras backfills the three CONTRIBUTION extensions so the new
+// views (trends · equity · kudos) are never empty:
+//
+//   - ~6 monthly contribution_snapshots per HUMAN member, with composites that
+//     VARY over time (some rising, some flat, one declining) so the over-time
+//     chart + sparklines read like a real team, not a flat line.
+//   - a handful of peer kudos between members (the human "satisfaction" signal).
+//   - a couple of equity_allocations with actual_pct set, so the advisory ledger
+//     shows suggested-vs-actual divergence out of the box.
+//
+// Idempotent: snapshots/equity upsert on their UNIQUE keys; kudos are cleared for
+// the org first (they have no natural key) so re-running doesn't pile up dupes.
+func (s *seeder) seedContributionExtras(orgID string) {
+	// Human members only (agent bots are excluded from equity and don't get a
+	// personal trend). Order matters for deterministic archetypes below.
+	humans := make([]*member, 0, len(members))
+	for _, m := range members {
+		if !m.isAgent && m.role != "stakeholder" {
+			humans = append(humans, m)
+		}
+	}
+
+	// trendShape returns a 0–100 composite for a member at a given month-offset
+	// back from now (0 = current month). Each archetype gets a base level plus a
+	// per-month trajectory so trends look real:
+	//   - rising   : climbs steadily toward "now"
+	//   - flat     : stable with light jitter
+	//   - declining: was strong, drifting down
+	const periods = 6
+	trendShape := func(mi, monthOffset int) (float64, map[string]float64) {
+		base := 45.0 + float64((mi*13)%40) // spread members across 45..85
+		// monthsAgo: 5 (oldest) … 0 (newest)
+		recency := float64(periods-1-monthOffset) / float64(periods-1) // 0 oldest → 1 newest
+		var traj float64
+		switch mi % 3 {
+		case 0: // rising
+			traj = (recency - 0.5) * 30
+		case 1: // flat
+			traj = (rng.Float64() - 0.5) * 6
+		default: // declining
+			traj = (0.5 - recency) * 26
+		}
+		comp := clamp0to100(base + traj + (rng.Float64()-0.5)*4)
+		// Per-dimension scores loosely orbit the composite, biased by archetype so
+		// the snapshot dimensions aren't all identical.
+		d := func(bias float64) float64 { return clamp0to100(comp*bias + (rng.Float64()-0.5)*10) }
+		dims := map[string]float64{
+			"shipped":    d(1.05),
+			"review":     d(0.9),
+			"effort":     d(1.0),
+			"quality":    d(0.95),
+			"ownership":  d(0.85),
+			"durability": d(1.0),
+		}
+		return comp, dims
+	}
+
+	// 1) Snapshots — ~6 monthly windows per human member.
+	s.must(s.db.WithOrg(s.ctx, orgID, func(tx pgx.Tx) error {
+		for mi, m := range humans {
+			for monthOffset := 0; monthOffset < periods; monthOffset++ {
+				start := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC).
+					AddDate(0, -monthOffset, 0)
+				end := start.AddDate(0, 1, 0)
+				comp, dims := trendShape(mi, monthOffset)
+				if err := store.UpsertContributionSnapshot(s.ctx, tx, orgID, m.user.ID, start, end, comp, dims); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	}))
+
+	// 2) Kudos — a handful of believable peer recognitions between members.
+	type kudoSeed struct{ from, to, dim, msg string }
+	pick := func(i int) *member { return humans[i%len(humans)] }
+	kudoSeeds := []kudoSeed{
+		{pick(0).user.ID, pick(1).user.ID, "review", "Your review on the auth refactor caught a subtle race — saved us a prod incident."},
+		{pick(2).user.ID, pick(1).user.ID, "review", "Thanks for the deep walkthrough on the pipeline PR, learned a lot."},
+		{pick(1).user.ID, pick(3).user.ID, "effort", "Landed the hardest part of the migration cleanly. Incredible work."},
+		{pick(3).user.ID, pick(2).user.ID, "shipped", "Shipped three features this sprint without breaking a sweat. 🚀"},
+		{pick(5).user.ID, pick(3).user.ID, "quality", "Your tests on the billing module are the gold standard now."},
+		{pick(0).user.ID, pick(5).user.ID, "ownership", "You owned the data-pipeline rewrite end to end — thank you."},
+		{pick(6).user.ID, pick(0).user.ID, "", "Always available to unblock people. The glue that keeps us moving."},
+		{pick(1).user.ID, pick(2).user.ID, "shipped", "Relentless shipper. The roadmap moves because of you."},
+	}
+	s.must(s.db.WithOrg(s.ctx, orgID, func(tx pgx.Tx) error {
+		// Clear prior kudos for the org so re-seeding stays idempotent.
+		if _, err := tx.Exec(s.ctx, `DELETE FROM kudos WHERE org_id = $1`, orgID); err != nil {
+			return err
+		}
+		for _, k := range kudoSeeds {
+			if k.from == k.to {
+				continue
+			}
+			if _, err := store.InsertKudo(s.ctx, tx, orgID, k.from, k.to, k.dim, k.msg); err != nil {
+				return err
+			}
+		}
+		return nil
+	}))
+
+	// 3) Equity ledger — record a couple of admin-entered actual grants for the
+	//    CURRENT month so the advisory ledger shows suggested-vs-actual out of the
+	//    box. suggested_pct is left at 0 here; the live GET /api/equity recomputes
+	//    it from contribution, so the stored value is just a fallback.
+	curStart := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
+	curEnd := curStart.AddDate(0, 1, 0)
+	pct := func(v float64) *float64 { return &v }
+	s.must(s.db.WithOrg(s.ctx, orgID, func(tx pgx.Tx) error {
+		grants := []store.EquityAllocation{
+			{UserID: pick(0).user.ID, ActualPct: pct(22.5), PoolLabel: "FY26 contribution pool",
+				Note: "Founding owner; weighting reviewed with the team."},
+			{UserID: pick(1).user.ID, ActualPct: pct(18.0), PoolLabel: "FY26 contribution pool",
+				Note: "Senior reviewer — share reflects the invisible unblocking work."},
+			{UserID: pick(2).user.ID, ActualPct: pct(16.0), PoolLabel: "FY26 contribution pool", Note: ""},
+		}
+		for _, g := range grants {
+			g.PeriodStart, g.PeriodEnd = curStart, curEnd
+			if err := store.UpsertEquityAllocation(s.ctx, tx, g, orgID); err != nil {
+				return err
+			}
+		}
+		return nil
+	}))
+}
+
+// clamp0to100 bounds a float to the 0–100 score range.
+func clamp0to100(v float64) float64 {
+	if v < 0 {
+		return 0
+	}
+	if v > 100 {
+		return 100
+	}
+	return math.Round(v*10) / 10
+}
+
 // seedInvolvement writes monthly involvement rows per member/project derived
 // from their commit volume, so the texture cards (never a single score) fill in.
 func (s *seeder) seedInvolvement(orgID string, projects []*projectRow, ct commitTally) {
@@ -1664,6 +1805,7 @@ func (s *seeder) printSummary(
 ║  Issues:     %d   (%d git · %d native)
 ║              open %d · in-progress %d · done %d · closed %d
 ║  Leave:      %d   Time entries: %d
+║  Contribution: ~6mo trend snapshots · peer kudos · advisory equity ledger
 ║
 ║  → Open http://localhost:8080/login
 ║    Email:    %s

@@ -51,6 +51,7 @@ func NewRouter(cfg *config.Config, database *db.DB) http.Handler {
 		RegisterEngHealthRoutes(mux, database, cfg)
 		RegisterPlanningRoutes(mux, database, cfg)
 		RegisterInvoiceRoutes(mux, database, cfg)
+		RegisterNotificationRoutes(mux, database, cfg)
 		RegisterReportRoutes(mux, database, cfg)
 		RegisterCapacityRoutes(mux, database, cfg)
 		RegisterBillingRoutes(mux, database, cfg)
