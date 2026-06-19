@@ -17,10 +17,12 @@ var contentFS embed.FS
 
 // Doc is a single documentation page.
 type Doc struct {
-	Slug    string `json:"slug"`
-	Title   string `json:"title"`
-	Order   int    `json:"order"`
-	Content string `json:"content,omitempty"`
+	Slug     string `json:"slug"`
+	Title    string `json:"title"`
+	Order    int    `json:"order"`
+	Category string `json:"category"`          // for grouping on the docs home
+	Summary  string `json:"summary,omitempty"` // one-line description for cards
+	Content  string `json:"content,omitempty"`
 }
 
 // metaLine parses an optional leading metadata comment:
@@ -29,12 +31,13 @@ type Doc struct {
 //
 // Falling back to the first markdown H1 for the title and 99 for order.
 func parseMeta(slug, body string) Doc {
-	d := Doc{Slug: slug, Order: 99, Content: body}
-	lines := strings.SplitN(body, "\n", 4)
-	for _, ln := range lines {
-		ln = strings.TrimSpace(ln)
-		if strings.HasPrefix(ln, "<!--") && strings.Contains(ln, "-->") {
-			inner := strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(ln, "<!--"), "-->"))
+	d := Doc{Slug: slug, Order: 99, Category: "General"}
+
+	// Strip a leading metadata comment (so it never renders) and parse its fields.
+	trimmed := strings.TrimLeft(body, " \t\r\n")
+	if strings.HasPrefix(trimmed, "<!--") {
+		if end := strings.Index(trimmed, "-->"); end >= 0 {
+			inner := strings.TrimSpace(trimmed[len("<!--"):end])
 			for _, part := range strings.Split(inner, "|") {
 				k, v, ok := strings.Cut(strings.TrimSpace(part), ":")
 				if !ok {
@@ -48,11 +51,25 @@ func parseMeta(slug, body string) Doc {
 					if n, err := strconv.Atoi(v); err == nil {
 						d.Order = n
 					}
+				case "category":
+					d.Category = v
+				case "summary":
+					d.Summary = v
 				}
 			}
+			// Remove the comment from the content that gets rendered.
+			body = strings.TrimLeft(trimmed[end+len("-->"):], "\r\n")
 		}
-		if d.Title == "" && strings.HasPrefix(ln, "# ") {
-			d.Title = strings.TrimSpace(strings.TrimPrefix(ln, "# "))
+	}
+	d.Content = body
+
+	// Fall back to the first H1 for the title.
+	if d.Title == "" {
+		for _, ln := range strings.SplitN(body, "\n", 6) {
+			if s := strings.TrimSpace(ln); strings.HasPrefix(s, "# ") {
+				d.Title = strings.TrimSpace(strings.TrimPrefix(s, "# "))
+				break
+			}
 		}
 	}
 	if d.Title == "" {

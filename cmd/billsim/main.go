@@ -33,7 +33,7 @@ func main() {
 	conv := flag.Float64("conv", 6.0, "% of orgs on a paid tier (0–100)")
 	churn := flag.Float64("churn", 3.0, "monthly paid churn % (0–100)")
 	fx := flag.Float64("fx", 18.5, "USD→ZAR FX rate")
-	byok := flag.Float64("byok", 0.35, "BYOK adoption fraction among managed builders (0–1)")
+	byok := flag.Float64("byok", 0.10, "BYOK adoption fraction (small enterprise opt-out; managed is default)")
 	llmTeam := flag.Float64("llm-team", 5.0, "managed LLM $/builder/mo on Team (provider cost)")
 	llmBiz := flag.Float64("llm-biz", 14.0, "managed LLM $/builder/mo on Business (provider cost)")
 	scenarios := flag.Bool("scenarios", true, "run the 50/100/500/1k/5k scenario sweep")
@@ -54,6 +54,8 @@ func main() {
 
 		BYOKFrac:           *byok,
 		LLMUsagePerBuilder: [2]float64{*llmTeam, *llmBiz},
+		LLMVolumeDiscount:  0.65, // we pay ~65% of the charged rate (committed-use discount)
+		LLMRetailMultiple:  1.25, // retail (what a BYOK customer pays direct) is ~25% above our charge
 
 		// Infra — scale-to-zero containers + serverless Postgres. Free orgs are dormant.
 		InfraFreeUSD:     0.15,
@@ -90,6 +92,15 @@ func printLadder(p SimParams) {
 	w.Flush()
 	fmt.Printf("  Competitive note: Linear/Jira charge ~$8–14 per *seat*; gitstate charges per *builder*\n")
 	fmt.Printf("  with stakeholders free — so a 6-builder / 20-stakeholder team pays for 6, not 26.\n")
+	disc := p.LLMVolumeDiscount
+	if disc <= 0 {
+		disc = 1
+	}
+	fmt.Printf("  Managed LLM is the default & a PROFIT CENTER: we charge ~%.0f%% below retail (cheaper than\n",
+		(1-1/p.LLMRetailMultiple)*100)
+	fmt.Printf("  running your own key) yet our cost is ~%.0f%% of what we charge (volume discount) → ~%.0f%% LLM margin.\n",
+		disc*100, (1-disc)*100)
+	fmt.Printf("  BYOK stays as an enterprise opt-out (%.0f%% assumed), not the revenue-zeroing default.\n", p.BYOKFrac*100)
 }
 
 func printTable(r SimResult, p SimParams, totalOrgs int) {

@@ -54,8 +54,19 @@ type SimParams struct {
 	// (→ $0 LLM cost AND $0 LLM revenue for us).
 	BYOKFrac float64
 
-	// Average managed-LLM usage per non-BYOK builder, in USD of provider cost (per tier).
+	// Average managed-LLM usage per non-BYOK builder, in USD at OUR list/charge rate (per tier).
 	LLMUsagePerBuilder [2]float64
+
+	// Our actual LLM cost is a fraction of the charged rate, thanks to committed-use /
+	// volume discounts from the provider (e.g. 0.65 = we pay 65% of what we charge).
+	// This is what makes managed LLM a PROFIT CENTER and lets us price BELOW the retail
+	// rate a customer would pay running their own key (BYOK / self-host), while still
+	// making money. BYOK is therefore a small enterprise opt-out, not the default.
+	LLMVolumeDiscount float64
+
+	// Retail $/unit a customer would pay buying tokens directly (for the self-host
+	// comparison). Our charged rate is below this; our cost is below our charge.
+	LLMRetailMultiple float64 // retail = charged × this (e.g. 1.25)
 
 	// Infra (scale-to-zero compute + DB), USD/mo.
 	InfraFreeUSD     float64 // dormant free org
@@ -125,8 +136,13 @@ func paidOrgResult(t Tier, tierIdx, n int, p SimParams) TierResult {
 	overagePerOrg := managedBuilders * overagePerBuilder * t.OverageMarkup
 	grossPerOrg := subPerOrg + overagePerOrg
 
-	// Costs.
-	llmCostPerOrg := managedBuilders * usage // we pay provider for all managed usage
+	// Costs. Our LLM cost is the volume-discounted fraction of usage (we buy cheaper
+	// than retail), so the included allowance AND overage both carry margin.
+	disc := p.LLMVolumeDiscount
+	if disc <= 0 {
+		disc = 1
+	}
+	llmCostPerOrg := managedBuilders * usage * disc
 	infraPerOrg := p.InfraPaidBaseUSD + builders*p.InfraPerBuilder
 	otherPerOrg := builders * (p.SupportPerBuilder + p.SyncPerBuilder)
 
