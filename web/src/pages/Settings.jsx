@@ -405,9 +405,14 @@ function CalendarSection({ delay }) {
           <Loader2 size={14} className="animate-spin" /> Loading…
         </div>
       ) : !anyConfigured ? (
-        <p className="py-2 text-xs text-[var(--text-faint)]">
-          No calendar provider is configured on this server. Add Google or Microsoft OAuth credentials to enable calendar sync.
-        </p>
+        <div className="py-2 text-xs text-[var(--text-faint)] space-y-1.5">
+          <p>No calendar provider is configured on this server. To enable two-way calendar sync, set OAuth credentials in the server environment and restart:</p>
+          <ul className="space-y-1 font-mono text-[11px] text-[var(--text-muted)]">
+            <li>· <span className="text-[var(--brand-teal)]">OAUTH_GOOGLE_CLIENT_ID</span> / <span className="text-[var(--brand-teal)]">OAUTH_GOOGLE_CLIENT_SECRET</span></li>
+            <li>· <span className="text-[var(--brand-indigo)]">OAUTH_MICROSOFT_CLIENT_ID</span> / <span className="text-[var(--brand-indigo)]">OAUTH_MICROSOFT_CLIENT_SECRET</span></li>
+          </ul>
+          <p>The calendar flow reuses your existing Google/Microsoft sign-in app — just add the calendar scopes.</p>
+        </div>
       ) : (
         <>
           <CalendarRow
