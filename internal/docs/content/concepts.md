@@ -1,4 +1,4 @@
-<!-- title: Concepts | order: 4 -->
+<!-- title: Concepts | order: 10 | category: Concepts | summary: The mental model: derived state, two truth-modes, texture, free stakeholders. -->
 
 # Concepts
 

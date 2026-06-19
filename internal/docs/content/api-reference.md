@@ -1,4 +1,4 @@
-<!-- title: API Reference | order: 15 -->
+<!-- title: API Reference | order: 41 | category: Reference | summary: Every REST endpoint, grouped by area, with auth and org-scope conventions. -->
 
 # API Reference
 

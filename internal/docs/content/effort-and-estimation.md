@@ -1,4 +1,4 @@
-<!-- title: Effort & Estimation | order: 7 -->
+<!-- title: Effort & Estimation | order: 12 | category: Concepts | summary: An LLM reads the diff for semantic difficulty (1–10) — never line count. -->
 
 # Effort & Estimation
 

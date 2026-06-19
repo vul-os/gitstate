@@ -1,4 +1,4 @@
-<!-- title: Derived State | order: 6 -->
+<!-- title: Derived State | order: 11 | category: Concepts | summary: How the git engine computes issue status, cycle time, and agent attribution. -->
 
 # Derived State
 

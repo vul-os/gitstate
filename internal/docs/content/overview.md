@@ -1,4 +1,4 @@
-<!-- title: Overview | order: 1 -->
+<!-- title: Overview | order: 1 | category: Getting Started | summary: What gitstate is, the five disciplines, and what's in the box. -->
 
 # Overview
 
@@ -41,4 +41,5 @@ doesn't ship.
 - New here? Start with the [Quickstart](/docs/quickstart).
 - Want the *why*? Read [The Wedge](/docs/the-wedge) and the [Concepts](/docs/concepts) mental model.
 - Self-hosting? See [Self-hosting](/docs/self-hosting) and [Configuration](/docs/configuration).
-- Building against the API? See the [API Reference](/docs/api-reference).
+- Building against the API? See the [API Reference](/docs/api-reference) and the [Data model](/docs/data-model).
+- Curious what's shipped vs. Enterprise-only? See [Roadmap & status](/docs/roadmap-and-status).

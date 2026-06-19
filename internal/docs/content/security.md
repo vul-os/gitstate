@@ -1,4 +1,4 @@
-<!-- title: Security | order: 14 -->
+<!-- title: Security | order: 32 | category: Operations | summary: RLS tenancy, audited admin, webhook verification, and at-rest encryption. -->
 
 # Security
 

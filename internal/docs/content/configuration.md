@@ -1,4 +1,4 @@
-<!-- title: Configuration | order: 11 -->
+<!-- title: Configuration | order: 30 | category: Operations | summary: Every config flag and environment variable, and how features gate themselves. -->
 
 # Configuration
 

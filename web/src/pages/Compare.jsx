@@ -1,186 +1,29 @@
 /**
- * Compare page — gitstate vs Jira, Linear, ClickUp, ZenHub.
+ * Compare page — gitstate vs Linear, Jira, ClickUp, ZenHub, GitHub Projects.
+ *
  * "The Ledger" aesthetic: dark-first, teal→indigo, monospace accents, grain.
  * Wrapped by MarketingLayout from the orchestrator (no nav/footer here).
+ *
+ * Sections: hero → grounded cost calculator (CostCompare) → honest feature
+ * matrix (FeatureMatrix) → structural "why incumbents can't copy it" narrative
+ * → CTAs to /signup + /pricing. All competitor numbers are the researched 2026
+ * figures, kept exactly as given.
  */
 import { Link } from 'react-router-dom'
 import {
-  Check,
-  Minus,
-  X,
-  ArrowRight,
-  GitMerge,
-  ScanLine,
-  GitBranch,
-  Receipt,
-  Users,
-  Layers,
-  Bot,
-  GitFork,
-  MessageSquareText,
-  Lock,
-  ShieldOff,
+  ArrowRight, Layers, GitBranch, Lock, ShieldOff, Calculator, Scale,
 } from 'lucide-react'
-import { Card, Badge, Pill, GradientText, Section, Container, Glow, BrowserFrame } from '../components/ui'
+import { Card, Badge, Pill, GradientText, Section, Container, Glow } from '../components/ui'
 import { Reveal, RevealList } from '../components/Reveal.jsx'
-
-// ── Data ─────────────────────────────────────────────────────────────────────
-
-// Values: true = full ✓, 'partial' = partial ~, false = ✗
-const ROWS = [
-  {
-    feature: 'State derived from git',
-    detail: 'Merged = done. Open PR = in progress. No manual status fields.',
-    icon: GitMerge,
-    gitstate: true,
-    jira: false,
-    linear: false,
-    clickup: false,
-    zenhub: 'partial',
-    winner: true,
-  },
-  {
-    feature: 'Effort from reading the diff',
-    detail: 'LLM reads the actual diff to judge semantic difficulty — not story-point poker.',
-    icon: ScanLine,
-    gitstate: true,
-    jira: false,
-    linear: false,
-    clickup: false,
-    zenhub: false,
-    winner: true,
-  },
-  {
-    feature: 'GitHub + GitLab unified',
-    detail: 'Single board spanning both platforms, two-way issue sync.',
-    icon: GitBranch,
-    gitstate: true,
-    jira: 'partial',
-    linear: 'partial',
-    clickup: 'partial',
-    zenhub: false,
-    winner: true,
-  },
-  {
-    feature: 'Evidence-based invoicing',
-    detail: 'Every invoice line links to a commit SHA or PR. Gaps flagged, not fabricated.',
-    icon: Receipt,
-    gitstate: true,
-    jira: false,
-    linear: false,
-    clickup: false,
-    zenhub: false,
-    winner: true,
-  },
-  {
-    feature: 'Free stakeholder seats',
-    detail: 'Clients, PMs, and execs can view without driving up your bill.',
-    icon: Users,
-    gitstate: true,
-    jira: false,
-    linear: false,
-    clickup: 'partial',
-    zenhub: false,
-    winner: true,
-  },
-  {
-    feature: 'Involvement as texture, not a score',
-    detail: 'Multi-dimensional contribution view — review, authorship, scope — never a single number in pay formulas.',
-    icon: Layers,
-    gitstate: true,
-    jira: false,
-    linear: false,
-    clickup: false,
-    zenhub: false,
-    winner: true,
-  },
-  {
-    feature: 'Agent-native',
-    detail: 'Built for workflows where agents write code and humans supervise. No ticket-update rituals.',
-    icon: Bot,
-    gitstate: true,
-    jira: false,
-    linear: false,
-    clickup: false,
-    zenhub: false,
-    winner: true,
-  },
-  {
-    feature: 'Open source + self-host',
-    detail: 'AGPL-3.0 core. Run it on your own infra, fork it, own your data.',
-    icon: GitFork,
-    gitstate: true,
-    jira: false,
-    linear: false,
-    clickup: false,
-    zenhub: false,
-    winner: true,
-  },
-  {
-    feature: 'Queryable / NL→report',
-    detail: 'Ask "show me PRs by contributor last quarter" in plain language. No BI tool needed.',
-    icon: MessageSquareText,
-    gitstate: true,
-    jira: 'partial',
-    linear: false,
-    clickup: 'partial',
-    zenhub: false,
-    winner: true,
-  },
-]
-
-const TOOL_COLS = [
-  { key: 'gitstate', label: 'gitstate', isGs: true },
-  { key: 'jira', label: 'Jira', isGs: false },
-  { key: 'linear', label: 'Linear', isGs: false },
-  { key: 'clickup', label: 'ClickUp', isGs: false },
-  { key: 'zenhub', label: 'ZenHub', isGs: false },
-]
-
-// ── Cell rendering ────────────────────────────────────────────────────────────
-
-function Cell({ value, isGs }) {
-  if (value === true) {
-    return (
-      <span
-        className={[
-          'inline-flex items-center justify-center w-7 h-7 rounded-full transition-transform duration-150',
-          isGs
-            ? 'bg-[#2DD4BF]/15 text-[#2DD4BF] shadow-[0_0_14px_rgba(45,212,191,0.35)] group-hover:scale-110'
-            : 'bg-green-500/10 text-green-400',
-        ].join(' ')}
-        aria-label="Yes"
-      >
-        <Check size={15} strokeWidth={3} />
-      </span>
-    )
-  }
-  if (value === 'partial') {
-    return (
-      <span
-        className="inline-flex items-center justify-center w-7 h-7 rounded-full text-yellow-400/80 bg-yellow-500/[0.08]"
-        aria-label="Partial"
-      >
-        <Minus size={15} strokeWidth={3} />
-      </span>
-    )
-  }
-  return (
-    <span
-      className="inline-flex items-center justify-center w-7 h-7 rounded-full text-[var(--text-faint)]/50 bg-transparent"
-      aria-label="No"
-    >
-      <X size={14} strokeWidth={2.5} />
-    </span>
-  )
-}
+import CostCompare from '../components/compare/CostCompare.jsx'
+import FeatureMatrix from '../components/compare/FeatureMatrix.jsx'
 
 // ── Narrative blocks ──────────────────────────────────────────────────────────
 
 const NARRATIVES = [
   {
     heading: 'The problem is structural',
-    body: `Jira, Linear, ClickUp, and ZenHub are parallel, hand-maintained records of work that already happened in git. Every sprint ceremony, every story-point estimate, every "please update your ticket" Slack message exists because those tools chose to store a copy of reality rather than read the original.
+    body: `Jira, Linear, ClickUp, ZenHub, and GitHub Projects are parallel, hand-maintained records of work that already happened in git. Every sprint ceremony, every story-point estimate, every "please update your ticket" Slack message exists because those tools chose to store a copy of reality rather than read the original.
 
 That copy is unreliable by construction. Estimates have been ~30% wrong for 40 years. Velocity becomes a vanity metric the moment it's a target. Billable hours are reconstructed from memory on Friday afternoon, leaking 15–25% of agency revenue.
 
@@ -188,9 +31,9 @@ These aren't bugs in the tools. They're what happens when you ask a human to inv
   },
   {
     heading: 'Why incumbents can\'t copy it',
-    body: `Jira and Linear aren't ignoring git because they haven't thought of it. They're structurally blocked.
+    body: `These tools aren't ignoring git because they haven't thought of it. They're structurally blocked.
 
-Their entire data model is the hand-entered ticket. Their revenue model is per-seat — every stakeholder who views progress costs you money. Replacing tickets with git-derived state would invalidate years of customer data and destroy the metric their pricing depends on.
+Their entire data model is the hand-entered ticket. Their revenue model is per total seat — every stakeholder who views progress costs you money. Replacing tickets with git-derived state would invalidate years of customer data and destroy the metric their pricing depends on.
 
 gitstate charges per builder. Stakeholders — clients, PMs, executives — are free. The data model IS the git object graph. There's no parallel record to maintain, no incentive to make tickets the source of truth.`,
   },
@@ -202,13 +45,10 @@ For billing teams: every invoice line links to a commit SHA or pull request. Wor
   },
 ]
 
-// ── Components ────────────────────────────────────────────────────────────────
-
 function NarrativeSection({ heading, body, index }) {
   return (
     <Reveal inView>
       <div className="group relative">
-        {/* Numbered node on the timeline */}
         <span
           className="absolute -left-[1.6rem] top-1 w-3 h-3 rounded-full border-2 border-[var(--bg)] z-10"
           style={{ background: 'linear-gradient(135deg, #2DD4BF, #6366F1)' }}
@@ -234,144 +74,51 @@ function NarrativeSection({ heading, body, index }) {
   )
 }
 
-function MatrixTable() {
+// ── Structural blockers ───────────────────────────────────────────────────────
+
+const BLOCKERS = [
+  {
+    tool: 'Jira / ClickUp',
+    reason: 'Per-seat pricing on every viewer. Free stakeholder access destroys their revenue model.',
+    icon: Lock,
+  },
+  {
+    tool: 'Linear',
+    reason: 'The ticket is the atom of truth. Replacing it with a git event invalidates their entire data model.',
+    icon: Layers,
+  },
+  {
+    tool: 'ZenHub / GitHub',
+    reason: 'GitHub-centric; no unified GitLab. Derived state is additive, not foundational — tickets still own status.',
+    icon: GitBranch,
+  },
+]
+
+function BlockersSection() {
   return (
-    <div className="w-full overflow-x-auto">
-      <table className="w-full border-collapse min-w-[720px]" style={{ tableLayout: 'fixed' }}>
-        <colgroup>
-          <col style={{ width: '40%' }} />
-          {TOOL_COLS.map((col) => (
-            <col key={col.key} style={{ width: `${60 / TOOL_COLS.length}%` }} />
-          ))}
-        </colgroup>
-
-        {/* Header */}
-        <thead>
-          <tr>
-            <th className="text-left pb-4 pr-4">
-              <span className="text-[11px] font-mono font-medium text-[var(--text-faint)] uppercase tracking-widest">
-                feature
-              </span>
-            </th>
-            {TOOL_COLS.map((col) => (
-              <th key={col.key} className="pb-4 px-2 text-center">
-                {col.isGs ? (
-                  <span
-                    className="inline-flex font-mono text-sm font-bold px-3 py-1.5 rounded-md"
-                    style={{
-                      background: 'linear-gradient(135deg, rgba(45,212,191,0.18), rgba(99,102,241,0.16))',
-                      border: '1px solid rgba(45,212,191,0.4)',
-                      color: '#2DD4BF',
-                      boxShadow: '0 0 20px rgba(45,212,191,0.18)',
-                    }}
-                  >
-                    {col.label}
-                  </span>
-                ) : (
-                  <span className="font-mono text-xs font-medium text-[var(--text-faint)]">
-                    {col.label}
-                  </span>
-                )}
-              </th>
-            ))}
-          </tr>
-          <tr aria-hidden="true">
-            <td colSpan={TOOL_COLS.length + 1}>
-              <div className="h-px w-full bg-gradient-to-r from-[#2DD4BF]/30 via-[var(--border)] to-transparent mb-1" />
-            </td>
-          </tr>
-        </thead>
-
-        {/* Rows */}
-        <tbody>
-          {ROWS.map((row) => {
-            const Icon = row.icon
-            return (
-              <tr
-                key={row.feature}
-                className="group border-b border-[var(--border)] last:border-0 transition-colors duration-150"
-              >
-                {/* Feature label */}
-                <td className="py-3.5 pr-4 align-top group-hover:bg-[var(--bg-surface2)]/40 transition-colors duration-150">
-                  <div className="flex items-start gap-3">
-                    <span className="mt-0.5 flex items-center justify-center w-7 h-7 rounded-md bg-[var(--bg-surface3)] text-[var(--text-muted)] shrink-0 group-hover:text-[var(--brand-teal)] transition-colors duration-150">
-                      <Icon size={15} strokeWidth={2} />
-                    </span>
-                    <div className="flex flex-col gap-0.5 min-w-0">
-                      <span className="text-sm font-medium text-[var(--text-dim)] font-display leading-snug">
-                        {row.feature}
-                      </span>
-                      <span className="text-[12px] text-[var(--text-faint)] leading-relaxed hidden sm:block">
-                        {row.detail}
-                      </span>
-                    </div>
-                  </div>
-                </td>
-
-                {/* Value cells */}
-                {TOOL_COLS.map((col) => (
-                  <td
-                    key={col.key}
-                    className={[
-                      'py-3.5 px-2 text-center align-middle transition-colors duration-150',
-                      col.isGs
-                        ? 'bg-[#2DD4BF]/[0.035] group-hover:bg-[#2DD4BF]/[0.07]'
-                        : 'group-hover:bg-[var(--bg-surface2)]/40',
-                    ].join(' ')}
-                  >
-                    <Cell value={row[col.key]} isGs={col.isGs} />
-                  </td>
-                ))}
-              </tr>
-            )
-          })}
-        </tbody>
-
-        {/* Footer legend */}
-        <tfoot>
-          <tr>
-            <td colSpan={TOOL_COLS.length + 1} className="pt-5 pb-1">
-              <div className="flex flex-wrap items-center gap-5 text-[11px] font-mono text-[var(--text-faint)]">
-                <span className="flex items-center gap-1.5">
-                  <Check size={13} strokeWidth={3} className="text-[#2DD4BF]" /> full support
+    <RevealList className="grid grid-cols-1 md:grid-cols-3 gap-4" staggerDelay={0.07} inView>
+      {BLOCKERS.map((b) => {
+        const Icon = b.icon
+        return (
+          <Card key={b.tool} padding="lg" hoverable>
+            <div className="flex flex-col gap-3 h-full">
+              <div className="flex items-center gap-2.5">
+                <span className="flex items-center justify-center w-8 h-8 rounded-lg bg-red-500/10 text-red-400/80 shrink-0">
+                  <Icon size={16} strokeWidth={2} />
                 </span>
-                <span className="flex items-center gap-1.5">
-                  <Minus size={13} strokeWidth={3} className="text-yellow-400/80" /> partial / plugin
-                </span>
-                <span className="flex items-center gap-1.5">
-                  <X size={13} strokeWidth={2.5} className="text-[var(--text-faint)]/60" /> not supported
+                <span className="font-mono text-xs font-medium text-[var(--text-faint)] uppercase tracking-widest">
+                  {b.tool}
                 </span>
               </div>
-            </td>
-          </tr>
-        </tfoot>
-      </table>
-    </div>
-  )
-}
-
-function WinCountBanner() {
-  const gsWins = ROWS.filter((r) => r.gitstate === true).length
-  return (
-    <div
-      className="relative overflow-hidden rounded-xl border border-[#2DD4BF]/20 px-6 py-5 flex flex-col sm:flex-row items-start sm:items-center gap-4"
-      style={{ background: 'linear-gradient(135deg, rgba(45,212,191,0.06) 0%, rgba(99,102,241,0.04) 100%)' }}
-    >
-      <Glow variant="teal" size={300} className="-top-10 -left-10" />
-      <div className="flex-1 relative z-10">
-        <p className="text-sm font-mono text-[var(--text-muted)] leading-relaxed">
-          gitstate wins{' '}
-          <span className="text-[#2DD4BF] font-bold">
-            {gsWins}/{ROWS.length}
-          </span>{' '}
-          categories above — not by checking more boxes, but because the categories didn't exist before git
-          became the source of truth.
-        </p>
-      </div>
-      <Pill color="teal" className="shrink-0 text-xs relative z-10">
-        git-derived
-      </Pill>
-    </div>
+              <p className="text-sm text-[var(--text-muted)] leading-relaxed flex-1">{b.reason}</p>
+              <Badge color="red" className="self-start inline-flex items-center gap-1">
+                <ShieldOff size={11} strokeWidth={2.5} /> won&apos;t fix
+              </Badge>
+            </div>
+          </Card>
+        )
+      })}
+    </RevealList>
   )
 }
 
@@ -399,7 +146,7 @@ function CtaBlock() {
         <Reveal delay={0.14}>
           <p className="text-[var(--text-muted)] max-w-md mx-auto mb-8 text-[15px] leading-relaxed">
             Connect your repos and let git tell the truth. No ticket migrations, no sprint ceremonies, no
-            reconstructed timesheets.
+            reconstructed timesheets — and a smaller bill.
           </p>
         </Reveal>
         <Reveal delay={0.2}>
@@ -425,54 +172,6 @@ function CtaBlock() {
   )
 }
 
-// ── Structural blockers callout ───────────────────────────────────────────────
-
-const BLOCKERS = [
-  {
-    tool: 'Jira / ClickUp',
-    reason: 'Per-seat pricing on every viewer. Free stakeholder access destroys their revenue model.',
-    icon: Lock,
-  },
-  {
-    tool: 'Linear',
-    reason: 'Ticket is the atom of truth. Replacing it with a git event invalidates their entire data model.',
-    icon: Layers,
-  },
-  {
-    tool: 'ZenHub',
-    reason: 'GitHub-only; no GitLab. Derived state is additive, not foundational — tickets still own status.',
-    icon: GitBranch,
-  },
-]
-
-function BlockersSection() {
-  return (
-    <RevealList className="grid grid-cols-1 md:grid-cols-3 gap-4" staggerDelay={0.07} inView>
-      {BLOCKERS.map((b) => {
-        const Icon = b.icon
-        return (
-          <Card key={b.tool} padding="lg" hoverable>
-            <div className="flex flex-col gap-3 h-full">
-              <div className="flex items-center gap-2.5">
-                <span className="flex items-center justify-center w-8 h-8 rounded-lg bg-red-500/10 text-red-400/80 shrink-0">
-                  <Icon size={16} strokeWidth={2} />
-                </span>
-                <span className="font-mono text-xs font-medium text-[var(--text-faint)] uppercase tracking-widest">
-                  {b.tool}
-                </span>
-              </div>
-              <p className="text-sm text-[var(--text-muted)] leading-relaxed flex-1">{b.reason}</p>
-              <Badge color="red" className="self-start inline-flex items-center gap-1">
-                <ShieldOff size={11} strokeWidth={2.5} /> won't fix
-              </Badge>
-            </div>
-          </Card>
-        )
-      })}
-    </RevealList>
-  )
-}
-
 // ── Main export ───────────────────────────────────────────────────────────────
 
 export default function Compare() {
@@ -495,29 +194,29 @@ export default function Compare() {
 
               <Reveal delay={0.08}>
                 <h1 className="font-display text-4xl md:text-5xl lg:text-6xl font-bold tracking-tight mb-4 leading-[1.08]">
-                  <span className="text-[var(--text)]">Your tracker is a</span>{' '}
-                  <GradientText>manually-maintained fiction</GradientText>{' '}
-                  <span className="text-[var(--text)]">next to git.</span>
+                  <span className="text-[var(--text)]">Pay for builders.</span>{' '}
+                  <GradientText>Not for everyone who looks.</GradientText>
                 </h1>
               </Reveal>
 
               <Reveal delay={0.15}>
                 <p className="text-[var(--text-muted)] text-lg md:text-xl max-w-2xl mx-auto leading-relaxed mt-4">
-                  Jira, Linear, ClickUp, and ZenHub store a copy of your reality. gitstate reads the original —
-                  the git object graph — and derives state, effort, and invoices from it.
+                  Linear, Jira, ClickUp, ZenHub, and GitHub bill every seat and tax AI per head. gitstate charges
+                  per builder, keeps stakeholders free, and bundles managed AI. See exactly what you&apos;d save —
+                  with the math shown.
                 </p>
               </Reveal>
 
               <Reveal delay={0.22}>
                 <div className="flex flex-col sm:flex-row gap-3 justify-center mt-8">
-                  <Link
-                    to="/signup"
+                  <a
+                    href="#calculator"
                     className="inline-flex items-center justify-center gap-2 px-6 py-3 rounded-lg font-semibold text-sm text-[#0B1120] transition-all duration-150 hover:opacity-90"
                     style={{ background: 'linear-gradient(135deg, #2DD4BF, #6366F1)' }}
                   >
-                    Start for free
-                    <ArrowRight size={15} strokeWidth={2.5} />
-                  </Link>
+                    <Calculator size={15} strokeWidth={2.5} />
+                    Calculate my savings
+                  </a>
                   <Link
                     to="/pricing"
                     className="inline-flex items-center justify-center gap-2 px-6 py-3 rounded-lg font-medium text-sm text-[var(--text-muted)] border border-[var(--border)] hover:border-[var(--border2)] hover:text-[var(--text)] transition-all duration-150"
@@ -531,16 +230,25 @@ export default function Compare() {
         </Container>
       </Section>
 
-      {/* ── Product shot anchor ── */}
-      <Section py="sm">
+      {/* ── Cost calculator ── */}
+      <Section py="md" id="calculator" className="scroll-mt-8">
         <Container size="lg">
-          <Reveal inView delay={0.05}>
-            <div className="relative">
-              <Glow variant="brand" size={600} className="top-1/4 left-1/2" />
-              <div className="relative z-10">
-                <BrowserFrame src="/shots/board.png" alt="gitstate board — state derived from git" url="app.gitstate.dev/board" />
+          <Reveal inView>
+            <div className="flex items-end justify-between mb-6 gap-4 flex-wrap">
+              <div>
+                <Badge color="teal" className="mb-3">interactive · grounded in 2026 list prices</Badge>
+                <h2 className="font-display text-2xl md:text-3xl font-bold text-[var(--text)] tracking-tight">
+                  What you&apos;d actually pay
+                </h2>
+                <p className="text-[var(--text-muted)] text-sm mt-1.5 max-w-xl">
+                  Set your team shape. We compute every tool&apos;s real monthly bill — seats, AI add-ons and all —
+                  and show the savings, transparently.
+                </p>
               </div>
             </div>
+          </Reveal>
+          <Reveal inView delay={0.06}>
+            <CostCompare />
           </Reveal>
         </Container>
       </Section>
@@ -551,77 +259,34 @@ export default function Compare() {
           <Reveal inView>
             <div className="flex items-end justify-between mb-6 gap-4 flex-wrap">
               <div>
+                <Badge color="indigo" className="mb-3 inline-flex items-center gap-1">
+                  <Scale size={11} /> fair &amp; honest
+                </Badge>
                 <h2 className="font-display text-2xl md:text-3xl font-bold text-[var(--text)] tracking-tight">
                   Feature comparison
                 </h2>
-                <p className="text-[var(--text-muted)] text-sm mt-1.5">
-                  Across the dimensions that matter to teams building real software.
+                <p className="text-[var(--text-muted)] text-sm mt-1.5 max-w-xl">
+                  gitstate wins its structural categories — and we mark, honestly, where these competitors lead or
+                  match us.
                 </p>
               </div>
-              <Badge color="teal" className="shrink-0">
-                9 categories · 5 tools
-              </Badge>
+              <Badge color="teal" className="shrink-0">6 tools</Badge>
             </div>
           </Reveal>
-
           <Reveal inView delay={0.06}>
-            <div className="relative">
-              {/* glow behind the highlighted gitstate column */}
-              <div
-                className="absolute inset-y-0 pointer-events-none z-0 hidden md:block"
-                style={{
-                  left: '40%',
-                  width: '12%',
-                  background:
-                    'linear-gradient(to bottom, rgba(45,212,191,0.10), rgba(99,102,241,0.05) 60%, transparent)',
-                  filter: 'blur(8px)',
-                }}
-                aria-hidden="true"
-              />
-              <Card padding="none" className="overflow-hidden relative z-10">
-                <div className="px-6 py-5 border-b border-[var(--border)]">
-                  <div className="flex items-center gap-2 text-[11px] font-mono text-[var(--text-faint)]">
-                    <span
-                      className="px-2 py-0.5 rounded font-semibold"
-                      style={{
-                        background: 'linear-gradient(135deg, rgba(45,212,191,0.15), rgba(99,102,241,0.12))',
-                        color: '#2DD4BF',
-                        border: '1px solid rgba(45,212,191,0.25)',
-                      }}
-                    >
-                      gitstate
-                    </span>
-                    <span className="text-[var(--border2)]">vs</span>
-                    {['Jira', 'Linear', 'ClickUp', 'ZenHub'].map((t) => (
-                      <span key={t} className="text-[var(--text-faint)]">
-                        {t}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-                <div className="px-6 pb-4 pt-2">
-                  <MatrixTable />
-                </div>
-              </Card>
-            </div>
-          </Reveal>
-
-          <Reveal inView delay={0.12} className="mt-4">
-            <WinCountBanner />
+            <FeatureMatrix />
           </Reveal>
         </Container>
       </Section>
 
-      {/* ── Narrative: the problem ── */}
+      {/* ── Narrative: the structural case ── */}
       <Section py="lg">
         <Container size="md">
           <Reveal inView>
             <div className="mb-3">
-              <Badge color="default" className="mb-4">
-                the honest case
-              </Badge>
+              <Badge color="default" className="mb-4">the structural case</Badge>
               <h2 className="font-display text-2xl md:text-3xl font-bold text-[var(--text)] tracking-tight">
-                Why the comparison isn't close
+                Why the comparison isn&apos;t close
               </h2>
             </div>
           </Reveal>
@@ -639,11 +304,9 @@ export default function Compare() {
         <Container size="lg">
           <Reveal inView>
             <div className="mb-8 text-center">
-              <Badge color="red" className="mb-4">
-                won't because structurally blocked
-              </Badge>
+              <Badge color="red" className="mb-4">structurally blocked</Badge>
               <h2 className="font-display text-2xl md:text-3xl font-bold text-[var(--text)] tracking-tight">
-                They can't copy it — and here's why
+                They can&apos;t copy it — and here&apos;s why
               </h2>
               <p className="text-[var(--text-muted)] text-sm mt-2 max-w-lg mx-auto leading-relaxed">
                 Each incumbent is blocked by its own business model, not by engineering ambition.
@@ -651,35 +314,6 @@ export default function Compare() {
             </div>
           </Reveal>
           <BlockersSection />
-        </Container>
-      </Section>
-
-      {/* ── Quick-reference pills ── */}
-      <Section py="md">
-        <Container size="lg">
-          <Reveal inView>
-            <Card padding="lg">
-              <div className="flex flex-wrap gap-3 items-center">
-                <span className="text-xs font-mono text-[var(--text-faint)] uppercase tracking-widest mr-2">
-                  gitstate only →
-                </span>
-                {[
-                  { label: 'git-derived state', color: 'teal' },
-                  { label: 'diff-read effort', color: 'teal' },
-                  { label: 'evidence invoicing', color: 'teal' },
-                  { label: 'free stakeholder seats', color: 'teal' },
-                  { label: 'open source', color: 'teal' },
-                  { label: 'agent-native', color: 'indigo' },
-                  { label: 'NL→report', color: 'indigo' },
-                  { label: 'GitHub + GitLab', color: 'indigo' },
-                ].map((item) => (
-                  <Badge key={item.label} color={item.color}>
-                    {item.label}
-                  </Badge>
-                ))}
-              </div>
-            </Card>
-          </Reveal>
         </Container>
       </Section>
 

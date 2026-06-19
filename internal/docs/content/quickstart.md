@@ -1,4 +1,4 @@
-<!-- title: Quickstart | order: 3 -->
+<!-- title: Quickstart | order: 3 | category: Getting Started | summary: Run the full stack locally and connect your first repo in minutes. -->
 
 # Quickstart
 

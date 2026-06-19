@@ -2,53 +2,29 @@
  * Docs — in-app documentation experience.
  * Routes: /docs  and  /docs/:slug
  *
- * Reads slug from useParams(). Defaults to the first doc (overview) when
- * no slug is present. Renders markdown via the Markdown component.
+ * Reads slug from useParams(). With no slug, /docs renders the DocsHome
+ * landing (hero + search + category cards). With a slug, /docs/:slug renders
+ * the page: a category-grouped sidebar, breadcrumb (category › title), the
+ * prose, an on-this-page ToC, and prev/next. Markdown via the Markdown component.
  *
  * Orchestrator wraps this in MarketingLayout (nav/footer) — this file
  * owns only the docs chrome (sidebar + content + ToC).
  */
-import { useState, useEffect, useRef, useCallback, createElement } from 'react'
+import { useState, useEffect, useRef, useCallback, createElement, useMemo } from 'react'
 import { useParams, useNavigate, Link } from 'react-router-dom'
 import {
   BookOpen,
-  Rocket,
-  GitMerge,
-  Receipt,
-  Users,
-  Settings,
-  Plug,
-  Terminal,
-  FileText,
   ArrowLeft,
   ArrowRight,
   ChevronRight,
+  ChevronDown,
   Menu,
   X,
 } from 'lucide-react'
 import { Markdown } from '../components/Markdown.jsx'
+import DocsHome from '../components/docs/DocsHome.jsx'
+import { iconForSlug, groupByCategory } from '../components/docs/docMeta.jsx'
 import { get } from '../lib/api.js'
-
-// ── Icon mapping ──────────────────────────────────────────────────────────────
-
-const ICON_RULES = [
-  [/(overview|intro|start|welcome|getting)/, Rocket],
-  [/(state|board|git|status|workflow)/, GitMerge],
-  [/(invoice|billing|payment|pricing)/, Receipt],
-  [/(team|seat|member|stakeholder|people)/, Users],
-  [/(connect|integration|github|gitlab|webhook|api)/, Plug],
-  [/(cli|command|terminal)/, Terminal],
-  [/(config|setting|admin)/, Settings],
-]
-
-function iconForDoc(doc, index) {
-  const key = `${doc?.slug ?? ''} ${doc?.title ?? ''}`.toLowerCase()
-  if (index === 0) return Rocket
-  for (const [re, Icon] of ICON_RULES) {
-    if (re.test(key)) return Icon
-  }
-  return FileText
-}
 
 // ── Heading extractor ─────────────────────────────────────────────────────────
 
@@ -84,14 +60,15 @@ function extractHeadings(markdown) {
 
 // ── Sidebar item ──────────────────────────────────────────────────────────────
 
-function SidebarItem({ doc, isActive, index, onClick }) {
-  const Icon = iconForDoc(doc, index)
+function SidebarItem({ doc, isActive, onClick }) {
+  const Icon = iconForSlug(doc.slug, doc.title)
   return (
     <Link
       to={`/docs/${doc.slug}`}
       onClick={onClick}
+      aria-current={isActive ? 'page' : undefined}
       className={[
-        'group relative flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-all duration-150',
+        'group relative flex items-center gap-2.5 px-3 py-1.5 rounded-lg text-sm transition-all duration-150',
         isActive
           ? 'bg-[var(--bg-surface3)] text-[var(--text)] font-medium'
           : 'text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--bg-surface2)]',
@@ -115,6 +92,47 @@ function SidebarItem({ doc, isActive, index, onClick }) {
       </span>
       <span className="truncate">{doc.title}</span>
     </Link>
+  )
+}
+
+// ── Collapsible category group ──────────────────────────────────────────────────
+
+function SidebarGroup({ category, docs, slug, onItemClick, defaultOpen }) {
+  // `manualOpen` is the user's explicit toggle; null means "follow defaults".
+  const [manualOpen, setManualOpen] = useState(null)
+  const containsActive = docs.some((d) => d.slug === slug)
+  // A group is open if the user opened it, or — absent a manual choice — when it
+  // holds the active doc or is open by default. The active group can't be collapsed shut.
+  const open = manualOpen ?? (containsActive || defaultOpen)
+  const setOpen = (fn) => setManualOpen((prev) => fn(prev ?? (containsActive || defaultOpen)))
+
+  return (
+    <div className="mb-1.5">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        className="group flex w-full items-center gap-1.5 px-3 py-1.5 rounded-md text-[10px] font-mono uppercase tracking-[0.14em] text-[var(--text-faint)] hover:text-[var(--text-muted)] transition-colors"
+      >
+        <ChevronDown
+          size={11}
+          className={['transition-transform duration-200', open ? '' : '-rotate-90'].join(' ')}
+        />
+        <span>{category}</span>
+      </button>
+      {open && (
+        <div className="mt-0.5 space-y-0.5">
+          {docs.map((d) => (
+            <SidebarItem
+              key={d.slug}
+              doc={d}
+              isActive={d.slug === slug}
+              onClick={onItemClick}
+            />
+          ))}
+        </div>
+      )}
+    </div>
   )
 }
 
@@ -175,33 +193,38 @@ function SidebarSkeleton() {
 
 // ── Sidebar (shared between desktop and mobile drawer) ───────────────────────
 
-function SidebarNav({ docs, docsLoading, docsError, slug, onItemClick }) {
+function SidebarNav({ groups, docsLoading, docsError, slug, onItemClick }) {
   return (
     <>
-      {/* Label */}
-      <div className="flex items-center gap-2 mb-4 px-1">
+      {/* Label — links back to the docs home */}
+      <Link
+        to="/docs"
+        onClick={onItemClick}
+        className="flex items-center gap-2 mb-4 px-1 group"
+      >
         <span className="flex items-center justify-center w-5 h-5 text-[var(--brand-teal)] opacity-70">
           <BookOpen size={13} strokeWidth={1.75} />
         </span>
-        <span className="text-[10px] font-mono uppercase tracking-[0.16em] text-[var(--text-faint)]">
+        <span className="text-[10px] font-mono uppercase tracking-[0.16em] text-[var(--text-faint)] group-hover:text-[var(--text-muted)] transition-colors">
           Documentation
         </span>
-      </div>
+      </Link>
 
       {/* Nav */}
-      <nav className="flex-1 overflow-y-auto space-y-0.5 scrollbar-none" aria-label="Documentation pages">
+      <nav className="flex-1 overflow-y-auto scrollbar-none" aria-label="Documentation pages">
         {docsLoading ? (
           <SidebarSkeleton />
         ) : docsError ? (
           <p className="px-3 text-xs text-[var(--text-faint)]">Could not load docs index.</p>
         ) : (
-          docs.map((d, i) => (
-            <SidebarItem
-              key={d.slug}
-              doc={d}
-              isActive={d.slug === slug}
-              index={i}
-              onClick={onItemClick}
+          groups.map((g) => (
+            <SidebarGroup
+              key={g.category}
+              category={g.category}
+              docs={g.docs}
+              slug={slug}
+              onItemClick={onItemClick}
+              defaultOpen
             />
           ))
         )}
@@ -215,6 +238,7 @@ function SidebarNav({ docs, docsLoading, docsError, slug, onItemClick }) {
 export default function Docs() {
   const { slug } = useParams()
   const navigate = useNavigate()
+  const isHome = !slug
 
   const [docs, setDocs] = useState([])
   const [docsLoading, setDocsLoading] = useState(true)
@@ -250,14 +274,6 @@ export default function Docs() {
     load()
     return () => { cancelled = true }
   }, [])
-
-  // ── Default redirect ────────────────────────────────────────────────────────
-
-  useEffect(() => {
-    if (!slug && docs.length > 0) {
-      navigate(`/docs/${docs[0].slug}`, { replace: true })
-    }
-  }, [slug, docs, navigate])
 
   // ── Fetch active doc ────────────────────────────────────────────────────────
 
@@ -316,6 +332,9 @@ export default function Docs() {
   // ── Derived state ───────────────────────────────────────────────────────────
 
   const headings = extractHeadings(doc?.content ?? '')
+  const groups = useMemo(() => groupByCategory(docs), [docs])
+  const activeMeta = docs.find((d) => d.slug === slug)
+  const activeCategory = activeMeta?.category ?? null
 
   // ── Internal docs link interceptor ─────────────────────────────────────────
 
@@ -334,12 +353,46 @@ export default function Docs() {
   )
 
   // ── Prev / Next ─────────────────────────────────────────────────────────────
+  // Follow the grouped (sidebar) reading order so prev/next matches what's on screen.
 
-  const idx = docs.findIndex((d) => d.slug === slug)
-  const prev = idx > 0 ? docs[idx - 1] : null
-  const next = idx >= 0 && idx < docs.length - 1 ? docs[idx + 1] : null
+  const flatOrder = useMemo(() => groups.flatMap((g) => g.docs), [groups])
+  const idx = flatOrder.findIndex((d) => d.slug === slug)
+  const prev = idx > 0 ? flatOrder[idx - 1] : null
+  const next = idx >= 0 && idx < flatOrder.length - 1 ? flatOrder[idx + 1] : null
 
-  // ── Render ──────────────────────────────────────────────────────────────────
+  // ── Render: docs home (no slug) ───────────────────────────────────────────────
+
+  if (isHome) {
+    return (
+      <div className="min-h-screen" style={{ background: 'var(--bg)' }}>
+        {docsError ? (
+          <div className="mx-auto max-w-md px-6 py-32 text-center">
+            <p className="text-xs font-mono uppercase tracking-widest text-[var(--text-faint)] mb-2">
+              Error
+            </p>
+            <p className="text-sm text-[var(--text-muted)]">Could not load the docs index.</p>
+          </div>
+        ) : docsLoading ? (
+          <div className="mx-auto max-w-3xl px-6 py-24">
+            <div className="animate-pulse space-y-6">
+              <div className="h-10 w-2/3 mx-auto rounded-lg bg-[var(--bg-surface3)]" />
+              <div className="h-4 w-1/2 mx-auto rounded bg-[var(--bg-surface3)]" />
+              <div className="h-11 w-full max-w-md mx-auto rounded-xl bg-[var(--bg-surface3)] mt-6" />
+              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 mt-10">
+                {Array.from({ length: 6 }).map((_, i) => (
+                  <div key={i} className="h-28 rounded-xl bg-[var(--bg-surface3)]" />
+                ))}
+              </div>
+            </div>
+          </div>
+        ) : (
+          <DocsHome docs={docs} />
+        )}
+      </div>
+    )
+  }
+
+  // ── Render: single doc page ───────────────────────────────────────────────────
 
   return (
     <div className="min-h-screen" style={{ background: 'var(--bg)' }}>
@@ -375,7 +428,7 @@ export default function Docs() {
           </button>
         </div>
         <SidebarNav
-          docs={docs}
+          groups={groups}
           docsLoading={docsLoading}
           docsError={docsError}
           slug={slug}
@@ -409,7 +462,7 @@ export default function Docs() {
             }}
           >
             <SidebarNav
-              docs={docs}
+              groups={groups}
               docsLoading={docsLoading}
               docsError={docsError}
               slug={slug}
@@ -437,11 +490,17 @@ export default function Docs() {
               >
                 <Menu size={15} />
               </button>
-              <div className="flex items-center gap-1.5 text-xs text-[var(--text-faint)]">
-                <Link to="/docs" className="hover:text-[var(--text-muted)] transition-colors">Docs</Link>
+              <div className="flex items-center gap-1.5 text-xs text-[var(--text-faint)] min-w-0">
+                <Link to="/docs" className="hover:text-[var(--text-muted)] transition-colors shrink-0">Docs</Link>
+                {doc && activeCategory && (
+                  <>
+                    <ChevronRight size={11} className="opacity-40 shrink-0" />
+                    <span className="shrink-0">{activeCategory}</span>
+                  </>
+                )}
                 {doc && (
                   <>
-                    <ChevronRight size={11} className="opacity-40" />
+                    <ChevronRight size={11} className="opacity-40 shrink-0" />
                     <span className="text-[var(--text-muted)] truncate">{doc.title}</span>
                   </>
                 )}
@@ -495,6 +554,12 @@ export default function Docs() {
                   {/* Breadcrumb — desktop only (mobile has its own in header bar) */}
                   <div className="hidden md:flex items-center gap-1.5 mb-8 text-xs text-[var(--text-faint)]">
                     <Link to="/docs" className="hover:text-[var(--text-muted)] transition-colors">Docs</Link>
+                    {activeCategory && (
+                      <>
+                        <ChevronRight size={11} className="opacity-40" />
+                        <span>{activeCategory}</span>
+                      </>
+                    )}
                     <ChevronRight size={11} className="opacity-40" />
                     <span className="text-[var(--text-muted)]">{doc.title}</span>
                   </div>

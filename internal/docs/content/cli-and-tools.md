@@ -1,4 +1,4 @@
-<!-- title: CLI & Tools | order: 16 -->
+<!-- title: CLI & Tools | order: 42 | category: Reference | summary: migrate, seed, and billsim — the command-line tools beside the server. -->
 
 # CLI & Tools
 
