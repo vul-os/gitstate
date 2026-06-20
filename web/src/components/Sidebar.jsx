@@ -149,6 +149,9 @@ const NAV = [
   {
     label: 'Settings',
     to: '/settings',
+    // Exact match only — '/settings' must not light up on nested routes like
+    // '/settings/billing' or '/settings/members' (those have their own items).
+    end: true,
     icon: (
       <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8">
         <path strokeLinecap="round" strokeLinejoin="round"

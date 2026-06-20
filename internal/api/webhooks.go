@@ -51,13 +51,26 @@ const maxWebhookBody = 25 << 20
 // RegisterWebhookReceiver wires the PUBLIC inbound webhook endpoint. The
 // orchestrator mounts this on the public mux (no auth middleware).
 func RegisterWebhookReceiver(mux *http.ServeMux, database *db.DB) {
-	h := &webhookHandlers{db: database}
+	h := &webhookHandlers{db: database, dedupe: webhooks.NewDeliveryDeduper(0, 0)}
 	mux.HandleFunc("POST /api/webhooks/{provider}", h.receive)
 }
 
 type webhookHandlers struct {
-	db  *db.DB
-	cfg *config.Config
+	db     *db.DB
+	cfg    *config.Config
+	dedupe *webhooks.DeliveryDeduper
+}
+
+// deliveryID returns the provider's unique delivery identifier, used for replay
+// dedupe. GitHub stamps X-GitHub-Delivery; GitLab stamps X-Gitlab-Event-UUID.
+func deliveryID(r *http.Request, provider string) string {
+	switch provider {
+	case "github":
+		return r.Header.Get("X-GitHub-Delivery")
+	case "gitlab":
+		return r.Header.Get("X-Gitlab-Event-UUID")
+	}
+	return ""
 }
 
 func (h *webhookHandlers) receive(w http.ResponseWriter, r *http.Request) {
@@ -77,6 +90,15 @@ func (h *webhookHandlers) receive(w http.ResponseWriter, r *http.Request) {
 	orgID, event, ok := h.authenticateDelivery(r, provider, body)
 	if !ok {
 		writeError(w, http.StatusUnauthorized, "invalid signature")
+		return
+	}
+
+	// Replay protection: a previously-seen (org, delivery-id) within the window is
+	// acknowledged 200 but skipped, so a captured signed delivery can't be re-applied.
+	// Only check after the signature passes (so unauthenticated traffic can't probe
+	// or pollute the cache).
+	if h.dedupe != nil && h.dedupe.Seen(orgID, deliveryID(r, provider)) {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "duplicate": true, "event": event})
 		return
 	}
 

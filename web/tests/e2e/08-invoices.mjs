@@ -17,7 +17,9 @@ test('invoices: list, detail, public share', async ({ page, context }) => {
   const row = page.getByRole('button').filter({ hasText: inv.number })
   await assertVisible(row, `invoices: list row for ${inv.number}`)
   await row.first().click()
-  await settle(page, { extra: 300 })
+  // The detail view fetches line items async — wait for them to render.
+  await page.getByText('Delivered work').first().waitFor({ state: 'visible', timeout: 10000 }).catch(() => {})
+  await settle(page, { extra: 200 })
 
   // Detail view: "Delivered work" + line items.
   await assertVisible(page.getByText('Delivered work'), 'invoices: detail "Delivered work"')

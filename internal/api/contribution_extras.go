@@ -14,6 +14,7 @@
 package api
 
 import (
+	"errors"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -140,6 +141,17 @@ func (h *contributionHandlers) putEquity(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusBadRequest, "userId required")
 		return
 	}
+	// The grant target must be a member of THIS org — otherwise we'd persist an
+	// equity row for a stranger's id.
+	if _, err := store.GetMemberRole(r.Context(), h.db.Pool(), orgID, body.UserID); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "userId is not a member of this org")
+			return
+		}
+		slog.Error("equity put member lookup", "err", err)
+		writeError(w, http.StatusInternalServerError, "could not validate member")
+		return
+	}
 	if body.ActualPct != nil && (*body.ActualPct < 0 || *body.ActualPct > 100) {
 		writeError(w, http.StatusBadRequest, "actualPct must be between 0 and 100")
 		return
@@ -241,6 +253,17 @@ func (h *contributionHandlers) postKudos(w http.ResponseWriter, r *http.Request)
 	}
 	if body.ToUser == user.ID {
 		writeError(w, http.StatusBadRequest, "you can't give kudos to yourself")
+		return
+	}
+	// The recipient must be a member of THIS org — don't persist kudos to a
+	// stranger's id.
+	if _, err := store.GetMemberRole(r.Context(), h.db.Pool(), orgID, body.ToUser); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "toUser is not a member of this org")
+			return
+		}
+		slog.Error("kudos post member lookup", "err", err)
+		writeError(w, http.StatusInternalServerError, "could not validate member")
 		return
 	}
 	if body.Message == "" {

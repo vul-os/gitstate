@@ -196,9 +196,9 @@ export default function Signup() {
 
           <p className="text-center text-xs text-[var(--text-faint)] mt-5 leading-relaxed">
             By signing up you agree to the{' '}
-            <a href="#" className="text-[var(--brand-teal)]/70 hover:text-[var(--brand-teal)]">Terms</a>
+            <Link to="/docs" className="text-[var(--brand-teal)]/70 hover:text-[var(--brand-teal)]">Terms</Link>
             {' '}and{' '}
-            <a href="#" className="text-[var(--brand-teal)]/70 hover:text-[var(--brand-teal)]">Privacy Policy</a>.
+            <Link to="/docs/security" className="text-[var(--brand-teal)]/70 hover:text-[var(--brand-teal)]">Privacy Policy</Link>.
           </p>
         </div>
 

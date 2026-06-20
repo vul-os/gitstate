@@ -9,7 +9,6 @@ import Compare from './pages/Compare.jsx'
 import Docs from './pages/Docs.jsx'
 import Login from './pages/Login.jsx'
 import Signup from './pages/Signup.jsx'
-import Home from './pages/Home.jsx'
 import Dashboard from './pages/Dashboard.jsx'
 import Projects from './pages/Projects.jsx'
 import Settings from './pages/Settings.jsx'
@@ -81,7 +80,8 @@ export default function App() {
             <Route path="/settings" element={<Settings />} />
             <Route path="/settings/members" element={<Members />} />
             <Route path="/settings/billing" element={<Billing />} />
-            <Route path="/home" element={<Home />} />
+            {/* Legacy /home — superseded by /dashboard (Home.jsx kept but unrouted). */}
+            <Route path="/home" element={<Navigate to="/dashboard" replace />} />
           </Route>
 
           {/* 404 — branded not-found */}

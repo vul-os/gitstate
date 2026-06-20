@@ -144,17 +144,23 @@ export function LineChart({
           strokeLinecap="round"
         />
 
-        {/* X axis ticks */}
-        {xTicks.map(({ p, i }) => (
-          <text
-            key={i}
-            x={toX(i).toFixed(1)} y={PAD.top + H + 18}
-            textAnchor="middle"
-            fontSize="10" className="font-mono" fill="var(--text-faint)"
-          >
-            {xLabel ? xLabel(p) : p.x}
-          </text>
-        ))}
+        {/* X axis ticks — anchor the first/last labels inward so they don't
+            clip past the chart edges (last tick sits at the right plot edge). */}
+        {xTicks.map(({ p, i }) => {
+          const isFirst = i === 0
+          const isLast = i === points.length - 1
+          const anchor = isLast ? 'end' : isFirst ? 'start' : 'middle'
+          return (
+            <text
+              key={i}
+              x={toX(i).toFixed(1)} y={PAD.top + H + 18}
+              textAnchor={anchor}
+              fontSize="10" className="font-mono" fill="var(--text-faint)"
+            >
+              {xLabel ? xLabel(p) : p.x}
+            </text>
+          )
+        })}
 
         {/* Hover crosshair + dot */}
         {hovered != null && hovPoint && (

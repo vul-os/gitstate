@@ -12,11 +12,24 @@ package store
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
+
+// pgUniqueViolation is the SQLSTATE for a unique_violation.
+const pgUniqueViolation = "23505"
+
+// IsUniqueViolation reports whether err is a Postgres unique_violation (23505).
+// Used by callers that auto-number rows under a UNIQUE constraint to detect a
+// lost race and retry with a freshly-computed number.
+func IsUniqueViolation(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == pgUniqueViolation
+}
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 

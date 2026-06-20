@@ -252,6 +252,13 @@ func processGitHub(ctx context.Context, database *db.DB, orgID, event string, bo
 			res.Ignored = true
 			return res, nil
 		}
+		// A cancelled/skipped run is neither a success nor a failure — recording it
+		// as a "failure" would inflate the change-failure rate and open a spurious
+		// incident. Ignore it (200 no-op).
+		if isNonOutcomeConclusion(p.WorkflowRun.Conclusion) {
+			res.Ignored = true
+			return res, nil
+		}
 		dep := store.DeploymentInput{
 			OrgID:       orgID,
 			Environment: "production",
@@ -649,13 +656,41 @@ func normalizeStatus(s string) string {
 	}
 }
 
+// isNonOutcomeConclusion reports whether a workflow_run conclusion represents
+// "didn't actually run to a pass/fail" — these must not be recorded as a failure
+// (which would inflate change-failure rate / open spurious incidents).
+func isNonOutcomeConclusion(s string) bool {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "cancelled", "canceled", "skipped":
+		return true
+	default:
+		return false
+	}
+}
+
 // looksLikeDeploy keeps workflow_run noise out: only deploy/release/ship-named
-// workflows count as deployments.
+// workflows count as deployments. The name is split on non-alphanumeric runs into
+// word tokens, so unambiguous keywords ("deploy"/"release"/"publish"/
+// "production") match as a token prefix. Short ambiguous keywords ("cd"/"prod"/
+// "ship") are too noisy to match mid-name — a "cd" token inside an unrelated name
+// like "load-cd-tests" must NOT count — so they only match when the name is
+// EXACTLY that one token (e.g. a workflow simply called "CD" or "Ship").
 func looksLikeDeploy(name string) bool {
-	n := strings.ToLower(name)
-	for _, kw := range []string{"deploy", "release", "ship", "publish", "production", "prod", "cd"} {
-		if strings.Contains(n, kw) {
-			return true
+	prefixKW := []string{"deploy", "release", "publish", "production"}
+	ambiguousKW := map[string]bool{"ship": true, "prod": true, "cd": true}
+
+	tokens := strings.FieldsFunc(strings.ToLower(name), func(r rune) bool {
+		return !(r >= 'a' && r <= 'z') && !(r >= '0' && r <= '9')
+	})
+	// Single-token name that IS an ambiguous deploy keyword → deploy.
+	if len(tokens) == 1 && ambiguousKW[tokens[0]] {
+		return true
+	}
+	for _, tok := range tokens {
+		for _, kw := range prefixKW {
+			if strings.HasPrefix(tok, kw) {
+				return true
+			}
 		}
 	}
 	return false

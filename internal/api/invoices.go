@@ -305,21 +305,41 @@ func (h *invoiceHandlers) createInvoice(w http.ResponseWriter, r *http.Request) 
 	}
 
 	var out *store.ClientInvoice
-	err := h.db.WithOrg(r.Context(), orgID, func(tx pgx.Tx) error {
-		num, e := store.NextClientInvoiceNumber(r.Context(), tx, orgID, from.Year())
-		if e != nil {
+	// Auto-numbering races on UNIQUE(org_id, number) under read-committed: two
+	// concurrent creates can pick the same MAX+1 and one loses the insert. Retry
+	// the whole tx (fresh number each attempt) on a unique-violation.
+	err := withInvoiceNumberRetry(func() error {
+		return h.db.WithOrg(r.Context(), orgID, func(tx pgx.Tx) error {
+			num, e := store.NextClientInvoiceNumber(r.Context(), tx, orgID, from.Year())
+			if e != nil {
+				return e
+			}
+			in.Number = num
+			inv, e := store.CreateClientInvoice(r.Context(), tx, orgID, in)
+			out = inv
 			return e
-		}
-		in.Number = num
-		inv, e := store.CreateClientInvoice(r.Context(), tx, orgID, in)
-		out = inv
-		return e
+		})
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "could not create invoice: "+err.Error())
 		return
 	}
 	writeJSON(w, http.StatusCreated, out)
+}
+
+// withInvoiceNumberRetry runs fn, retrying a few times when it fails with a
+// unique_violation (a lost invoice-number race). A non-unique error, or success,
+// returns immediately.
+func withInvoiceNumberRetry(fn func() error) error {
+	const maxAttempts = 5
+	var err error
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		err = fn()
+		if err == nil || !store.IsUniqueViolation(err) {
+			return err
+		}
+	}
+	return err
 }
 
 // ── Generate from git ───────────────────────────────────────────────────────────
@@ -364,70 +384,74 @@ func (h *invoiceHandlers) generate(w http.ResponseWriter, r *http.Request) {
 		preview *store.ClientInvoice
 	)
 
-	err := h.db.WithOrg(r.Context(), orgID, func(tx pgx.Tx) error {
-		// Resolve the billing rate: explicit > client default > schema default.
-		rate = 15000
-		if clientID != nil {
-			cs, e := store.ListClients(r.Context(), tx, orgID)
+	// Retry the tx on a lost invoice-number race (UNIQUE(org_id, number)); the
+	// preview path never inserts, so it returns on the first attempt.
+	err := withInvoiceNumberRetry(func() error {
+		return h.db.WithOrg(r.Context(), orgID, func(tx pgx.Tx) error {
+			// Resolve the billing rate: explicit > client default > schema default.
+			rate = 15000
+			if clientID != nil {
+				cs, e := store.ListClients(r.Context(), tx, orgID)
+				if e != nil {
+					return e
+				}
+				for _, c := range cs {
+					if c.ID == *clientID {
+						rate = c.RateCents
+						break
+					}
+				}
+			}
+			if req.RateCents != nil && *req.RateCents > 0 {
+				rate = *req.RateCents
+			}
+
+			eff, e := store.MergedPREffort(r.Context(), tx, orgID, store.MergedEffortInput{
+				ProjectID: derefStr(projectID),
+				From:      from,
+				To:        to,
+			})
 			if e != nil {
 				return e
 			}
-			for _, c := range cs {
-				if c.ID == *clientID {
-					rate = c.RateCents
-					break
+			lines = buildLines(eff, rate)
+
+			if req.Preview {
+				// Build an unsaved preview header (subtotal/total computed here).
+				subtotal := 0
+				for _, l := range lines {
+					subtotal += l.AmountCents
 				}
+				preview = &store.ClientInvoice{
+					ClientID:      clientID,
+					ProjectID:     projectID,
+					Number:        "(draft)",
+					Status:        "draft",
+					PeriodStart:   from,
+					PeriodEnd:     to,
+					Currency:      "USD",
+					SubtotalCents: subtotal,
+					TotalCents:    subtotal,
+				}
+				return nil
 			}
-		}
-		if req.RateCents != nil && *req.RateCents > 0 {
-			rate = *req.RateCents
-		}
 
-		eff, e := store.MergedPREffort(r.Context(), tx, orgID, store.MergedEffortInput{
-			ProjectID: derefStr(projectID),
-			From:      from,
-			To:        to,
-		})
-		if e != nil {
+			num, e := store.NextClientInvoiceNumber(r.Context(), tx, orgID, from.Year())
+			if e != nil {
+				return e
+			}
+			inv, e := store.CreateClientInvoice(r.Context(), tx, orgID, store.CreateClientInvoiceInput{
+				ClientID:    clientID,
+				ProjectID:   projectID,
+				Number:      num,
+				PeriodStart: from,
+				PeriodEnd:   to,
+				Currency:    "USD",
+				Lines:       lines,
+			})
+			preview = inv
 			return e
-		}
-		lines = buildLines(eff, rate)
-
-		if req.Preview {
-			// Build an unsaved preview header (subtotal/total computed here).
-			subtotal := 0
-			for _, l := range lines {
-				subtotal += l.AmountCents
-			}
-			preview = &store.ClientInvoice{
-				ClientID:      clientID,
-				ProjectID:     projectID,
-				Number:        "(draft)",
-				Status:        "draft",
-				PeriodStart:   from,
-				PeriodEnd:     to,
-				Currency:      "USD",
-				SubtotalCents: subtotal,
-				TotalCents:    subtotal,
-			}
-			return nil
-		}
-
-		num, e := store.NextClientInvoiceNumber(r.Context(), tx, orgID, from.Year())
-		if e != nil {
-			return e
-		}
-		inv, e := store.CreateClientInvoice(r.Context(), tx, orgID, store.CreateClientInvoiceInput{
-			ClientID:    clientID,
-			ProjectID:   projectID,
-			Number:      num,
-			PeriodStart: from,
-			PeriodEnd:   to,
-			Currency:    "USD",
-			Lines:       lines,
 		})
-		preview = inv
-		return e
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "could not generate invoice: "+err.Error())

@@ -377,7 +377,7 @@ func MTTRForWindow(ctx context.Context, qr pgx.Tx, orgID string, from, to time.T
 		SELECT
 			COUNT(*) FILTER (WHERE resolved_at IS NOT NULL),
 			COUNT(*) FILTER (WHERE resolved_at IS NULL),
-			COALESCE(AVG(EXTRACT(EPOCH FROM (resolved_at - opened_at)))
+			COALESCE(AVG(GREATEST(EXTRACT(EPOCH FROM (resolved_at - opened_at)), 0))
 				FILTER (WHERE resolved_at IS NOT NULL), 0) / 3600.0
 		FROM incidents
 		WHERE org_id = $1`

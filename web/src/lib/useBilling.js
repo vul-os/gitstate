@@ -8,16 +8,42 @@ import { useOrg } from './useOrg.js'
 import * as api from './api.js'
 
 // ── Public billing flag (cached) ──────────────────────────────────────────────
-// GET /api/config exposes the public billing config. Billing is only enabled
-// when the instance is configured for it (billing.chargeCurrency is set). We
-// gate every billing fetch on this so OSS / billing-disabled builds never spam
-// 404s on /api/billing/* across navigation. Fetched once and cached at module
-// scope (a shared in-flight promise dedupes concurrent hook mounts).
+// GET /api/config exposes the public billing config. We resolve whether billing
+// is enabled from it FIRST (billing.chargeCurrency) and short-circuit to
+// "disabled" WITHOUT touching /api/billing/* when billing is off — mirroring how
+// the calendar/notifications sections gate on server-reported config. This keeps
+// OSS / billing-disabled builds from spamming 404s on /api/billing/* across
+// navigation. The verdict is cached at module scope (a shared in-flight promise
+// dedupes concurrent hook mounts).
+//
+// Belt-and-braces: some instances report a charge currency even while the
+// billing endpoints are disabled (they 404 with "billing is not enabled"). If we
+// ever observe that 404/403, we persist a sticky "disabled" verdict in
+// localStorage so every subsequent visit/reload short-circuits with zero billing
+// requests — no repeated console noise on the Billing page.
+const BILLING_DISABLED_KEY = 'gs-billing-config'
+
 let _billingFlag = null            // null = unknown, true/false once resolved
 let _billingFlagPromise = null
 
+function readDisabledCache() {
+  try { return localStorage.getItem(BILLING_DISABLED_KEY) === 'disabled' }
+  catch { return false }
+}
+
+/** Persist a sticky "billing disabled" verdict so future loads never call /api/billing/*. */
+export function markBillingDisabled() {
+  _billingFlag = false
+  try { localStorage.setItem(BILLING_DISABLED_KEY, 'disabled') } catch { /* ignore */ }
+}
+
 function resolveBillingEnabled() {
   if (_billingFlag !== null) return Promise.resolve(_billingFlag)
+  // Sticky cache: a prior billing 404/403 → billing is off on this instance.
+  if (readDisabledCache()) {
+    _billingFlag = false
+    return Promise.resolve(false)
+  }
   if (!_billingFlagPromise) {
     _billingFlagPromise = api.fetchConfig()
       .then((cfg) => {
@@ -86,6 +112,11 @@ function makeFetcher(path) {
         if (genRef.current !== gen) return
         dispatch({ type: 'FETCH_DONE', data })
       } catch (e) {
+        if (e.status === 404 || e.status === 403) {
+          // Billing endpoint reports disabled → make it sticky so future loads
+          // short-circuit before firing any /api/billing/* request.
+          markBillingDisabled()
+        }
         if (genRef.current !== gen) return
         if (e.status === 404 || e.status === 403) {
           dispatch({ type: 'FETCH_DISABLED' })
@@ -155,6 +186,9 @@ export function useInvoiceDetail(id) {
       if (genRef.current !== gen) return
       dispatch({ type: 'FETCH_DONE', data })
     } catch (e) {
+      if (e.status === 404 || e.status === 403) {
+        markBillingDisabled()
+      }
       if (genRef.current !== gen) return
       if (e.status === 404 || e.status === 403) {
         dispatch({ type: 'FETCH_DISABLED' })

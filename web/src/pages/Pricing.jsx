@@ -157,7 +157,7 @@ export default function Pricing() {
           )}
 
           {loading ? (
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
+            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-5">
               {Array.from({ length: 4 }).map((_, i) => (
                 <Card key={i} padding="lg" className="animate-pulse">
                   <div className="h-9 w-9 rounded-[var(--radius-badge)] bg-[var(--bg-surface2)] mb-4" />
@@ -172,7 +172,7 @@ export default function Pricing() {
             </div>
           ) : (
             <RevealList
-              className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5 items-stretch"
+              className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-5 items-stretch"
               staggerDelay={0.06}
               inView
             >

@@ -268,8 +268,8 @@ func main() {
 	// ── 10a. Contribution extras: trends snapshots · kudos · equity ledger ─
 	s.seedContributionExtras(org.ID)
 
-	// ── 10b. Client invoicing: demo clients + one generated invoice ───────
-	s.seedInvoicing(org.ID, projects)
+	// ── 10b. Client invoicing: demo clients + generated invoices ──────────
+	invoiceStats := s.seedInvoicing(org.ID, projects)
 
 	// ── 10c. Deployments + incidents → REAL DORA deploy-freq + MTTR ────────
 	deployStats := s.seedDeployments(org.ID, repos)
@@ -289,7 +289,7 @@ func main() {
 	// ── Summary ───────────────────────────────────────────────────────────
 	s.printSummary(org, adminEmail, len(repos), len(projects),
 		commitStats, prStats, issueStats, leaveStats, timeCount,
-		deployStats, notifStats)
+		deployStats, notifStats, invoiceStats)
 }
 
 // ── commit generation ───────────────────────────────────────────────────────
@@ -1314,19 +1314,60 @@ func (s *seeder) seedInvolvement(orgID string, projects []*projectRow, ct commit
 	}))
 }
 
+// invoiceTally summarises the demo invoices for the seed summary box.
+type invoiceTally struct {
+	clients int
+	total   int
+	draft   int
+	sent    int
+	paid    int
+	overdue int
+}
+
+// invEvItem is the git-evidence shape persisted per line ([{prTitle, repo, …}]).
+type invEvItem struct {
+	PRTitle  string `json:"prTitle"`
+	Repo     string `json:"repo"`
+	MergedAt string `json:"mergedAt"`
+	SHA      string `json:"sha"`
+}
+
+// invLineRow is a fully priced invoice line built from real merged delivery.
+type invLineRow struct {
+	desc     string
+	points   float64
+	amount   int
+	evidence []invEvItem
+}
+
 // ── client invoicing ──────────────────────────────────────────────────────────
 //
-// Creates 1–2 demo clients, links the first project to the primary client, then
-// GENERATES one demo invoice straight from the seeded merged PRs + their LLM
-// effort estimates — exactly as the /api/invoices/generate endpoint would. Each
-// line groups a repo's merged PRs, prices effort×rate, and carries the real git
-// evidence ([{prTitle, repo, mergedAt, sha}]). This is the "…and the invoice"
-// wedge in action so the page is never empty.
-func (s *seeder) seedInvoicing(orgID string, projects []*projectRow) {
-	const rateCents = 18000 // $180 / effort point for the demo client
+// Creates 2–3 demo clients, links the first project to the primary client, then
+// GENERATES a realistic spread of invoices straight from the seeded merged PRs +
+// their LLM effort estimates — exactly as the /api/invoices/generate endpoint
+// would. Each line groups a repo's merged PRs over a period, prices effort×rate,
+// and carries the real git evidence ([{prTitle, repo, mergedAt, sha}]). The
+// invoices cover several periods, clients and statuses (draft · sent · paid ·
+// overdue) so the Invoices page renders real variety, and at least one 'sent'
+// invoice keeps a share token so the public /i/:token demo still works.
+func (s *seeder) seedInvoicing(orgID string, projects []*projectRow) invoiceTally {
+	var tally invoiceTally
 
-	// 1. Clients (idempotent on (org_id, name)).
-	var primaryClientID string
+	// 1. Clients (idempotent on (org_id, name)) with varied rates.
+	type clientRow struct {
+		id   string
+		name string
+		rate int
+	}
+	clientSpecs := []struct {
+		name, email, notes string
+		rate               int
+	}{
+		{"Northwind Trading Co.", "ap@northwind.example", "Retainer client — billed monthly off merged delivery.", 18000},
+		{"Helix Robotics", "finance@helix.example", "Project-based engagement.", 15000},
+		{"Cobalt Logistics", "accounts@cobalt.example", "Premium SLA — priced per LLM-sized effort point.", 21000},
+	}
+	clientsList := make([]clientRow, len(clientSpecs))
 	s.must(s.db.WithOrg(s.ctx, orgID, func(tx pgx.Tx) error {
 		const q = `
 			INSERT INTO clients (org_id, name, contact_email, rate_cents, notes)
@@ -1336,16 +1377,18 @@ func (s *seeder) seedInvoicing(orgID string, projects []*projectRow) {
 				rate_cents    = EXCLUDED.rate_cents,
 				notes         = EXCLUDED.notes
 			RETURNING id`
-		if err := tx.QueryRow(s.ctx, q, orgID,
-			"Northwind Trading Co.", "ap@northwind.example",
-			rateCents, "Retainer client — billed monthly off merged delivery.").Scan(&primaryClientID); err != nil {
-			return err
+		for i, cs := range clientSpecs {
+			var id string
+			if err := tx.QueryRow(s.ctx, q, orgID,
+				cs.name, cs.email, cs.rate, cs.notes).Scan(&id); err != nil {
+				return err
+			}
+			clientsList[i] = clientRow{id: id, name: cs.name, rate: cs.rate}
 		}
-		var second string
-		return tx.QueryRow(s.ctx, q, orgID,
-			"Helix Robotics", "finance@helix.example",
-			15000, "Project-based engagement.").Scan(&second)
+		return nil
 	}))
+	tally.clients = len(clientsList)
+	primaryClientID := clientsList[0].id
 
 	// 2. Link the first project to the primary client.
 	if len(projects) > 0 {
@@ -1357,155 +1400,263 @@ func (s *seeder) seedInvoicing(orgID string, projects []*projectRow) {
 		}))
 	}
 
-	// 3. Gather merged PRs in the last 30 days with their effort estimates and a
-	//    representative commit sha, grouped per repo into invoice line items.
-	type evItem struct {
-		PRTitle  string `json:"prTitle"`
-		Repo     string `json:"repo"`
-		MergedAt string `json:"mergedAt"`
-		SHA      string `json:"sha"`
-	}
-	type lineAgg struct {
-		repo     string
-		points   float64
-		count    int
-		evidence []evItem
-	}
-	periodStart := now.AddDate(0, 0, -30)
-	aggByRepo := map[string]*lineAgg{}
-	var order []string
-
-	s.must(s.db.WithOrg(s.ctx, orgID, func(tx pgx.Tx) error {
-		const q = `
-			SELECT r.full_name, COALESCE(pr.title,''),
-			       COALESCE((SELECT c.sha FROM commits c
-			                  WHERE c.org_id = pr.org_id AND c.repo_id = pr.repo_id
-			                  ORDER BY c.committed_at DESC LIMIT 1), ''),
-			       pr.merged_at, COALESCE(ee.difficulty, 0)
-			FROM pull_requests pr
-			JOIN repos r ON r.id = pr.repo_id
-			LEFT JOIN LATERAL (
-			    SELECT difficulty FROM effort_estimates e
-			    WHERE e.org_id = pr.org_id AND e.pr_id = pr.id
-			    ORDER BY e.created_at DESC LIMIT 1
-			) ee ON true
-			WHERE pr.org_id = $1 AND pr.state = 'merged'
-			  AND pr.merged_at IS NOT NULL AND pr.merged_at >= $2
-			ORDER BY r.full_name, pr.merged_at`
-		rows, err := tx.Query(s.ctx, q, orgID, periodStart)
-		if err != nil {
-			return err
+	// gatherLines pulls merged PRs whose merged_at falls in [from, to) with their
+	// latest effort estimate + a representative commit sha, groups them per repo,
+	// and prices each group at rateCents. This is the same generator the invoice
+	// endpoint runs — every line is backed by real git evidence (never fabricated).
+	gatherLines := func(from, to time.Time, rateCents int) (lines []invLineRow, subtotal int) {
+		type lineAgg struct {
+			points   float64
+			count    int
+			evidence []invEvItem
 		}
-		defer rows.Close()
-		for rows.Next() {
-			var repo, title, sha string
-			var mergedAt time.Time
-			var diff float64
-			if err := rows.Scan(&repo, &title, &sha, &mergedAt, &diff); err != nil {
+		aggByRepo := map[string]*lineAgg{}
+		var order []string
+		s.must(s.db.WithOrg(s.ctx, orgID, func(tx pgx.Tx) error {
+			const q = `
+				SELECT r.full_name, COALESCE(pr.title,''),
+				       COALESCE((SELECT c.sha FROM commits c
+				                  WHERE c.org_id = pr.org_id AND c.repo_id = pr.repo_id
+				                  ORDER BY c.committed_at DESC LIMIT 1), ''),
+				       pr.merged_at, COALESCE(ee.difficulty, 0)
+				FROM pull_requests pr
+				JOIN repos r ON r.id = pr.repo_id
+				LEFT JOIN LATERAL (
+				    SELECT difficulty FROM effort_estimates e
+				    WHERE e.org_id = pr.org_id AND e.pr_id = pr.id
+				    ORDER BY e.created_at DESC LIMIT 1
+				) ee ON true
+				WHERE pr.org_id = $1 AND pr.state = 'merged'
+				  AND pr.merged_at IS NOT NULL
+				  AND pr.merged_at >= $2 AND pr.merged_at < $3
+				ORDER BY r.full_name, pr.merged_at`
+			rows, err := tx.Query(s.ctx, q, orgID, from, to)
+			if err != nil {
 				return err
 			}
+			defer rows.Close()
+			for rows.Next() {
+				var repo, title, sha string
+				var mergedAt time.Time
+				var diff float64
+				if err := rows.Scan(&repo, &title, &sha, &mergedAt, &diff); err != nil {
+					return err
+				}
+				g := aggByRepo[repo]
+				if g == nil {
+					g = &lineAgg{}
+					aggByRepo[repo] = g
+					order = append(order, repo)
+				}
+				pts := diff
+				if pts <= 0 {
+					pts = 1
+				}
+				g.points += pts
+				g.count++
+				g.evidence = append(g.evidence, invEvItem{
+					PRTitle: title, Repo: repo, MergedAt: mergedAt.Format(time.RFC3339), SHA: sha,
+				})
+			}
+			return rows.Err()
+		}))
+		sort.Strings(order)
+		for _, repo := range order {
 			g := aggByRepo[repo]
-			if g == nil {
-				g = &lineAgg{repo: repo}
-				aggByRepo[repo] = g
-				order = append(order, repo)
+			pts := math.Round(g.points*10) / 10
+			amount := int(math.Round(pts * float64(rateCents)))
+			subtotal += amount
+			noun := "merged PR"
+			if g.count != 1 {
+				noun = "merged PRs"
 			}
-			pts := diff
-			if pts <= 0 {
-				pts = 1
-			}
-			g.points += pts
-			g.count++
-			g.evidence = append(g.evidence, evItem{
-				PRTitle: title, Repo: repo, MergedAt: mergedAt.Format(time.RFC3339), SHA: sha,
+			lines = append(lines, invLineRow{
+				desc:     fmt.Sprintf("%s — %d %s delivered", repo, g.count, noun),
+				points:   pts,
+				amount:   amount,
+				evidence: g.evidence,
 			})
 		}
-		return rows.Err()
-	}))
-
-	if len(order) == 0 {
-		return // no merged delivery in window — skip the demo invoice
+		return lines, subtotal
 	}
-	sort.Strings(order)
 
-	// 4. Insert the invoice header (status 'sent' with a share token so the demo
-	//    "Copy share link" + public view work out of the box) + its lines.
-	tokenBytes := make([]byte, 32)
-	_, _ = cryptorand.Read(tokenBytes)
-	shareToken := base64.RawURLEncoding.EncodeToString(tokenBytes)
-
-	subtotal := 0
-	type lineRow struct {
-		desc     string
-		points   float64
-		amount   int
-		evidence []evItem
-	}
-	var lineRows []lineRow
-	for _, repo := range order {
-		g := aggByRepo[repo]
-		pts := math.Round(g.points*10) / 10
-		amount := int(math.Round(pts * float64(rateCents)))
-		subtotal += amount
-		noun := "merged PR"
-		if g.count != 1 {
-			noun = "merged PRs"
+	// writeInvoice persists one invoice header + its (idempotently re-seeded) lines.
+	// issuedAt is nil for drafts. shareToken is empty for invoices without a link.
+	seq := 0
+	writeInvoice := func(clientID string, projectID *string, status string,
+		periodStart, periodEnd time.Time, issuedAt *time.Time, shareToken, notes string,
+		lines []invLineRow, subtotal int) {
+		seq++
+		number := fmt.Sprintf("INV-%d-%03d", now.Year(), seq)
+		var tok *string
+		if shareToken != "" {
+			tok = &shareToken
 		}
-		lineRows = append(lineRows, lineRow{
-			desc:     fmt.Sprintf("%s — %d %s delivered", repo, g.count, noun),
-			points:   pts,
-			amount:   amount,
-			evidence: g.evidence,
-		})
+		s.must(s.db.WithOrg(s.ctx, orgID, func(tx pgx.Tx) error {
+			const insHdr = `
+				INSERT INTO client_invoices
+					(org_id, client_id, project_id, number, status, period_start, period_end,
+					 currency, subtotal_cents, total_cents, share_token, issued_at, notes)
+				VALUES ($1, $2, $3, $4, $5, $6, $7, 'USD', $8, $8, $9, $10, $11)
+				ON CONFLICT (org_id, number) DO UPDATE SET
+					client_id      = EXCLUDED.client_id,
+					project_id     = EXCLUDED.project_id,
+					status         = EXCLUDED.status,
+					period_start   = EXCLUDED.period_start,
+					period_end     = EXCLUDED.period_end,
+					subtotal_cents = EXCLUDED.subtotal_cents,
+					total_cents    = EXCLUDED.total_cents,
+					share_token    = EXCLUDED.share_token,
+					issued_at      = EXCLUDED.issued_at,
+					notes          = EXCLUDED.notes
+				RETURNING id`
+			var invoiceID string
+			if err := tx.QueryRow(s.ctx, insHdr, orgID, clientID, projectID,
+				number, status, periodStart, periodEnd, subtotal, tok, issuedAt, notes).
+				Scan(&invoiceID); err != nil {
+				return err
+			}
+			// Clear any prior lines (idempotent re-seed) then insert fresh.
+			if _, err := tx.Exec(s.ctx,
+				`DELETE FROM client_invoice_lines WHERE org_id = $1 AND invoice_id = $2`,
+				orgID, invoiceID); err != nil {
+				return err
+			}
+			const insLine = `
+				INSERT INTO client_invoice_lines
+					(org_id, invoice_id, description, effort_points, quantity,
+					 unit_rate_cents, amount_cents, evidence, sort)
+				VALUES ($1, $2, $3, $4, 1, $5, $6, $7::jsonb, $8)`
+			batch := &pgx.Batch{}
+			for i, lr := range lines {
+				ev, _ := json.Marshal(lr.evidence)
+				rate := 0
+				if lr.points > 0 {
+					rate = int(math.Round(float64(lr.amount) / lr.points))
+				}
+				batch.Queue(insLine, orgID, invoiceID, lr.desc, lr.points,
+					rate, lr.amount, string(ev), i)
+			}
+			br := tx.SendBatch(s.ctx, batch)
+			defer br.Close()
+			for range lines {
+				if _, err := br.Exec(); err != nil {
+					return fmt.Errorf("seed: insert invoice line: %w", err)
+				}
+			}
+			return nil
+		}))
+		tally.total++
+		switch status {
+		case "draft":
+			tally.draft++
+		case "sent":
+			tally.sent++
+		case "paid":
+			tally.paid++
+		case "overdue":
+			tally.overdue++
+		}
 	}
+
+	// Does the schema support an 'overdue' status? The migration documents
+	// draft|sent|paid|void; if a CHECK constraint forbids 'overdue' we fall back
+	// to an old 'sent' invoice with a past period (which reads as overdue in UI).
+	overdueSupported := false
+	s.must(s.db.WithOrg(s.ctx, orgID, func(tx pgx.Tx) error {
+		var ok bool
+		if err := tx.QueryRow(s.ctx, `
+			SELECT NOT EXISTS (
+				SELECT 1 FROM pg_constraint
+				WHERE conrelid = 'client_invoices'::regclass
+				  AND contype = 'c'
+				  AND pg_get_constraintdef(oid) ILIKE '%status%'
+				  AND pg_get_constraintdef(oid) NOT ILIKE '%overdue%'
+			)`).Scan(&ok); err != nil {
+			return err
+		}
+		overdueSupported = ok
+		return nil
+	}))
 
 	var projectID *string
 	if len(projects) > 0 {
 		projectID = &projects[0].ID
 	}
+	// A second project (if present) bills to a different client for variety.
+	var projectID2 *string
+	if len(projects) > 1 {
+		projectID2 = &projects[1].ID
+	}
 
-	s.must(s.db.WithOrg(s.ctx, orgID, func(tx pgx.Tx) error {
-		const insHdr = `
-			INSERT INTO client_invoices
-				(org_id, client_id, project_id, number, status, period_start, period_end,
-				 currency, subtotal_cents, total_cents, share_token, issued_at, notes)
-			VALUES ($1, $2, $3, $4, 'sent', $5, $6, 'USD', $7, $7, $8, now(),
-			        'Auto-generated from merged delivery — every line is backed by git evidence.')
-			ON CONFLICT (org_id, number) DO UPDATE SET status = EXCLUDED.status
-			RETURNING id`
-		var invoiceID string
-		if err := tx.QueryRow(s.ctx, insHdr, orgID, primaryClientID, projectID,
-			fmt.Sprintf("INV-%d-001", now.Year()),
-			periodStart, now, subtotal, shareToken).Scan(&invoiceID); err != nil {
-			return err
+	// Helper to take a month-window [n months ago .. (n-1) months ago).
+	monthWindow := func(monthsAgo int) (from, to time.Time) {
+		to = now.AddDate(0, -(monthsAgo - 1), 0)
+		from = now.AddDate(0, -monthsAgo, 0)
+		return from, to
+	}
+	dayPtr := func(t time.Time) *time.Time { return &t }
+
+	// Build the spread. Each invoice draws its lines from real merged delivery in
+	// its own period; only periods that actually produced delivery get an invoice.
+	type spec struct {
+		clientIdx  int
+		projectID  *string
+		status     string
+		monthsAgo  int
+		withToken  bool
+		issuedDays int // issued_at = period_end + this many days (negative ⇒ nil)
+		notes      string
+	}
+	specs := []spec{
+		// Two PAID invoices, issued in the past.
+		{0, projectID, "paid", 6, false, 3, "Settled — paid in full. Lines backed by git evidence."},
+		{1, projectID2, "paid", 5, false, 4, "Settled — paid in full. Lines backed by git evidence."},
+		// One SENT with a public share token (keeps the /i/:token demo working).
+		{0, projectID, "sent", 2, true, 2, "Auto-generated from merged delivery — every line is backed by git evidence."},
+		// One more SENT (no token), recent period.
+		{2, nil, "sent", 1, false, 1, "Awaiting payment. Every line is backed by git evidence."},
+		// One DRAFT for the current period (not yet issued).
+		{0, projectID, "draft", 0, false, -1, "Draft — generated from this period's merged delivery, not yet sent."},
+		// One OVERDUE (old period, issued long ago and unpaid).
+		{1, projectID2, "overdue", 8, false, 2, "Past due — issued and unpaid beyond terms. Backed by git evidence."},
+	}
+
+	for _, sp := range specs {
+		from, to := monthWindow(sp.monthsAgo)
+		if sp.monthsAgo == 0 {
+			from, to = now.AddDate(0, -1, 0), now // current period: last 30d up to now
+		}
+		client := clientsList[sp.clientIdx]
+		lines, subtotal := gatherLines(from, to, client.rate)
+		if len(lines) == 0 {
+			continue // no merged delivery in this window — skip (stays deterministic)
 		}
 
-		// Clear any prior lines (idempotent re-seed) then insert fresh.
-		if _, err := tx.Exec(s.ctx,
-			`DELETE FROM client_invoice_lines WHERE org_id = $1 AND invoice_id = $2`,
-			orgID, invoiceID); err != nil {
-			return err
+		status := sp.status
+		notes := sp.notes
+		if status == "overdue" && !overdueSupported {
+			// Fall back to an old 'sent' invoice with a past period that reads as overdue.
+			status = "sent"
+			notes = "Past due — issued and unpaid beyond terms (reads as overdue). Backed by git evidence."
 		}
-		const insLine = `
-			INSERT INTO client_invoice_lines
-				(org_id, invoice_id, description, effort_points, quantity,
-				 unit_rate_cents, amount_cents, evidence, sort)
-			VALUES ($1, $2, $3, $4, 1, $5, $6, $7::jsonb, $8)`
-		batch := &pgx.Batch{}
-		for i, lr := range lineRows {
-			ev, _ := json.Marshal(lr.evidence)
-			batch.Queue(insLine, orgID, invoiceID, lr.desc, lr.points,
-				rateCents, lr.amount, string(ev), i)
+
+		var issuedAt *time.Time
+		if sp.issuedDays >= 0 {
+			issuedAt = dayPtr(to.AddDate(0, 0, sp.issuedDays))
 		}
-		br := tx.SendBatch(s.ctx, batch)
-		defer br.Close()
-		for range lineRows {
-			if _, err := br.Exec(); err != nil {
-				return fmt.Errorf("seed: insert invoice line: %w", err)
-			}
+
+		token := ""
+		if sp.withToken {
+			tokenBytes := make([]byte, 32)
+			_, _ = cryptorand.Read(tokenBytes)
+			token = base64.RawURLEncoding.EncodeToString(tokenBytes)
 		}
-		return nil
-	}))
+
+		writeInvoice(client.id, sp.projectID, status, from, to, issuedAt, token, notes, lines, subtotal)
+	}
+
+	return tally
 }
 
 // ── deployments + incidents (real DORA deploy-freq + MTTR) ────────────────────
@@ -2215,7 +2366,7 @@ func (s *seeder) seedTimeEntries(orgID string, issueIDs []string) int {
 func (s *seeder) printSummary(
 	org *store.Org, adminEmail string, repos, projects int,
 	ct commitTally, pr prTally, iss issueTally, leave leaveTally, timeEntries int,
-	dep deployTally, notif notifTally,
+	dep deployTally, notif notifTally, inv invoiceTally,
 ) {
 	fmt.Printf(`
 ╔═══════════════════════════════════════════════════════════════╗
@@ -2236,7 +2387,7 @@ func (s *seeder) printSummary(
 ║  Deployments:%d   (%d failed)   Incidents: %d
 ║  Notifs:     %d channels · %d delivery-log entries · 2 webhook configs
 ║  Contribution: ~6mo trend snapshots · peer kudos · advisory equity ledger
-║  Invoicing:  2 clients · 1 generated invoice (git-evidence lines)
+║  Invoicing:  %d clients · %d invoices (%d draft · %d sent · %d paid · %d overdue)  git-evidence lines
 ║
 ║  → Open http://localhost:8080/login
 ║    Email:    %s
@@ -2253,6 +2404,7 @@ func (s *seeder) printSummary(
 		leave.total, leave.pending, timeEntries,
 		dep.deploys, dep.failures, dep.incidents,
 		notif.channels, notif.logs,
+		inv.clients, inv.total, inv.draft, inv.sent, inv.paid, inv.overdue,
 		adminEmail, demoPassword,
 	)
 }

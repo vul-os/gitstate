@@ -233,19 +233,27 @@ func UpsertLeaveBalance(ctx context.Context, tx pgx.Tx, orgID, userID, leaveType
 // authoritative "used_days" figure for a balance.
 func countApprovedLeaveDays(ctx context.Context, tx pgx.Tx, orgID, userID, leaveTypeID string, year int) (float64, error) {
 	var total float64
-	// (end_date - start_date) is integer days; +1 makes the range inclusive.
-	// half_day collapses any entry to 0.5 of a day.
+	// Count only the days that fall WITHIN the target year: clamp each entry's
+	// [start_date, end_date] span to [Jan 1, Dec 31] of the year before measuring.
+	// A Dec→Jan entry therefore contributes its December days to this year and its
+	// January days to the next. (end - start) is integer days; +1 = inclusive.
+	// A half_day entry is a single day → 0.5, counted in the year it starts.
 	err := tx.QueryRow(ctx, `
+		WITH bounds AS (
+		    SELECT make_date($4, 1, 1) AS y_start,
+		           make_date($4, 12, 31) AS y_end
+		)
 		SELECT COALESCE(SUM(
 		    CASE WHEN half_day THEN 0.5
-		         ELSE (end_date - start_date) + 1 END
+		         ELSE (LEAST(end_date, y_end) - GREATEST(start_date, y_start)) + 1 END
 		), 0)::numeric
-		FROM leave_entries
+		FROM leave_entries, bounds
 		WHERE org_id = $1
 		  AND user_id = $2
 		  AND leave_type_id = $3
 		  AND status = 'approved'
-		  AND EXTRACT(YEAR FROM start_date) = $4`,
+		  AND start_date <= y_end
+		  AND end_date   >= y_start`,
 		orgID, userID, leaveTypeID, year).Scan(&total)
 	return total, err
 }

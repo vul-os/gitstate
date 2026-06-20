@@ -16,6 +16,7 @@ package billing
 import (
 	"context"
 	"fmt"
+	"math"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -265,10 +266,10 @@ func (s *Service) GenerateInvoice(ctx context.Context, orgID string, periodStart
 		numPRs := prsByAuthor[m.Name]
 
 		evidence := map[string]any{
-			"user_id":    m.UserID,
-			"role":       m.Role,
-			"commits":    numCommits,
-			"prs_opened": numPRs,
+			"user_id":      m.UserID,
+			"role":         m.Role,
+			"commits":      numCommits,
+			"prs_opened":   numPRs,
 			"period_start": periodStart.Format(time.DateOnly),
 			"period_end":   periodEnd.Format(time.DateOnly),
 		}
@@ -297,14 +298,15 @@ func (s *Service) GenerateInvoice(ctx context.Context, orgID string, periodStart
 	// BYOK usage records $0 provider cost, so it never produces overage. The free
 	// tier carries no allowance and no managed LLM (BYOK-only) → no overage either.
 	var (
-		usageLines    []invoiceLine
-		llmCostCents  int  // total managed-LLM provider cost for the period (cents)
-		sawLLM        bool // did we observe any llm_tokens usage?
-		llmTotalQty   float64
+		usageLines   []invoiceLine
+		llmCostCents int  // total managed-LLM provider cost for the period (cents)
+		sawLLM       bool // did we observe any llm_tokens usage?
+		llmTotalQty  float64
 	)
 	for _, u := range usage {
-		// cost_usd is stored as a float; convert to cents.
-		costCents := int(u.TotalCostUSD * 100)
+		// cost_usd is stored as a float; convert to cents. Round (not truncate) so
+		// sub-cent costs aren't systematically under-billed.
+		costCents := int(math.Round(u.TotalCostUSD * 100))
 
 		if u.Kind == "llm_tokens" {
 			// Managed-LLM provider cost — aggregated into the allowance/overage line below.

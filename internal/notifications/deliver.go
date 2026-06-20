@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"net/smtp"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -21,9 +22,89 @@ var ErrEmailNotConfigured = errors.New("notifications: email delivery is not con
 // deliveryTimeout bounds every outbound webhook / SMTP attempt.
 const deliveryTimeout = 10 * time.Second
 
+// ErrBlockedWebhookTarget is returned when a webhook URL is rejected by the SSRF
+// guard (bad scheme or an address that resolves to a private/loopback IP).
+var ErrBlockedWebhookTarget = errors.New("notifications: webhook target is not allowed")
+
 // httpClient is a shared client with a hard timeout so a slow/blocked receiver
-// can never hang a request goroutine.
-var httpClient = &http.Client{Timeout: deliveryTimeout}
+// can never hang a request goroutine. Its transport uses a guarded DialContext so
+// every connection — including any the receiver redirects us to — is checked
+// against the private-IP blocklist before the socket is opened.
+var httpClient = &http.Client{
+	Timeout:   deliveryTimeout,
+	Transport: &http.Transport{DialContext: guardedDialContext},
+}
+
+// guardedDialContext resolves the address and refuses to dial if any resolved IP
+// is private, loopback, link-local or otherwise non-public. It defends against
+// SSRF (and DNS-rebinding via redirects) by validating at connect time.
+func guardedDialContext(ctx context.Context, network, addr string) (net.Conn, error) {
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return nil, ErrBlockedWebhookTarget
+	}
+	ips, err := net.DefaultResolver.LookupIPAddr(ctx, host)
+	if err != nil {
+		// Do not surface the resolver error (it may echo the host).
+		return nil, ErrBlockedWebhookTarget
+	}
+	if len(ips) == 0 {
+		return nil, ErrBlockedWebhookTarget
+	}
+	for _, ip := range ips {
+		if isBlockedIP(ip.IP) {
+			return nil, ErrBlockedWebhookTarget
+		}
+	}
+	// Dial the first allowed IP directly so we connect to the exact address we
+	// validated (avoids a re-resolve to a different, possibly private, IP).
+	d := &net.Dialer{Timeout: deliveryTimeout}
+	var dialErr error
+	for _, ip := range ips {
+		conn, e := d.DialContext(ctx, network, net.JoinHostPort(ip.IP.String(), port))
+		if e == nil {
+			return conn, nil
+		}
+		dialErr = e
+	}
+	if dialErr != nil {
+		return nil, errors.New("notifications: webhook request failed (network error)")
+	}
+	return nil, ErrBlockedWebhookTarget
+}
+
+// isBlockedIP reports whether ip is one we must never dial for a user-supplied
+// webhook: loopback, link-local (incl. 169.254/16 and IPv6 fe80::/10), private
+// ranges (10/8, 172.16/12, 192.168/16, fc00::/7), unspecified, or multicast.
+func isBlockedIP(ip net.IP) bool {
+	if ip == nil {
+		return true
+	}
+	if ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() ||
+		ip.IsUnspecified() || ip.IsMulticast() || ip.IsPrivate() {
+		return true
+	}
+	// IsPrivate covers 10/8, 172.16/12, 192.168/16 and fc00::/7; the checks above
+	// cover 127/8, 169.254/16 and ::1. Anything else is treated as public.
+	return false
+}
+
+// validateWebhookURL parses target and enforces an http(s) scheme with a host.
+// IP-level filtering happens at dial time (guardedDialContext), which also covers
+// redirects. Returns the parsed URL so the caller can build the request.
+func validateWebhookURL(target string) (*url.URL, error) {
+	u, err := url.Parse(strings.TrimSpace(target))
+	if err != nil {
+		return nil, ErrBlockedWebhookTarget
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return nil, ErrBlockedWebhookTarget
+	}
+	if u.Hostname() == "" {
+		return nil, ErrBlockedWebhookTarget
+	}
+	return u, nil
+}
 
 // SMTPConfig is read from the environment (the app config struct carries no SMTP
 // fields, so notifications resolves SMTP independently). Email delivery is only
@@ -84,6 +165,12 @@ func postWebhook(ctx context.Context, target string, payload map[string]any) err
 	if strings.TrimSpace(target) == "" {
 		return errors.New("notifications: webhook target is empty")
 	}
+	// SSRF guard: reject non-http(s) schemes up front. IP-level filtering (private/
+	// loopback/link-local) happens in guardedDialContext, which also vets any
+	// redirect the receiver returns.
+	if _, err := validateWebhookURL(target); err != nil {
+		return err
+	}
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return fmt.Errorf("notifications: marshal payload: %w", err)
@@ -102,6 +189,11 @@ func postWebhook(ctx context.Context, target string, payload map[string]any) err
 	resp, err := httpClient.Do(req)
 	if err != nil {
 		// http.Client errors are *url.Error and embed the URL — never surface it.
+		// A blocked target (SSRF guard, incl. a redirect to a private IP) surfaces
+		// as the sentinel so callers can distinguish it from a transient failure.
+		if errors.Is(err, ErrBlockedWebhookTarget) {
+			return ErrBlockedWebhookTarget
+		}
 		return errors.New("notifications: webhook request failed (network error)")
 	}
 	defer func() { _ = resp.Body.Close() }()
