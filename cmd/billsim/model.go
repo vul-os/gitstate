@@ -28,10 +28,16 @@ type Tier struct {
 
 // DefaultTiers — competitive per-builder ladder. Enterprise (custom/self-host/BYOK)
 // is excluded from the simulation.
+// NOTE on the LLM model: we do NOT show clients a markup. Managed AI is presented
+// as "run the model at its standard rate" — the displayed price ≈ provider list.
+// Our margin comes from the BULK / committed-use discount (we buy at ~0.65× list,
+// see LLMVolumeDiscount) plus a silent ≤5% gateway buffer. So the client-facing
+// "overage markup" is just 1.05 (effectively invisible), and the real profit is
+// the wholesale spread — cheapest for the customer AND most profitable for us.
 var DefaultTiers = []Tier{
 	{"free", "Free", 0, 0, 0},              // BYOK-only, ≤2 builders, scale-to-zero
-	{"team", "Team", 6, 3, 1.30},          // includes $4/builder managed LLM
-	{"business", "Business", 14, 6, 1.30}, // includes $12/builder managed LLM, SSO/audit
+	{"team", "Team", 6, 3, 1.05},          // $6 managed (AI incl) / $3 BYOK; AI metered at ~list
+	{"business", "Business", 14, 6, 1.05}, // $14 managed / $8 BYOK, SSO/audit; AI metered at ~list
 }
 
 // SimParams holds all tunable inputs (defaults set in main.go via flags).
