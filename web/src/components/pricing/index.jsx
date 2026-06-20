@@ -54,7 +54,7 @@ const PLAN_FEATURES = {
   team: [
     'Unlimited builder seats',
     'Unlimited stakeholders — free',
-    '$4 / builder managed-AI credit included',
+    '$3 / builder managed-AI credit included',
     'Any model at its standard rate · or BYOK',
     'Priority email support',
     'Unlimited repos',
@@ -62,9 +62,9 @@ const PLAN_FEATURES = {
   business: [
     'Unlimited builder seats',
     'Unlimited stakeholders — free',
-    '$12 / builder managed-AI credit included',
+    '$6 / builder managed-AI credit included',
     'Any model at its standard rate · or BYOK',
-    'Org SSO + audit logs',
+    'Google / Microsoft SSO + audit logs',
     'Dedicated Slack support',
     'Unlimited repos',
   ],
@@ -345,7 +345,7 @@ export function CostCalculator({ plans, format, currency, recommendedKey }) {
   const totalLlmDesired = llmPerBuilder * builders
 
   // Overage computation
-  const markup = matched?.overageMarkup ?? 1.3
+  const markup = matched?.overageMarkup ?? 1.0
   const overageBase = Math.max(0, totalLlmDesired - totalIncluded)
   // Free plan has no included credits so entire LLM is metered; paid plans meter
   // usage beyond the credit (internal committed-use factor applied, never shown).
@@ -609,7 +609,7 @@ const COMPARE_ROWS = [
   { label: 'Per-builder price (BYOK)',      icon: KeyRound,     vals: ['BYOK', '$3', '$8', 'Custom'] },
   { label: 'Builder cap',                   icon: Users,        vals: ['≤ 2', '∞', '∞', '∞'] },
   { label: 'Stakeholders',                  icon: Eye,          vals: ['∞', '∞', '∞', '∞'], accent: true },
-  { label: 'Managed AI credit / builder',   icon: Cpu,          vals: ['—', '$4', '$12', 'BYOK'] },
+  { label: 'Managed AI credit / builder',   icon: Cpu,          vals: ['—', '$3', '$6', 'BYOK'] },
   { label: 'Managed AI beyond credit',      icon: Gauge,        vals: ['BYOK', 'At model cost', 'At model cost', 'BYOK'], accent: true },
   { label: 'Per-seat AI fee',               icon: DollarSign,   vals: ['None', 'None', 'None', 'None'], accent: true },
   { label: 'BYOK (own LLM key)',            icon: KeyRound,     vals: [true, true, true, true] },

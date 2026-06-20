@@ -33,7 +33,7 @@ const FAQ_ITEMS = [
   },
   {
     q: 'How does managed AI pricing work?',
-    a: 'There is no per-seat AI fee. Team and Business plans include a monthly managed-AI credit per builder ($4 and $12 respectively), pooled across your team to cover AI code insights, automated summaries, and agent runs. Once you pass the included credit, you simply pay each model at its standard provider rate — nothing added per seat. Prefer to pay your provider directly? Enable BYOK (bring your own key) and route AI calls straight to Anthropic, OpenAI, or Gemini.',
+    a: 'There is no per-seat AI fee. Team and Business plans include a monthly managed-AI credit per builder ($3 and $6 respectively), pooled across your team to cover AI code insights, automated summaries, and agent runs. Once you pass the included credit, you simply pay each model at its standard provider rate — nothing added per seat. Prefer to pay your provider directly? Enable BYOK (bring your own key) and route AI calls straight to Anthropic, OpenAI, or Gemini.',
   },
   {
     q: 'Why billed in USD but charged in my local currency?',
