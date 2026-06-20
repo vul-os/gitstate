@@ -19,7 +19,7 @@ import {
 import { Reveal, RevealList } from '../components/Reveal.jsx'
 import { useCurrency } from '../lib/currency.jsx'
 import { usePlans, FALLBACK_PLANS } from '../lib/usePlans.js'
-import { PlanCard, CostCalculator, CompareTable } from '../components/pricing/index.jsx'
+import { PlanCard, CompareTable } from '../components/pricing/index.jsx'
 import AIModels from '../components/pricing/AIModels.jsx'
 import CompetitorCalculator from '../components/compare/CompetitorCalculator.jsx'
 
@@ -243,33 +243,6 @@ export default function Pricing() {
         </Container>
       </Section>
 
-      {/* ── Cost calculator ── */}
-      <Section py="lg">
-        <Container size="lg">
-          <Reveal inView>
-            <div className="mb-8 text-center">
-              <Badge color="teal" className="mb-3">Interactive</Badge>
-              <h2 className="font-display text-2xl md:text-3xl font-semibold text-[var(--text)] mb-2">
-                Estimate your cost
-              </h2>
-              <p className="text-sm text-[var(--text-muted)] max-w-md mx-auto">
-                Set your builder count, expected LLM usage, and BYOK preference — we pick the best plan and show your real per-builder cost.
-              </p>
-            </div>
-          </Reveal>
-          <Reveal inView delay={0.1}>
-            {!loading && (
-              <CostCalculator
-                plans={plans}
-                format={format}
-                currency={currency}
-                recommendedKey={RECOMMENDED_KEY}
-              />
-            )}
-          </Reveal>
-        </Container>
-      </Section>
-
       {/* ── Managed AI — models & per-token pass-through pricing ── */}
       <Section py="lg">
         <Container size="lg">
@@ -293,16 +266,16 @@ export default function Pricing() {
         </Container>
       </Section>
 
-      {/* ── Competitor cost calculator (honest) ── */}
+      {/* ── The cost calculator — single, honest, head-to-head ── */}
       <Section py="lg">
         <Container size="lg">
           <Reveal inView>
             <div className="mb-8 text-center">
               <Badge color="indigo" className="mb-3 inline-flex items-center gap-1">
-                <Scale size={11} /> honest comparison
+                <Scale size={11} /> interactive · honest comparison
               </Badge>
               <h2 className="font-display text-2xl md:text-3xl font-semibold text-[var(--text)] mb-2">
-                The cheapest at every team size
+                Compare your real monthly cost
               </h2>
               <p className="text-sm text-[var(--text-muted)] max-w-lg mx-auto">
                 Drag the sliders. We compute every tool&apos;s real monthly bill and rank by actual cost — no thumb
