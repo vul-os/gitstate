@@ -61,7 +61,9 @@ func (h *oauthHandlers) start(w http.ResponseWriter, r *http.Request) {
 		MaxAge:   600, // 10 min — plenty for the OAuth round-trip
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
-		Secure:   r.URL.Scheme == "https",
+		// Behind a TLS-terminating proxy r.URL.Scheme is empty, so also honor
+		// r.TLS and X-Forwarded-Proto to keep the CSRF-state cookie Secure in prod.
+		Secure: requestIsHTTPS(r),
 	})
 
 	http.Redirect(w, r, p.AuthCodeURL(state), http.StatusFound)
@@ -216,4 +218,16 @@ func (h *oauthHandlers) createPersonalOrgOAuth(r *http.Request, u *store.User) e
 	}
 
 	return nil
+}
+
+// requestIsHTTPS reports whether the inbound request is (or arrived over) HTTPS,
+// honoring a TLS-terminating proxy. Used to set Secure on session/CSRF cookies.
+func requestIsHTTPS(r *http.Request) bool {
+	if r.TLS != nil {
+		return true
+	}
+	if strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https") {
+		return true
+	}
+	return r.URL.Scheme == "https"
 }

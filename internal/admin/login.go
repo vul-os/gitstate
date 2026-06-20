@@ -68,13 +68,13 @@ func (h *adminHandlers) loginSubmit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	setAdminCookie(w, token, h.cfg.Auth.AccessTokenTTL)
+	setAdminCookie(w, token, h.cfg.Auth.AccessTokenTTL, httpsDeployment(h.cfg))
 	http.Redirect(w, r, "/admin", http.StatusSeeOther)
 }
 
 // logout clears the session cookie and returns to the login form.
 func (h *adminHandlers) logout(w http.ResponseWriter, r *http.Request) {
-	clearAdminCookie(w)
+	clearAdminCookie(w, httpsDeployment(h.cfg))
 	http.Redirect(w, r, loginPath, http.StatusSeeOther)
 }
 

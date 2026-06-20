@@ -55,7 +55,7 @@ func RequireAdminAuth(cfg *config.Config, database *db.DB) func(http.Handler) ht
 
 			// Verify up-front so we can redirect (not 401) on a bad/expired token.
 			if _, err := auth.ParseAccessToken(cfg.Auth.JWTSigningKey, token); err != nil {
-				clearAdminCookie(w)
+				clearAdminCookie(w, httpsDeployment(cfg))
 				redirectToLogin(w, r)
 				return
 			}
@@ -101,7 +101,9 @@ func redirectToLogin(w http.ResponseWriter, r *http.Request) {
 }
 
 // setAdminCookie stores the access token as an httpOnly, SameSite=Lax cookie.
-func setAdminCookie(w http.ResponseWriter, token string, ttl time.Duration) {
+// secure should be true on https deployments (derived from cfg.App.PublicURL) so
+// the super-admin session token never rides a plaintext request.
+func setAdminCookie(w http.ResponseWriter, token string, ttl time.Duration, secure bool) {
 	if ttl <= 0 {
 		ttl = 15 * time.Minute
 	}
@@ -110,6 +112,7 @@ func setAdminCookie(w http.ResponseWriter, token string, ttl time.Duration) {
 		Value:    token,
 		Path:     "/admin",
 		HttpOnly: true,
+		Secure:   secure,
 		SameSite: http.SameSiteLaxMode,
 		Expires:  time.Now().Add(ttl),
 		MaxAge:   int(ttl.Seconds()),
@@ -117,16 +120,23 @@ func setAdminCookie(w http.ResponseWriter, token string, ttl time.Duration) {
 }
 
 // clearAdminCookie expires the admin session cookie.
-func clearAdminCookie(w http.ResponseWriter) {
+func clearAdminCookie(w http.ResponseWriter, secure bool) {
 	http.SetCookie(w, &http.Cookie{
 		Name:     adminCookieName,
 		Value:    "",
 		Path:     "/admin",
 		HttpOnly: true,
+		Secure:   secure,
 		SameSite: http.SameSiteLaxMode,
 		Expires:  time.Unix(0, 0),
 		MaxAge:   -1,
 	})
+}
+
+// httpsDeployment reports whether the configured public URL is https (so cookies
+// should be Secure). Empty/localhost dev → false.
+func httpsDeployment(cfg *config.Config) bool {
+	return strings.HasPrefix(strings.ToLower(cfg.App.PublicURL), "https://")
 }
 
 // statusCapturingWriter records the status code and whether a body was written
