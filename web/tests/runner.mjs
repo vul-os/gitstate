@@ -110,12 +110,14 @@ export function url(path = '/') {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
-/** Wait for network idle without throwing if a long-poll keeps the socket open. */
+/** Wait for network idle without throwing if a long-poll keeps the socket open.
+ *  Short timeout so an occasional slow/held connection can't accumulate toward the
+ *  per-spec budget across multiple settle() calls (was causing flaky 60s timeouts). */
 export async function settle(page, { extra = 150 } = {}) {
   try {
-    await page.waitForLoadState('networkidle', { timeout: 15_000 })
+    await page.waitForLoadState('networkidle', { timeout: 4_000 })
   } catch {
-    /* ignore — some pages hold a connection */
+    /* ignore — some pages hold a connection (chat/SSE) */
   }
   if (extra) await sleep(extra)
 }

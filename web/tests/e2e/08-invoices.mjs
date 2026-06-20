@@ -8,32 +8,33 @@ test('invoices: list, detail, public share', async ({ page, context }) => {
   const h1 = await pageHeading(page)
   assert(/Invoices/i.test(h1), `invoices: h1 expected "Invoices", got "${h1}"`)
 
-  // List: find the invoice row (seed has INV-2026-001).
   const list = await api('/api/invoices')
   const invoices = Array.isArray(list) ? list : list.invoices || []
   assert(invoices.length > 0, 'invoices: API returned no invoices (suite needs seeded data)')
-  const inv = invoices[0]
 
-  const row = page.getByRole('button').filter({ hasText: inv.number })
+  // Use an invoice that has a public share token (a 'sent' one in the seed) so the
+  // single detail view we open covers BOTH the line-items check AND the share link.
+  let token = null
+  let inv = invoices[0]
+  for (const x of invoices) {
+    const d = await api(`/api/invoices/${x.id}`)
+    if (d.shareToken) { token = d.shareToken; inv = x; break }
+  }
+  assert(token, 'invoices: no invoice has a shareToken (seed an issued/sent invoice)')
+
+  // Wait for the list to fully render (rows wired) before clicking — clicking too
+  // early races React's onClick attach and the detail never opens.
+  await settle(page, { extra: 400 })
+  const row = page.getByRole('button').filter({ hasText: inv.number }).first()
   await assertVisible(row, `invoices: list row for ${inv.number}`)
-  await row.first().click()
-  // The detail view fetches line items async — wait for them to render.
-  await page.getByText('Delivered work').first().waitFor({ state: 'visible', timeout: 10000 }).catch(() => {})
-  await settle(page, { extra: 200 })
+  await row.click()
 
-  // Detail view: "Delivered work" + line items.
-  await assertVisible(page.getByText('Delivered work'), 'invoices: detail "Delivered work"')
+  // Detail view loads line items async — the waitFor IS the assertion.
+  await page.getByText('Delivered work').first().waitFor({ state: 'visible', timeout: 15000 })
   await assertVisible(page.getByText('Total due').first(), 'invoices: detail "Total due"')
-
-  // The public share token: read it from the API detail (authoritative), and
-  // verify the detail view exposes the /i/<token> share link in the DOM.
-  const detail = await api(`/api/invoices/${inv.id}`)
-  const token = detail.shareToken
-  assert(token, 'invoices: invoice has no shareToken (seed an issued/sent invoice)')
-  await assertVisible(
-    page.getByText(new RegExp(`/i/${token.slice(0, 8)}`)),
-    'invoices: share URL not shown in detail view',
-  )
+  // The detail exposes the /i/<token> public share link.
+  await page.getByText(new RegExp(`/i/${token.slice(0, 8)}`)).first()
+    .waitFor({ state: 'visible', timeout: 10000 })
 
   // Visit the public share URL in a brand-new context with NO auth.
   const anonCtx = await context.browser().newContext({
