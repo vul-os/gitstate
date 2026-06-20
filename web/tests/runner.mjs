@@ -72,7 +72,11 @@ const registry = []
  * @param {{authed?:boolean, themes?:boolean}} [opts]  authed: login first; themes: run in every theme (default true)
  */
 export function test(name, fn, opts = {}) {
-  registry.push({ name, fn, opts: { authed: false, themes: true, ...opts } })
+  // seedAuth (default true): inject the shared login snapshot into the context's
+  // localStorage before app JS runs, so the spec is already authed and never
+  // POSTs /auth/login from the browser. Specs that exercise the login form
+  // itself (or expect the anonymous /login page) opt out with seedAuth:false.
+  registry.push({ name, fn, opts: { authed: false, themes: true, seedAuth: true, ...opts } })
 }
 
 // ── Console/pageerror tracking ──────────────────────────────────────────────
@@ -134,10 +138,30 @@ export async function login(page) {
   await page.waitForSelector('#email', { timeout: 15_000 })
   await page.fill('#email', CONFIG.email)
   await page.fill('#password', CONFIG.password)
-  await Promise.all([
-    page.waitForURL((u) => !/\/login$/.test(new URL(u).pathname), { timeout: CONFIG.navTimeout }),
-    page.click('button[type="submit"]'),
-  ])
+  await page.click('button[type="submit"]')
+  // The authoritative success signal is the access token landing in
+  // localStorage — more reliable than waitForURL, which depends on a SPA route
+  // change firing as a navigation event and intermittently hung for the full
+  // 60s navTimeout in headless. Poll the token (and the route, as a backup) on a
+  // tight budget so a missed signal fails fast with a clear message rather than
+  // burning the per-spec budget.
+  const deadline = Date.now() + 20_000
+  let authed = false
+  for (;;) {
+    authed = await page
+      .evaluate(() => !!localStorage.getItem('gs_access_token'))
+      .catch(() => false)
+    if (authed) break
+    // Backup: app may have routed off /login before the token read settled.
+    const path = await page.evaluate(() => location.pathname).catch(() => '/login')
+    if (!/\/login$/.test(path)) {
+      authed = true
+      break
+    }
+    if (Date.now() >= deadline) break
+    await sleep(150)
+  }
+  if (!authed) throw new Error('login: access token did not appear within 20s of submit')
   await settle(page)
 }
 
@@ -175,19 +199,46 @@ export async function gotoPublic(page, path, { waitFor = 'h1, h2, main' } = {}) 
 }
 
 // ── API helper (for cross-checking persistence without UI flakiness) ─────────
+// One login for the whole suite. The /auth/login endpoint is rate-limited to
+// 10 req/min per IP (internal/middleware/ratelimit.go AuthRateLimit), so the
+// suite MUST NOT log in once per spec — instead we log in exactly once here and
+// reuse the snapshot, both for direct API calls and for seeding the browser's
+// localStorage (see authStorageInit / seedAuth). A POST to /auth/login can still
+// transiently 429 if earlier runs warmed the bucket, so we retry with backoff.
 let _apiToken = null
+let _apiRefresh = null
 let _apiOrg = null
+let _apiUser = null
+
+async function fetchWithRetry(input, init, { tries = 6, label = 'request' } = {}) {
+  let lastStatus = 0
+  for (let i = 0; i < tries; i++) {
+    const res = await fetch(input, init)
+    if (res.status !== 429) return res
+    lastStatus = 429
+    // Token bucket refills at perMin/60 ~= 1 token / 6s for the auth limiter.
+    // Back off generously so we don't hammer the bucket while it's empty.
+    await sleep(Math.min(8_000, 1_500 + i * 1_500))
+  }
+  throw new Error(`${label}: rate-limited (HTTP ${lastStatus}) after ${tries} attempts`)
+}
 
 async function apiLogin() {
   if (_apiToken && _apiOrg) return
-  const res = await fetch(`${CONFIG.apiUrl}/auth/login`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email: CONFIG.email, password: CONFIG.password }),
-  })
+  const res = await fetchWithRetry(
+    `${CONFIG.apiUrl}/auth/login`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: CONFIG.email, password: CONFIG.password }),
+    },
+    { label: 'api login' },
+  )
   if (!res.ok) throw new Error(`api login failed: ${res.status}`)
   const data = await res.json()
   _apiToken = data.accessToken
+  _apiRefresh = data.refreshToken || null
+  _apiUser = data.user || null
   // Resolve an org id from /api/orgs
   const orgsRes = await fetch(`${CONFIG.apiUrl}/api/orgs`, {
     headers: { Authorization: `Bearer ${_apiToken}` },
@@ -197,6 +248,22 @@ async function apiLogin() {
     const list = Array.isArray(orgs) ? orgs : orgs.orgs || []
     _apiOrg = list[0]?.id || null
   }
+}
+
+/**
+ * Build the localStorage entries that make the SPA consider itself logged in,
+ * using the single shared API login. Seeding these into a context lets authed
+ * specs skip the browser login form entirely — which is what keeps the suite
+ * under the 10/min /auth/login rate limit. Keys mirror web/src/lib/api.js.
+ */
+export async function authStorageInit() {
+  await apiLogin()
+  /** @type {Record<string,string>} */
+  const entries = {}
+  if (_apiToken) entries['gs_access_token'] = _apiToken
+  if (_apiRefresh) entries['gs_refresh_token'] = _apiRefresh
+  if (_apiOrg) entries['gs_active_org'] = _apiOrg
+  return entries
 }
 
 /** GET an /api/* path with auth + org header. Returns parsed JSON. */
@@ -263,17 +330,26 @@ async function runSpec(browser, spec, theme) {
   })
   context.setDefaultNavigationTimeout(CONFIG.navTimeout)
   context.setDefaultTimeout(20_000)
-  // Set the theme in localStorage before any app JS runs.
-  await context.addInitScript(
-    ([key, value]) => {
-      try {
-        window.localStorage.setItem(key, value)
-      } catch {
-        /* ignore */
-      }
-    },
-    [THEME_KEY, theme],
-  )
+  // Seed localStorage before any app JS runs: theme always, plus the shared auth
+  // snapshot for authed specs so they skip the rate-limited browser login form.
+  let seed = { [THEME_KEY]: theme }
+  if (spec.opts.seedAuth) {
+    try {
+      seed = { ...seed, ...(await authStorageInit()) }
+    } catch (e) {
+      // Surface auth-seed failures as the spec error rather than a silent
+      // unauthenticated run that fails confusingly downstream.
+      await context.close().catch(() => {})
+      return { error: e, ms: 0 }
+    }
+  }
+  await context.addInitScript((kv) => {
+    try {
+      for (const [k, v] of Object.entries(kv)) window.localStorage.setItem(k, v)
+    } catch {
+      /* ignore */
+    }
+  }, seed)
 
   const page = await context.newPage()
   const errors = []
