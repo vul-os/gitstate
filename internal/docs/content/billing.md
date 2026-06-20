@@ -17,17 +17,15 @@ the seat-tax-killer that per-seat incumbents can't match. See [Concepts → Free
 
 ## Plan ladder
 
-Prices are defined in **USD** (the global anchor) and charged in **ZAR**. `max_conns` is a *ceiling*,
-not a reservation.
+gitstate bills **per builder** — stakeholders are always free. Managed AI is metered at the
+model's **standard rate** (no per-seat AI fee); bring your own key (**BYOK**) for a lower base.
 
-| Plan | USD/mo | Builders | Max conns |
-|---|---|---|---|
-| Free | $0 | 2 | 10 |
-| Hobby | $9 | 5 | 25 |
-| Pro | $39 | 15 | 75 |
-| Team | $199 | 50 | 200 |
-| Scale | $249 | 100 | 400 |
-| Enterprise | custom | custom | custom |
+| Plan | Managed / builder | BYOK / builder | Included AI credit | Builders |
+|---|---|---|---|---|
+| Free | $0 | BYOK | — | ≤ 2 |
+| Team | $6 | $3 | $3 / builder | unlimited |
+| Business | $14 | $8 | $6 / builder | unlimited |
+| Enterprise | custom | custom | custom | unlimited |
 
 ```http
 GET /api/billing/plans

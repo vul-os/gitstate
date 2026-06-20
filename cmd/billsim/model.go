@@ -23,7 +23,7 @@ type Tier struct {
 	Name           string
 	PerBuilderUSD  float64 // monthly price per BILLABLE builder (stakeholders free)
 	IncludedLLMUSD float64 // included managed-LLM allowance per builder/mo, at OUR provider cost
-	OverageMarkup  float64 // markup on managed-LLM usage beyond the allowance (e.g. 1.30 = +30%)
+	OverageMarkup  float64 // 1.00 = no markup (managed AI metered at model list; margin = bulk discount)
 }
 
 // DefaultTiers — competitive per-builder ladder. Enterprise (custom/self-host/BYOK)
