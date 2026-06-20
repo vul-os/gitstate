@@ -35,8 +35,8 @@ const MODELS = [
   {
     name: 'Claude Opus 4.8',
     icon: Gem,
-    inUsd: 15,
-    outUsd: 75,
+    inUsd: 5,
+    outUsd: 25,
     note: 'deep reasoning',
   },
 ]
