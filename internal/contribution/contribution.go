@@ -492,18 +492,33 @@ func Profiles(raw []RawMember, method NormMethod, w Weights) []Member {
 		return members
 	}
 
-	// Build the raw value vectors per dimension.
-	shipped := make([]float64, n)
-	review := make([]float64, n)
-	effort := make([]float64, n)
-	quality := make([]float64, n)
-	ownership := make([]float64, n)
-	durability := make([]float64, n)
+	// GAMING RESISTANCE: agent-bot identities are EXCLUDED from the cohort used for
+	// within-project normalization. They are surfaced (flagged) in the output but
+	// must never shift a human's percentile / min-max — otherwise a bot inflating a
+	// dimension would deflate every human on it (and contradict ComputeEquity, which
+	// already excludes bots). humanIdx maps a position in the human-only vectors back
+	// to the original raw index.
+	humanIdx := make([]int, 0, n)
 	for i, m := range raw {
-		shipped[i] = shippedRaw(m)
-		review[i] = float64(m.ReviewsDone)
-		effort[i] = m.EffortPoints
-		quality[i] = QualityRaw(QualityInputs{ // already inverted (higher=better)
+		if !m.IsAgentBot {
+			humanIdx = append(humanIdx, i)
+		}
+	}
+	hn := len(humanIdx)
+
+	// Build the raw value vectors per dimension over HUMANS ONLY.
+	shipped := make([]float64, hn)
+	review := make([]float64, hn)
+	effort := make([]float64, hn)
+	quality := make([]float64, hn)
+	ownership := make([]float64, hn)
+	durability := make([]float64, hn)
+	for j, idx := range humanIdx {
+		m := raw[idx]
+		shipped[j] = shippedRaw(m)
+		review[j] = float64(m.ReviewsDone)
+		effort[j] = m.EffortPoints
+		quality[j] = QualityRaw(QualityInputs{ // already inverted (higher=better)
 			Reverts:        m.Reverts,
 			MergedPRs:      m.MergedPRs,
 			AvgCycleHours:  m.AvgCycleHours,
@@ -512,11 +527,11 @@ func Profiles(raw []RawMember, method NormMethod, w Weights) []Member {
 			TestTouches:    m.TestFileTouches,
 			TotalTouches:   m.TotalFileTouches,
 		})
-		ownership[i] = float64(m.AreasOwned)
-		durability[i] = DurabilityRaw(m.SurvivingLines, m.AuthoredLines)
+		ownership[j] = float64(m.AreasOwned)
+		durability[j] = DurabilityRaw(m.SurvivingLines, m.AuthoredLines)
 	}
 
-	// Within-project normalization (0–100) per dimension.
+	// Within-project normalization (0–100) per dimension, over humans only.
 	sN := Normalize(shipped, method)
 	rN := Normalize(review, method)
 	eN := Normalize(effort, method)
@@ -524,15 +539,23 @@ func Profiles(raw []RawMember, method NormMethod, w Weights) []Member {
 	oN := Normalize(ownership, method)
 	dN := Normalize(durability, method)
 
-	for i, m := range raw {
-		dims := DimensionScores{
-			Shipped:    sN[i],
-			Review:     rN[i],
-			Effort:     eN[i],
-			Quality:    qN[i],
-			Ownership:  oN[i],
-			Durability: dN[i],
+	// Scatter the human scores back to their original indices.
+	dimsByIdx := make(map[int]DimensionScores, hn)
+	for j, idx := range humanIdx {
+		dimsByIdx[idx] = DimensionScores{
+			Shipped:    sN[j],
+			Review:     rN[j],
+			Effort:     eN[j],
+			Quality:    qN[j],
+			Ownership:  oN[j],
+			Durability: dN[j],
 		}
+	}
+
+	for i, m := range raw {
+		// Bots are flagged in the output but carry zero normalized dimension scores
+		// (they were excluded from the cohort, so they hold no rank among humans).
+		dims := dimsByIdx[i]
 		members[i] = Member{
 			UserID:     m.UserID,
 			Name:       m.Name,

@@ -67,6 +67,23 @@ type invoiceHandlers struct {
 	cfg *config.Config
 }
 
+// requireManager enforces owner/admin for mutating invoice/client routes. It
+// returns false (and writes 401/403) when the caller is unauthenticated or lacks
+// the role; callers must return immediately on false.
+func (h *invoiceHandlers) requireManager(w http.ResponseWriter, r *http.Request, orgID string) bool {
+	user := middleware.UserFromContext(r.Context())
+	if user == nil {
+		writeError(w, http.StatusUnauthorized, "authentication required")
+		return false
+	}
+	role, err := store.GetMemberRole(r.Context(), h.db.Pool(), orgID, user.ID)
+	if err != nil || !canManageMembers(role) {
+		writeError(w, http.StatusForbidden, "only owners and admins can manage invoices")
+		return false
+	}
+	return true
+}
+
 // ── Clients ─────────────────────────────────────────────────────────────────────
 
 func (h *invoiceHandlers) listClients(w http.ResponseWriter, r *http.Request) {
@@ -102,6 +119,9 @@ func (h *invoiceHandlers) createClient(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "org context required")
 		return
 	}
+	if !h.requireManager(w, r, orgID) {
+		return
+	}
 	var req clientRequest
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
@@ -132,6 +152,9 @@ func (h *invoiceHandlers) updateClient(w http.ResponseWriter, r *http.Request) {
 	orgID := middleware.OrgFromContext(r.Context())
 	if orgID == "" {
 		writeError(w, http.StatusBadRequest, "org context required")
+		return
+	}
+	if !h.requireManager(w, r, orgID) {
 		return
 	}
 	id := r.PathValue("id")
@@ -257,6 +280,9 @@ func (h *invoiceHandlers) createInvoice(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, "org context required")
 		return
 	}
+	if !h.requireManager(w, r, orgID) {
+		return
+	}
 	var req createInvoiceRequest
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
@@ -313,6 +339,9 @@ func (h *invoiceHandlers) generate(w http.ResponseWriter, r *http.Request) {
 	orgID := middleware.OrgFromContext(r.Context())
 	if orgID == "" {
 		writeError(w, http.StatusBadRequest, "org context required")
+		return
+	}
+	if !h.requireManager(w, r, orgID) {
 		return
 	}
 	var req generateRequest
@@ -498,6 +527,9 @@ func (h *invoiceHandlers) patchInvoice(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "org context required")
 		return
 	}
+	if !h.requireManager(w, r, orgID) {
+		return
+	}
 	id := r.PathValue("id")
 	var req patchInvoiceRequest
 	if err := decodeJSON(r, &req); err != nil {
@@ -549,6 +581,9 @@ func (h *invoiceHandlers) deleteInvoice(w http.ResponseWriter, r *http.Request) 
 	orgID := middleware.OrgFromContext(r.Context())
 	if orgID == "" {
 		writeError(w, http.StatusBadRequest, "org context required")
+		return
+	}
+	if !h.requireManager(w, r, orgID) {
 		return
 	}
 	id := r.PathValue("id")

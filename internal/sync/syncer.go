@@ -134,7 +134,9 @@ func SyncRepo(ctx context.Context, database *db.DB, provider Provider, orgID str
 	}
 
 	// ── 4. Update last_synced_at on the repo ──────────────────────────────────
-	if err := store.UpdateRepoSyncedAt(ctx, database.Pool(), orgID, repo.ID); err != nil {
+	if err := database.WithOrg(ctx, orgID, func(tx pgx.Tx) error {
+		return store.UpdateRepoSyncedAt(ctx, tx, orgID, repo.ID)
+	}); err != nil {
 		log.Error("sync: update last_synced_at", "err", err)
 	}
 

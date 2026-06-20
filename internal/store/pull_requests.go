@@ -180,8 +180,17 @@ func ListPRsTx(ctx context.Context, tx pgx.Tx, repoID string) ([]*PullRequest, e
 	return prs, nil
 }
 
-// GetPR looks up a single pull request by its internal UUID.
-func GetPR(ctx context.Context, pool *pgxpool.Pool, id string) (*PullRequest, error) {
+// prRowScanner is satisfied by both *pgxpool.Pool and pgx.Tx for a single-row
+// lookup, so GetPR can run on the bare pool OR inside a db.WithOrg tx (required
+// under FORCE RLS, where a bare-pool read returns no rows).
+type prRowScanner interface {
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
+
+// GetPR looks up a single pull request by its internal UUID. Pass a db.WithOrg
+// tx so RLS (app.current_org) is set; a bare pool returns ErrNotFound under
+// forced RLS.
+func GetPR(ctx context.Context, qr prRowScanner, id string) (*PullRequest, error) {
 	const q = `
 		SELECT id, org_id, repo_id, platform, external_id,
 		       COALESCE(number,0),
@@ -195,7 +204,7 @@ func GetPR(ctx context.Context, pool *pgxpool.Pool, id string) (*PullRequest, er
 
 	pr := &PullRequest{}
 	var firstAt, mergedAt *time.Time
-	err := pool.QueryRow(ctx, q, id).Scan(
+	err := qr.QueryRow(ctx, q, id).Scan(
 		&pr.ID, &pr.OrgID, &pr.RepoID, &pr.Platform, &pr.ExternalID,
 		&pr.Number, &pr.Title, &pr.AuthorLogin, &pr.State,
 		&pr.Additions, &pr.Deletions, &pr.ChangedFiles,

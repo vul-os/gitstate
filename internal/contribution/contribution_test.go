@@ -406,6 +406,58 @@ func TestAgentFlag_Surfaced(t *testing.T) {
 	}
 }
 
+// TestAgentBot_ExcludedFromNormalization asserts the gaming-resistance property:
+// adding an agent-bot to the cohort must NOT change any human's normalized
+// dimension scores or composite. A bot that out-ships every human would otherwise
+// deflate the humans' percentiles. The bot is still returned (flagged) but holds
+// no rank among humans (zero dimension scores).
+func TestAgentBot_ExcludedFromNormalization(t *testing.T) {
+	humans := []RawMember{
+		{UserID: "alice", Name: "Alice", MergedPRs: 2, ReviewsDone: 4, AreasOwned: 1, EffortPoints: 10},
+		{UserID: "bob", Name: "Bob", MergedPRs: 8, ReviewsDone: 1, AreasOwned: 3, EffortPoints: 30},
+	}
+	withBot := append([]RawMember{
+		// A bot that dominates every dimension — would skew percentile/min-max if counted.
+		{UserID: "bot", Name: "Bot", IsAgentBot: true, MergedPRs: 100, ReviewsDone: 100, AreasOwned: 50, EffortPoints: 500},
+	}, humans...)
+
+	w := DefaultWeights()
+	base := Profiles(humans, NormPercentile, w)
+	mixed := Profiles(withBot, NormPercentile, w)
+
+	score := func(ms []Member) map[string]Member {
+		out := map[string]Member{}
+		for _, m := range ms {
+			out[m.UserID] = m
+		}
+		return out
+	}
+	b, m := score(base), score(mixed)
+
+	for _, id := range []string{"alice", "bob"} {
+		if b[id].Composite != m[id].Composite {
+			t.Errorf("%s composite changed when a bot joined the cohort: %v → %v (bot must not affect human normalization)",
+				id, b[id].Composite, m[id].Composite)
+		}
+		if b[id].Dimensions != m[id].Dimensions {
+			t.Errorf("%s dimensions changed when a bot joined: %+v → %+v", id, b[id].Dimensions, m[id].Dimensions)
+		}
+	}
+
+	// The bot is still surfaced (flagged) in the output but holds no rank.
+	bot, ok := m["bot"]
+	if !ok {
+		t.Fatal("bot should still be present in the output (flagged)")
+	}
+	if !bot.IsAgentBot {
+		t.Error("bot.IsAgentBot should be true")
+	}
+	if bot.Composite != 0 || bot.Dimensions != (DimensionScores{}) {
+		t.Errorf("bot should carry zero normalized scores (excluded from cohort), got composite=%v dims=%+v",
+			bot.Composite, bot.Dimensions)
+	}
+}
+
 func TestAgentPct(t *testing.T) {
 	cases := []struct {
 		human, agent int

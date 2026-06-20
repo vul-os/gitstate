@@ -233,6 +233,20 @@ type rotateSecretResponse struct {
 func (h *webhookHandlers) rotateSecret(w http.ResponseWriter, r *http.Request) {
 	orgID := middleware.OrgFromContext(r.Context())
 
+	// Only owners/admins may rotate the org's webhook HMAC secret — rotating it
+	// breaks every configured delivery until the provider is re-pasted, so a bare
+	// member must not be able to DoS the org's real-time sync.
+	user := middleware.UserFromContext(r.Context())
+	if user == nil {
+		writeError(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+	role, err := store.GetMemberRole(r.Context(), h.db.Pool(), orgID, user.ID)
+	if err != nil || !canManageMembers(role) {
+		writeError(w, http.StatusForbidden, "only owners and admins can rotate the webhook secret")
+		return
+	}
+
 	var req rotateSecretRequest
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request")

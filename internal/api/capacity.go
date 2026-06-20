@@ -5,6 +5,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"time"
@@ -56,6 +57,10 @@ type capacityHandlers struct {
 	db  *db.DB
 	cfg *config.Config
 }
+
+// errSelfApprove is returned when an owner/admin tries to approve or reject their
+// OWN leave request (separation-of-duties guard).
+var errSelfApprove = errors.New("cannot approve or reject your own leave request")
 
 // ── Leave ─────────────────────────────────────────────────────────────────
 
@@ -206,6 +211,18 @@ func (h *capacityHandlers) approveLeave(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, "X-Org-ID header required")
 		return
 	}
+	user := middleware.UserFromContext(r.Context())
+	if user == nil {
+		writeError(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+	// Only owners/admins may approve or reject leave (and never their own request).
+	role, err := store.GetMemberRole(r.Context(), h.db.Pool(), orgID, user.ID)
+	if err != nil || !canManageMembers(role) {
+		writeError(w, http.StatusForbidden, "only owners and admins can approve or reject leave")
+		return
+	}
+
 	id := r.PathValue("id")
 	if id == "" {
 		writeError(w, http.StatusBadRequest, "leave id is required")
@@ -225,7 +242,16 @@ func (h *capacityHandlers) approveLeave(w http.ResponseWriter, r *http.Request) 
 	}
 
 	var resp leaveResponse
-	err := h.db.WithOrg(r.Context(), orgID, func(tx pgx.Tx) error {
+	err = h.db.WithOrg(r.Context(), orgID, func(tx pgx.Tx) error {
+		// Reject self-approval: an owner/admin cannot decide on their OWN request.
+		existing, gerr := store.GetLeaveEntry(r.Context(), tx, orgID, id)
+		if gerr != nil {
+			return gerr
+		}
+		if existing.UserID == user.ID {
+			return errSelfApprove
+		}
+
 		e, err := store.ApproveLeaveEntry(r.Context(), tx, orgID, id, body.Status)
 		if err == store.ErrNotFound {
 			return store.ErrNotFound
@@ -247,6 +273,10 @@ func (h *capacityHandlers) approveLeave(w http.ResponseWriter, r *http.Request) 
 	})
 	if err == store.ErrNotFound {
 		writeError(w, http.StatusNotFound, "leave entry not found")
+		return
+	}
+	if errors.Is(err, errSelfApprove) {
+		writeError(w, http.StatusForbidden, errSelfApprove.Error())
 		return
 	}
 	if err != nil {

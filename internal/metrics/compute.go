@@ -129,165 +129,157 @@ func (s *Service) ComputeInvolvement(ctx context.Context, orgID string, periodSt
 	start := time.Date(periodStart.Year(), periodStart.Month(), periodStart.Day(), 0, 0, 0, 0, time.UTC)
 	end := periodEnd(start)
 
-	// userStats accumulates per-login dimension values before upserting.
-	type userStats struct {
-		featuresShipped int
-		additions       int
-		deletions       int
-		repos           map[string]struct{} // distinct repos with commits
-	}
 	stats := make(map[string]*userStats) // key = author_login
 
-	// ── Dimension: features_shipped (merged PRs authored by this user) ────────
-	const prQ = `
-		SELECT COALESCE(author_login,'') AS login, COUNT(*) AS cnt
-		FROM pull_requests
-		WHERE org_id = $1
-		  AND state = 'merged'
-		  AND merged_at >= $2
-		  AND merged_at <= $3
-		  AND author_login IS NOT NULL
-		  AND author_login != ''
-		GROUP BY author_login`
-
-	pool := s.db.Pool()
-	prRows, err := pool.Query(ctx, prQ, orgID, start, end)
-	if err != nil {
-		return fmt.Errorf("metrics.ComputeInvolvement: query merged PRs: %w", err)
-	}
-	defer prRows.Close()
-
-	for prRows.Next() {
-		var login string
-		var cnt int
-		if err := prRows.Scan(&login, &cnt); err != nil {
-			return fmt.Errorf("metrics.ComputeInvolvement: scan merged PR row: %w", err)
-		}
-		if _, ok := stats[login]; !ok {
-			stats[login] = &userStats{repos: make(map[string]struct{})}
-		}
-		stats[login].featuresShipped = cnt
-	}
-	if err := prRows.Err(); err != nil {
-		return fmt.Errorf("metrics.ComputeInvolvement: merged PR rows: %w", err)
-	}
-
-	// ── Dimension: areas_owned + additions/deletions (via commits) ────────────
-	const commitQ = `
-		SELECT COALESCE(author_login, COALESCE(author_email,'unknown')) AS login,
-		       repo_id::text,
-		       COALESCE(SUM(additions),0),
-		       COALESCE(SUM(deletions),0)
-		FROM commits
-		WHERE org_id = $1
-		  AND committed_at >= $2
-		  AND committed_at <= $3
-		GROUP BY login, repo_id`
-
-	commitRows, err := pool.Query(ctx, commitQ, orgID, start, end)
-	if err != nil {
-		return fmt.Errorf("metrics.ComputeInvolvement: query commits: %w", err)
-	}
-	defer commitRows.Close()
-
-	for commitRows.Next() {
-		var login, repoID string
-		var adds, dels int
-		if err := commitRows.Scan(&login, &repoID, &adds, &dels); err != nil {
-			return fmt.Errorf("metrics.ComputeInvolvement: scan commit row: %w", err)
-		}
-		if _, ok := stats[login]; !ok {
-			stats[login] = &userStats{repos: make(map[string]struct{})}
-		}
-		stats[login].repos[repoID] = struct{}{}
-		stats[login].additions += adds
-		stats[login].deletions += dels
-	}
-	if err := commitRows.Err(); err != nil {
-		return fmt.Errorf("metrics.ComputeInvolvement: commit rows: %w", err)
-	}
-
-	// ── Dimension: reviews_done ───────────────────────────────────────────────
-	// A full review-event signal requires the sync layer to store reviewer logins
-	// (e.g. from GitHub review events). As a conservative approximation we count,
-	// for each user, the number of merged PRs during the period that were authored
-	// by someone *else*. This gives a floor for review activity and makes seniors
-	// and tech leads visible even when they ship fewer features themselves.
-	//
-	// Future: when review_event data is available in a reviews table this can be
-	// replaced with an exact count without changing the schema or the API contract.
-	const reviewQ = `
-		SELECT COALESCE(author_login,'') AS login, COUNT(*) AS cnt
-		FROM pull_requests
-		WHERE org_id = $1
-		  AND state = 'merged'
-		  AND merged_at >= $2
-		  AND merged_at <= $3
-		  AND author_login IS NOT NULL
-		  AND author_login != ''
-		GROUP BY author_login`
-
-	// We have author counts already. reviews_done for user A ≈
-	// total_merged_this_period − features_shipped_by_A.
-	// Count total merged PRs in the period.
+	// All reads + writes run inside ONE db.WithOrg tx so RLS (FORCE RLS on the
+	// non-superuser app role) sees app.current_org — on the bare pool every query
+	// below would return ZERO rows and the recompute would silently write nothing.
 	var totalMerged int
-	const totalQ = `
-		SELECT COUNT(*)
-		FROM pull_requests
-		WHERE org_id = $1
-		  AND state = 'merged'
-		  AND merged_at >= $2
-		  AND merged_at <= $3`
-	_ = reviewQ // reviewQ defined above for documentation; totalQ used below
-	if err := pool.QueryRow(ctx, totalQ, orgID, start, end).Scan(&totalMerged); err != nil {
-		return fmt.Errorf("metrics.ComputeInvolvement: count total merged: %w", err)
-	}
+	if err := s.db.WithOrg(ctx, orgID, func(tx pgx.Tx) error {
+		// ── Dimension: features_shipped (merged PRs authored by this user) ────────
+		const prQ = `
+			SELECT COALESCE(author_login,'') AS login, COUNT(*) AS cnt
+			FROM pull_requests
+			WHERE org_id = $1
+			  AND state = 'merged'
+			  AND merged_at >= $2
+			  AND merged_at <= $3
+			  AND author_login IS NOT NULL
+			  AND author_login != ''
+			GROUP BY author_login`
 
-	// ── Upsert one row per user ───────────────────────────────────────────────
-	return s.db.WithOrg(ctx, orgID, func(tx pgx.Tx) error {
-		for login, us := range stats {
-			// reviews_done = PRs merged by others (conservative approximation).
-			reviewsDone := totalMerged - us.featuresShipped
-			if reviewsDone < 0 {
-				reviewsDone = 0
+		prRows, err := tx.Query(ctx, prQ, orgID, start, end)
+		if err != nil {
+			return fmt.Errorf("metrics.ComputeInvolvement: query merged PRs: %w", err)
+		}
+		defer prRows.Close()
+
+		for prRows.Next() {
+			var login string
+			var cnt int
+			if err := prRows.Scan(&login, &cnt); err != nil {
+				return fmt.Errorf("metrics.ComputeInvolvement: scan merged PR row: %w", err)
 			}
-
-			active := us.featuresShipped > 0 || len(us.repos) > 0
-
-			// extensible dimensions — independent facts, no score
-			dimensions := map[string]interface{}{
-				"additions":    us.additions,
-				"deletions":    us.deletions,
-				"author_login": login,
-				"period_end":   end.Format(time.RFC3339),
-				// reviews_done_note: approximation until review-event sync lands
-				"reviews_done_basis": "merged_prs_by_others",
+			if _, ok := stats[login]; !ok {
+				stats[login] = &userStats{repos: make(map[string]struct{})}
 			}
+			stats[login].featuresShipped = cnt
+		}
+		if err := prRows.Err(); err != nil {
+			return fmt.Errorf("metrics.ComputeInvolvement: merged PR rows: %w", err)
+		}
+		prRows.Close()
 
-			in := store.InvolvementUpsertInput{
-				OrgID:           orgID,
-				UserID:          nil, // author_login used; user UUID lookup deferred to reporting layer
-				PeriodStart:     start,
-				FeaturesShipped: us.featuresShipped,
-				ReviewsDone:     reviewsDone,
-				AreasOwned:      len(us.repos),
-				Active:          active,
-				Dimensions:      dimensions,
-			}
+		// ── Dimension: areas_owned + additions/deletions (via commits) ────────────
+		const commitQ = `
+			SELECT COALESCE(author_login, COALESCE(author_email,'unknown')) AS login,
+			       repo_id::text,
+			       COALESCE(SUM(additions),0),
+			       COALESCE(SUM(deletions),0)
+			FROM commits
+			WHERE org_id = $1
+			  AND committed_at >= $2
+			  AND committed_at <= $3
+			GROUP BY login, repo_id`
 
-			// Store author_login in dimensions so the reporting layer can join to users.
-			if err := store.UpsertInvolvement(ctx, tx, in); err != nil {
-				slog.Warn("metrics: upsert involvement failed",
-					"org_id", orgID, "login", login, "err", err)
-				continue
+		commitRows, err := tx.Query(ctx, commitQ, orgID, start, end)
+		if err != nil {
+			return fmt.Errorf("metrics.ComputeInvolvement: query commits: %w", err)
+		}
+		defer commitRows.Close()
+
+		for commitRows.Next() {
+			var login, repoID string
+			var adds, dels int
+			if err := commitRows.Scan(&login, &repoID, &adds, &dels); err != nil {
+				return fmt.Errorf("metrics.ComputeInvolvement: scan commit row: %w", err)
 			}
+			if _, ok := stats[login]; !ok {
+				stats[login] = &userStats{repos: make(map[string]struct{})}
+			}
+			stats[login].repos[repoID] = struct{}{}
+			stats[login].additions += adds
+			stats[login].deletions += dels
+		}
+		if err := commitRows.Err(); err != nil {
+			return fmt.Errorf("metrics.ComputeInvolvement: commit rows: %w", err)
+		}
+		commitRows.Close()
+
+		// ── Dimension: reviews_done (total merged count for the period) ──────────
+		const totalQ = `
+			SELECT COUNT(*)
+			FROM pull_requests
+			WHERE org_id = $1
+			  AND state = 'merged'
+			  AND merged_at >= $2
+			  AND merged_at <= $3`
+		if err := tx.QueryRow(ctx, totalQ, orgID, start, end).Scan(&totalMerged); err != nil {
+			return fmt.Errorf("metrics.ComputeInvolvement: count total merged: %w", err)
 		}
 
-		slog.Info("metrics.ComputeInvolvement: done",
-			"org_id", orgID, "period_start", start.Format("2006-01-02"),
-			"users_computed", len(stats))
-		return nil
-	})
+		return s.upsertInvolvement(ctx, tx, orgID, start, end, stats, totalMerged)
+	}); err != nil {
+		return err
+	}
+	return nil
+}
+
+// userStats accumulates per-login dimension values before upserting.
+type userStats struct {
+	featuresShipped int
+	additions       int
+	deletions       int
+	repos           map[string]struct{} // distinct repos with commits
+}
+
+// upsertInvolvement writes one involvement row per user inside the caller's
+// org-scoped tx. reviews_done is the conservative "merged PRs by others"
+// approximation (totalMerged − features_shipped): it gives a floor for review
+// activity so seniors/tech-leads aren't zeroed. A full review-event signal would
+// replace this once the sync layer stores reviewer logins.
+func (s *Service) upsertInvolvement(ctx context.Context, tx pgx.Tx, orgID string, start, end time.Time, stats map[string]*userStats, totalMerged int) error {
+	for login, us := range stats {
+		reviewsDone := totalMerged - us.featuresShipped
+		if reviewsDone < 0 {
+			reviewsDone = 0
+		}
+
+		active := us.featuresShipped > 0 || len(us.repos) > 0
+
+		// extensible dimensions — independent facts, no score
+		dimensions := map[string]interface{}{
+			"additions":    us.additions,
+			"deletions":    us.deletions,
+			"author_login": login,
+			"period_end":   end.Format(time.RFC3339),
+			// reviews_done_note: approximation until review-event sync lands
+			"reviews_done_basis": "merged_prs_by_others",
+		}
+
+		in := store.InvolvementUpsertInput{
+			OrgID:           orgID,
+			UserID:          nil, // author_login used; user UUID lookup deferred to reporting layer
+			PeriodStart:     start,
+			FeaturesShipped: us.featuresShipped,
+			ReviewsDone:     reviewsDone,
+			AreasOwned:      len(us.repos),
+			Active:          active,
+			Dimensions:      dimensions,
+		}
+
+		// Store author_login in dimensions so the reporting layer can join to users.
+		if err := store.UpsertInvolvement(ctx, tx, in); err != nil {
+			slog.Warn("metrics: upsert involvement failed",
+				"org_id", orgID, "login", login, "err", err)
+			continue
+		}
+	}
+
+	slog.Info("metrics.ComputeInvolvement: done",
+		"org_id", orgID, "period_start", start.Format("2006-01-02"),
+		"users_computed", len(stats))
+	return nil
 }
 
 // ── EstimateForPR ────────────────────────────────────────────────────────────
@@ -296,9 +288,15 @@ func (s *Service) ComputeInvolvement(ctx context.Context, orgID string, periodSt
 // persists the result via store.SaveEstimate (decisions P3). Returns the saved
 // EffortEstimate. Returns llm.ErrLLMNotConfigured when the LLM is not set up.
 func (s *Service) EstimateForPR(ctx context.Context, orgID, prID, diff string) (*store.EffortEstimate, error) {
-	// Fetch the PR for metadata context (title, repo) — makes the LLM prompt richer.
-	pr, err := store.GetPR(ctx, s.db.Pool(), prID)
-	if err != nil {
+	// Fetch the PR for metadata context (title, repo) inside an org-scoped tx so
+	// RLS (FORCE RLS on the non-superuser role) permits the read — a bare-pool
+	// GetPR returns ErrNotFound here.
+	var pr *store.PullRequest
+	if err := s.db.WithOrg(ctx, orgID, func(tx pgx.Tx) error {
+		p, e := store.GetPR(ctx, tx, prID)
+		pr = p
+		return e
+	}); err != nil {
 		return nil, fmt.Errorf("metrics.EstimateForPR: get PR: %w", err)
 	}
 	if pr.OrgID != orgID {

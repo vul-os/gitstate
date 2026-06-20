@@ -235,11 +235,15 @@ func (h *syncHandlers) connectRepo(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	repo, err := store.ConnectRepo(
-		r.Context(), h.db.Pool(),
-		orgID, req.Platform, externalID, req.FullName, defaultBranch, cloneURL,
-	)
-	if err != nil {
+	var repo *store.Repo
+	if err := h.db.WithOrg(r.Context(), orgID, func(tx pgx.Tx) error {
+		rp, e := store.ConnectRepo(
+			r.Context(), tx,
+			orgID, req.Platform, externalID, req.FullName, defaultBranch, cloneURL,
+		)
+		repo = rp
+		return e
+	}); err != nil {
 		writeSyncError(w, "connect repo", err)
 		return
 	}
@@ -261,9 +265,13 @@ func (h *syncHandlers) triggerSync(w http.ResponseWriter, r *http.Request) {
 	var body syncBody
 	_ = json.NewDecoder(r.Body).Decode(&body) // body is optional
 
-	// Fetch the repo record to verify ownership.
-	repo, err := store.GetRepoByIDPool(r.Context(), h.db.Pool(), orgID, repoID)
-	if err != nil {
+	// Fetch the repo record to verify ownership (org-scoped tx so RLS applies).
+	var repo *store.Repo
+	if err := h.db.WithOrg(r.Context(), orgID, func(tx pgx.Tx) error {
+		rp, e := store.GetRepo(r.Context(), tx, orgID, repoID)
+		repo = rp
+		return e
+	}); err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			http.Error(w, `{"error":"repo not found"}`, http.StatusNotFound)
 			return
@@ -432,7 +440,12 @@ func (h *syncHandlers) patchIssue(w http.ResponseWriter, r *http.Request) {
 	// Write-back to platform for git-sourced issues. Use an explicit token if
 	// supplied, else fall back to the org's stored OAuth-app connection token.
 	if updated.Source == "git" && updated.Number > 0 && updated.RepoID != "" {
-		repo, err := store.GetRepoByIDPool(r.Context(), h.db.Pool(), orgID, updated.RepoID)
+		var repo *store.Repo
+		err := h.db.WithOrg(r.Context(), orgID, func(tx pgx.Tx) error {
+			rp, e := store.GetRepo(r.Context(), tx, orgID, updated.RepoID)
+			repo = rp
+			return e
+		})
 		writeBackToken := req.Token
 		writeBackBase := req.BaseURL
 		if err == nil && writeBackToken == "" {
