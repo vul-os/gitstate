@@ -89,6 +89,37 @@ func TestValidateSQL_TimestampColumnsAllowed(t *testing.T) {
 	}
 }
 
+// TestValidateSQL_TableAllowlist verifies the positive table allowlist: only the
+// documented org-scoped reporting tables (and CTEs) are readable; the non-RLS
+// identity tables — the prompt-injection credential-exposure risk — are rejected.
+func TestValidateSQL_TableAllowlist(t *testing.T) {
+	allowed := []string{
+		"SELECT count(*) FROM issues WHERE state = 'open'",
+		"SELECT c.sha FROM commits c JOIN pull_requests pr ON pr.id = c.pr_id",
+		"SELECT difficulty FROM effort_estimates LIMIT 50",
+		"WITH recent AS (SELECT id FROM issues) SELECT * FROM recent", // CTE name allowed
+	}
+	for _, q := range allowed {
+		if err := validateSQL(q); err != nil {
+			t.Errorf("expected allowlisted query to pass, got %v\n  %s", err, q)
+		}
+	}
+	blocked := []string{
+		"SELECT email, password_hash FROM users",
+		"SELECT user_id, org_id FROM org_members",
+		"SELECT token_hash FROM refresh_tokens",
+		"SELECT * FROM oauth_accounts",
+		"SELECT * FROM audit_log",
+		"SELECT id FROM issues UNION SELECT password_hash FROM users",  // join via second FROM
+		"SELECT id FROM issues -- AND password_hash FROM users",        // comment evasion
+	}
+	for _, q := range blocked {
+		if err := validateSQL(q); err == nil {
+			t.Errorf("expected non-allowlisted/comment query to be REJECTED: %s", q)
+		}
+	}
+}
+
 func TestStripFences(t *testing.T) {
 	cases := []struct {
 		name string

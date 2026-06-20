@@ -262,8 +262,26 @@ var semiRe = regexp.MustCompile(`;`)
 // ErrQueryRejected is returned when the generated SQL fails the safety checks.
 var ErrQueryRejected = errors.New("report: generated SQL rejected by safety validator")
 
-// validateSQL rejects any SQL that isn't a plain SELECT.
-// Returns a descriptive error explaining the specific violation found.
+// reportTables is the POSITIVE allowlist of tables the NL→report path may read.
+// These are exactly the documented, org-scoped (RLS-protected) reporting tables.
+// Anything else — especially the identity tables users/oauth_accounts/refresh_tokens
+// which have NO RLS — is rejected, so a prompt-injected query can never reach
+// credentials or another org's data even though it runs as the app role.
+var reportTables = map[string]bool{
+	"issues": true, "pull_requests": true, "commits": true, "projects": true,
+	"repos": true, "effort_estimates": true, "cycle_times": true,
+	"involvement": true, "agent_runs": true,
+}
+
+// tableRefRe captures the identifier following FROM/JOIN (the referenced table);
+// cteRe captures CTE names defined via `<name> AS (` so they're allowed too.
+var (
+	tableRefRe = regexp.MustCompile(`(?i)\b(?:from|join)\s+([a-z_][a-z0-9_]*)`)
+	cteRe      = regexp.MustCompile(`(?i)\b([a-z_][a-z0-9_]*)\s+as\s*\(`)
+)
+
+// validateSQL rejects any SQL that isn't a plain SELECT over the allowlisted
+// reporting tables. Returns a descriptive error explaining the violation.
 func validateSQL(sql string) error {
 	trimmed := strings.TrimSpace(sql)
 
@@ -272,9 +290,12 @@ func validateSQL(sql string) error {
 		return fmt.Errorf("%w: statement must begin with SELECT", ErrQueryRejected)
 	}
 
-	// No semicolons allowed — prevents multiple-statement tricks.
+	// No semicolons (multi-statement) and no comments (-- or /* */ evasion).
 	if semiRe.MatchString(trimmed) {
 		return fmt.Errorf("%w: semicolons are not allowed", ErrQueryRejected)
+	}
+	if strings.Contains(trimmed, "--") || strings.Contains(trimmed, "/*") {
+		return fmt.Errorf("%w: SQL comments are not allowed", ErrQueryRejected)
 	}
 
 	lower := strings.ToLower(trimmed)
@@ -288,6 +309,21 @@ func validateSQL(sql string) error {
 		if strings.Contains(lower, fn) {
 			return fmt.Errorf("%w: disallowed function %q", ErrQueryRejected, fn)
 		}
+	}
+
+	// POSITIVE table allowlist: every FROM/JOIN target must be a known reporting
+	// table or a CTE defined in this query. Blocks reads of non-RLS identity
+	// tables (users/oauth_accounts/refresh_tokens) and any cross-org table.
+	allowed := map[string]bool{}
+	for _, m := range cteRe.FindAllStringSubmatch(lower, -1) {
+		allowed[m[1]] = true
+	}
+	for _, m := range tableRefRe.FindAllStringSubmatch(lower, -1) {
+		t := m[1]
+		if reportTables[t] || allowed[t] {
+			continue
+		}
+		return fmt.Errorf("%w: table %q is not in the reporting allowlist", ErrQueryRejected, t)
 	}
 
 	return nil
