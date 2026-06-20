@@ -3,6 +3,7 @@ package webhooks
 import (
 	"crypto/hmac"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/hex"
 	"testing"
 )
@@ -37,6 +38,35 @@ func TestVerifyGitHubSignature(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			if got := VerifyGitHubSignature(c.secret, c.body, c.header); got != c.want {
 				t.Fatalf("VerifyGitHubSignature = %v, want %v", got, c.want)
+			}
+		})
+	}
+}
+
+// TestConstantTimeEqual covers the GitLab X-Gitlab-Token comparison path. It must
+// match crypto/subtle.ConstantTimeCompare exactly (the constant-time primitive we
+// use instead of a timing-leaky SQL `=` on the raw secret).
+func TestConstantTimeEqual(t *testing.T) {
+	cases := []struct {
+		name string
+		a, b string
+	}{
+		{"equal", "gl-token-abc123", "gl-token-abc123"},
+		{"differ last byte", "gl-token-abc123", "gl-token-abc124"},
+		{"differ first byte", "gl-token-abc123", "Xl-token-abc123"},
+		{"length mismatch", "short", "longer-token"},
+		{"both empty", "", ""},
+		{"one empty", "", "gl-token"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := ConstantTimeEqual(c.a, c.b)
+			want := subtle.ConstantTimeCompare([]byte(c.a), []byte(c.b)) == 1
+			if got != want {
+				t.Fatalf("ConstantTimeEqual(%q,%q) = %v, want %v (subtle)", c.a, c.b, got, want)
+			}
+			if (c.a == c.b) != got {
+				t.Fatalf("ConstantTimeEqual(%q,%q) = %v, want equality %v", c.a, c.b, got, c.a == c.b)
 			}
 		})
 	}

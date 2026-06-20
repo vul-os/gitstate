@@ -18,10 +18,13 @@
 //     POST  /api/incidents                 — open an incident
 //     PATCH /api/incidents/{id}            — resolve an incident
 //
-// SECURITY: GitHub uses HMAC-SHA256 over the raw body (X-Hub-Signature-256); the
-// org is identified by a ?org= hint in the payload URL, and that org's secret is
-// read under RLS before verifying. GitLab uses X-Gitlab-Token equality, resolved
-// via the SECURITY DEFINER webhook_org_by_secret() lookup. Bad signature → 401.
+// SECURITY: both providers identify the org via a ?org= hint in the payload URL,
+// and that org's secret is read under RLS before verifying. GitHub uses HMAC-SHA256
+// over the raw body (X-Hub-Signature-256), compared in constant time. GitLab's
+// X-Gitlab-Token IS the shared secret and is compared to the stored secret in
+// constant time (crypto/subtle via webhooks.ConstantTimeEqual) — NOT SQL equality.
+// The SECURITY DEFINER webhook_org_by_secret() lookup remains only as a back-compat
+// fallback for payload URLs configured before the hint. Bad signature/token → 401.
 // Secrets and raw bodies are NEVER logged.
 package api
 
@@ -133,11 +136,34 @@ func (h *webhookHandlers) receive(w http.ResponseWriter, r *http.Request) {
 func (h *webhookHandlers) authenticateDelivery(r *http.Request, provider string, body []byte) (string, string, bool) {
 	switch provider {
 	case "gitlab":
-		// X-Gitlab-Token IS the shared secret → resolve org directly.
+		// The org hint is baked into the payload URL the user copies from Settings,
+		// mirroring GitHub. We read that one org's stored X-Gitlab-Token secret under
+		// RLS and compare it in CONSTANT TIME — never via SQL equality on the raw
+		// secret (a timing oracle). The token IS the shared secret (GitLab does not
+		// HMAC the body), so a direct constant-time compare is the verification.
 		token := r.Header.Get("X-Gitlab-Token")
+		orgHint := r.URL.Query().Get("org")
 		if token == "" {
 			return "", "", false
 		}
+		if orgHint != "" {
+			var secret string
+			err := h.db.WithOrg(r.Context(), orgHint, func(tx pgx.Tx) error {
+				s, e := store.GetEnabledWebhookSecret(r.Context(), tx, orgHint, "gitlab")
+				secret = s
+				return e
+			})
+			if err != nil || secret == "" {
+				return "", "", false
+			}
+			if !webhooks.ConstantTimeEqual(token, secret) {
+				return "", "", false
+			}
+			event := r.Header.Get("X-Gitlab-Event")
+			return orgHint, event, true
+		}
+		// Back-compat: payload URLs configured before the ?org= hint resolve the org
+		// via the SECURITY DEFINER lookup. New configs always carry the hint above.
 		orgID, err := store.WebhookOrgBySecret(r.Context(), h.db.Pool(), "gitlab", token)
 		if err != nil {
 			return "", "", false
@@ -476,12 +502,9 @@ func (h *webhookHandlers) publicURL() string {
 }
 
 // payloadURL builds the URL the user pastes into the provider's webhook settings.
-// GitHub carries the org hint as a query param (needed to find the HMAC secret
-// pre-auth); GitLab identifies the org by its X-Gitlab-Token secret, so no hint.
+// Both providers carry the org hint as a query param so the receiver can find the
+// org's secret pre-auth and compare it in constant time (GitHub HMAC-verifies the
+// body; GitLab constant-time-compares the X-Gitlab-Token).
 func (h *webhookHandlers) payloadURL(provider, orgID string) string {
-	base := h.publicURL() + "/api/webhooks/" + provider
-	if provider == "github" {
-		return base + "?org=" + orgID
-	}
-	return base
+	return h.publicURL() + "/api/webhooks/" + provider + "?org=" + orgID
 }
