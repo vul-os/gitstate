@@ -158,12 +158,16 @@ export function PlanCard({ plan, recommended, format }) {
               <span className="text-xs text-[var(--text-faint)]">Free forever — no card required · ≤ 2 builders</span>
             ) : (
               <div className="flex flex-col gap-1.5 mt-1">
+                <span className="text-xs text-[#2DD4BF] flex items-center gap-1 font-medium">
+                  <Sparkles size={11} className="shrink-0" strokeWidth={2.2} />
+                  Managed — AI included, no per-seat AI tax
+                </span>
                 {/* Managed vs BYOK */}
                 {typeof plan.byokPerBuilderUsd === 'number' && plan.byokPerBuilderUsd > 0 && (
                   <div className="inline-flex items-center gap-1.5 rounded-[var(--radius-badge)] border border-[#818cf8]/25 bg-[#6366F1]/[0.07] px-2 py-1 self-start">
                     <KeyRound size={11} className="text-[#818cf8] shrink-0" strokeWidth={2.2} />
                     <span className="text-[11px] text-[var(--text-dim)]">
-                      or <span className="font-mono font-semibold text-[#818cf8] tabular-nums">{format(plan.byokPerBuilderUsd)}</span> with your own AI key
+                      or <span className="font-mono font-semibold text-[#818cf8] tabular-nums">{format(plan.byokPerBuilderUsd)}</span>/builder with your own AI key (BYOK)
                     </span>
                   </div>
                 )}
@@ -321,7 +325,7 @@ export function CostCalculator({ plans, format, currency, recommendedKey }) {
   const isFree = !isEnt && matched?.perBuilderUsd === 0
 
   // Per-builder rate: BYOK uses the discounted byokPerBuilderUsd when present
-  // (Team $12→$8, Business $25→$13); managed uses perBuilderUsd.
+  // (Team $6→$3, Business $14→$8); managed uses perBuilderUsd.
   const byokPerBuilder =
     typeof matched?.byokPerBuilderUsd === 'number' && matched.byokPerBuilderUsd > 0
       ? matched.byokPerBuilderUsd
@@ -597,8 +601,8 @@ function ByokToggle({ byok, setByok }) {
 
 // ── Comparison matrix ────────────────────────────────────────────────────────
 const COMPARE_ROWS = [
-  { label: 'Per-builder price (managed)',   icon: DollarSign,   vals: ['$0', '$12', '$25', 'Custom'] },
-  { label: 'Per-builder price (BYOK)',      icon: KeyRound,     vals: ['BYOK', '$8', '$13', 'Custom'] },
+  { label: 'Per-builder price (managed · AI included)', icon: DollarSign, vals: ['$0', '$6', '$14', 'Custom'] },
+  { label: 'Per-builder price (BYOK)',      icon: KeyRound,     vals: ['BYOK', '$3', '$8', 'Custom'] },
   { label: 'Builder cap',                   icon: Users,        vals: ['≤ 2', '∞', '∞', '∞'] },
   { label: 'Stakeholders',                  icon: Eye,          vals: ['∞', '∞', '∞', '∞'], accent: true },
   { label: 'Managed LLM credits / builder', icon: Cpu,          vals: ['—', '$4', '$12', 'BYOK'] },

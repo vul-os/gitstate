@@ -27,8 +27,8 @@ export const FALLBACK_PLANS = [
   {
     key: 'team',
     name: 'Team',
-    perBuilderUsd: 12,
-    byokPerBuilderUsd: 8,
+    perBuilderUsd: 6,
+    byokPerBuilderUsd: 3,
     includedLlmUsd: 4,
     overageMarkup: 1.3,
     builders: 0,
@@ -36,8 +36,8 @@ export const FALLBACK_PLANS = [
   {
     key: 'business',
     name: 'Business',
-    perBuilderUsd: 25,
-    byokPerBuilderUsd: 13,
+    perBuilderUsd: 14,
+    byokPerBuilderUsd: 8,
     includedLlmUsd: 12,
     overageMarkup: 1.3,
     builders: 0,

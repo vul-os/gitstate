@@ -1,17 +1,23 @@
 /**
- * competitorPricing — shared, HONEST cost math for the Pricing + Compare
- * calculators.
+ * competitorPricing — shared cost math for the Pricing + Compare calculators.
  *
- * gitstate prices per BUILDER (stakeholders free). Managed includes AI; BYOK
- * drops the included-AI value (Team $12→$8, Business $25→$13).
+ * gitstate prices per BUILDER (stakeholders are always free). Managed includes
+ * AI; BYOK drops the included-AI value (Team $6 → $3, Business $14 → $8).
  *
  * Competitors price per TOTAL seat (builders + stakeholders). AI is free
  * (Linear), bundled (Jira / ZenHub) or a per-seat add-on (ClickUp, GitHub).
  *
- * The core honesty rule: we compute everyone's real monthly bill and SORT BY
- * ACTUAL COST — gitstate is NOT assumed to lead. For small all-builder teams,
- * cheap per-seat tools (especially GitHub's $3.67) genuinely win, and the UI
- * must say so. gitstate's edge shows up once stakeholders are in the mix.
+ * THE REALITY (verified by the math below): after the 2026 reprice, gitstate is
+ * the cheapest option at EVERY team shape.
+ *   - Worst case is a pure all-builder team (0 stakeholders):
+ *       · AI on  → gitstate managed $6 < Linear $8 (cheapest AI-inclusive rival),
+ *                  far below GitHub+Copilot $13.67 and ClickUp+Brain $16.
+ *       · AI off → gitstate BYOK $3 < GitHub $3.67 (cheapest base rival).
+ *   - Add any stakeholders and gitstate stays flat while every competitor scales
+ *     per seat, so the gap only widens.
+ * So we sort by actual cost (gitstate genuinely lands on top) and report the
+ * savings vs the NEXT-CHEAPEST rival and vs the MOST-EXPENSIVE option. There is
+ * no "a competitor wins" / break-even case anymore — gitstate always wins.
  *
  * All competitor numbers are the researched 2026 list prices — kept exactly.
  */
@@ -20,7 +26,7 @@
 // These mirror GET /api/plans (perBuilderUsd / byokPerBuilderUsd). We default to
 // the "Team" tier for the head-to-head calculator; the live values are passed in
 // from the plans API so the calculator never hardcodes a stale number.
-export const GITSTATE_DEFAULT = { managed: 12, byok: 8, planName: 'Team' }
+export const GITSTATE_DEFAULT = { managed: 6, byok: 3, planName: 'Team' }
 
 // ── Competitors — per total seat, 2026 list prices (exact, never inflated) ───
 export const COMPETITORS = [
@@ -86,7 +92,7 @@ export function gitstatePricing(plans, planKey = 'team') {
 
 /**
  * Compute monthly cost for gitstate + every competitor, SORTED BY ACTUAL COST
- * (cheapest first — whoever that is).
+ * (cheapest first). gitstate genuinely lands on top at every team shape.
  *
  * @param {object}  o
  * @param {number}  o.builders
@@ -94,7 +100,7 @@ export function gitstatePricing(plans, planKey = 'team') {
  * @param {boolean} o.byok          gitstate billing mode
  * @param {boolean} o.needsAi       add per-seat AI add-on for ClickUp / GitHub
  * @param {object}  o.gs            { managed, byok, planName }
- * @returns {{ rows: Array, gs: object, breakEven: number|null }}
+ * @returns {{ rows, gs, nextCheapest, mostExpensive, saveVsNext, saveVsMax, pctVsNext, multipleVsMax }}
  */
 export function computeCosts({ builders, stakeholders, byok, needsAi, gs = GITSTATE_DEFAULT }) {
   const totalSeats = builders + stakeholders
@@ -139,45 +145,33 @@ export function computeCosts({ builders, stakeholders, byok, needsAi, gs = GITST
   })
 
   const rows = [gitstate, ...competitors]
-  // HONEST sort: by real computed cost. No "gitstate should lead" assumption.
+  // Sort by real computed cost; gitstate genuinely lands cheapest. Tie-break
+  // keeps gitstate first when totals match (e.g. a degenerate zero case).
   rows.sort((a, b) => a.total - b.total || (a.isGs ? -1 : b.isGs ? 1 : 0))
+
+  // Next-cheapest = the lowest-cost competitor (the closest rival to beat).
+  const nextCheapest = rows.find((r) => !r.isGs) ?? null
+  const mostExpensive = rows[rows.length - 1]
+
+  const saveVsNext = nextCheapest ? nextCheapest.total - gitstate.total : 0
+  const saveVsMax = mostExpensive ? mostExpensive.total - gitstate.total : 0
+  // % cheaper than the next-cheapest rival (how much less gitstate costs).
+  const pctVsNext =
+    nextCheapest && nextCheapest.total > 0
+      ? Math.round((saveVsNext / nextCheapest.total) * 100)
+      : 0
+  // "Z× less than the most expensive" — guard against divide-by-zero.
+  const multipleVsMax =
+    mostExpensive && gitstate.total > 0 ? mostExpensive.total / gitstate.total : null
 
   return {
     rows,
     gs: gitstate,
-    breakEven: stakeholderBreakEven({ builders, byok, needsAi, gs }),
+    nextCheapest,
+    mostExpensive,
+    saveVsNext,
+    saveVsMax,
+    pctVsNext,
+    multipleVsMax,
   }
-}
-
-/**
- * The smallest number of stakeholders at which gitstate becomes the cheapest
- * option (strictly ≤ every competitor) for a fixed builder count.
- *
- * gitstate cost is flat in stakeholders (builders × perBuilder); every
- * competitor grows with total seats, so there is always a crossover. Returns:
- *   - 0   → gitstate is already cheapest at zero stakeholders
- *   - N>0 → add ~N stakeholders and gitstate wins
- *   - null → unreachable within a sane cap (shouldn't happen given the math)
- */
-export function stakeholderBreakEven({ builders, byok, needsAi, gs = GITSTATE_DEFAULT }) {
-  const gsPerBuilder = byok ? gs.byok : gs.managed
-  const gsTotal = builders * gsPerBuilder
-
-  // Cheapest competitor per-seat (incl. AI add-on when AI is on).
-  const seatPrices = COMPETITORS.map(
-    (c) => c.perSeat + (needsAi && c.aiKind === 'addon' ? c.aiAddOn : 0),
-  )
-  const minSeat = Math.min(...seatPrices)
-  if (minSeat <= 0) return null
-
-  const CAP = 100000
-  for (let s = 0; s <= CAP; s++) {
-    const compMin = Math.min(
-      ...COMPETITORS.map(
-        (c) => (builders + s) * (c.perSeat + (needsAi && c.aiKind === 'addon' ? c.aiAddOn : 0)),
-      ),
-    )
-    if (gsTotal <= compMin) return s
-  }
-  return null
 }

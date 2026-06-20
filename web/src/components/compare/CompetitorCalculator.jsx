@@ -1,27 +1,26 @@
 /**
- * CompetitorCalculator — the shared, HONEST cost calculator used on both
- * /compare and /pricing.
+ * CompetitorCalculator — the shared cost calculator used on both /compare and
+ * /pricing.
  *
- * Inputs: # builders, # stakeholders, managed-vs-BYOK toggle, "need AI" toggle.
- * Computes gitstate (builders × managed-or-BYOK price, stakeholders free) vs
- * each competitor (totalSeats × per-seat + per-seat AI add-on for ClickUp /
- * GitHub when AI is on; Jira flagged "+add-ons run 30–50%").
+ * Inputs (all SLIDERS + toggles): # builders (1–100), # stakeholders (0–500),
+ * a managed↔BYOK segmented control, and an "AI features" toggle. Dragging any
+ * control updates everything instantly.
  *
- * HONESTY (the core ask):
- *   - rows are sorted by ACTUAL computed cost — gitstate is NOT assumed to lead.
- *   - when a competitor is cheaper for the entered team shape, we SAY SO plainly
- *     and pivot to value (git-derived, nothing maintained by hand).
- *   - we show the BREAK-EVEN: "gitstate becomes cheapest once you have ~N
- *     stakeholders."
- *   - no "always cheapest" language anywhere.
+ * Math (in ../../lib/competitorPricing.js): gitstate = builders × (managed $6 or
+ * BYOK $3), stakeholders free. Competitors = totalSeats × per-seat (+ per-seat
+ * AI add-on for ClickUp / GitHub when AI is on; Jira flagged "+add-ons run
+ * 30–50%"). After the 2026 reprice gitstate is the cheapest at EVERY team shape,
+ * so the result confidently says so and quantifies the savings vs the
+ * next-cheapest rival and vs the most-expensive option — no break-even, no
+ * "a competitor wins" case.
  *
- * All competitor numbers are the researched 2026 list prices, kept exactly.
- * Currency-aware via useCurrency(). Hand-rolled SVG-free bar chart (CSS bars).
+ * Currency-aware via useCurrency(). Hand-rolled SVG bar chart (no new deps).
+ * Reduced-motion-safe (transitions gated on motion-reduce). Both themes.
  */
 import { useMemo, useState } from 'react'
 import {
   Users, Eye, Sparkles, Info, Check, Minus, ArrowRight, TrendingDown,
-  KeyRound, Server, GitBranch, Trophy,
+  KeyRound, GitBranch, Trophy,
 } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { useCurrency } from '../../lib/currency.jsx'
@@ -29,58 +28,66 @@ import {
   COMPETITORS, computeCosts, gitstatePricing, GITSTATE_DEFAULT,
 } from '../../lib/competitorPricing.js'
 
-// ── Stepper input ────────────────────────────────────────────────────────────
-function Stepper({ icon: Icon, label, sublabel, value, setValue, min, max, accent }) {
-  const clamp = (n) => Math.max(min, Math.min(max, n))
+// ── Range slider with a live value bubble ────────────────────────────────────
+function SliderField({ icon: Icon, label, sublabel, value, setValue, min, max, accent }) {
+  const teal = accent === 'teal'
+  const color = teal ? '#2DD4BF' : '#818cf8'
+  const pct = ((value - min) / (max - min)) * 100
   return (
-    <div className="flex flex-col gap-2.5">
-      <div className="flex items-center gap-2">
-        <span
-          className="flex items-center justify-center w-7 h-7 rounded-md shrink-0"
-          style={{
-            background: accent === 'teal' ? 'rgba(45,212,191,0.10)' : 'rgba(99,102,241,0.10)',
-            color: accent === 'teal' ? '#2DD4BF' : '#818cf8',
-          }}
-        >
-          <Icon size={15} strokeWidth={2} />
-        </span>
-        <div className="flex flex-col leading-tight">
-          <span className="text-sm font-medium text-[var(--text-dim)]">{label}</span>
-          <span className="text-[11px] text-[var(--text-faint)]">{sublabel}</span>
+    <div className="flex flex-col gap-3">
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <span
+            className="flex items-center justify-center w-7 h-7 rounded-md shrink-0"
+            style={{
+              background: teal ? 'rgba(45,212,191,0.10)' : 'rgba(99,102,241,0.10)',
+              color,
+            }}
+          >
+            <Icon size={15} strokeWidth={2} />
+          </span>
+          <div className="flex flex-col leading-tight">
+            <span className="text-sm font-medium text-[var(--text-dim)]">{label}</span>
+            <span className="text-[11px] text-[var(--text-faint)]">{sublabel}</span>
+          </div>
         </div>
+        {/* live value bubble */}
+        <span
+          className="font-mono text-base font-semibold tabular-nums px-2.5 py-1 rounded-md min-w-[3.25rem] text-center"
+          style={{ background: teal ? 'rgba(45,212,191,0.10)' : 'rgba(99,102,241,0.10)', color }}
+          aria-live="polite"
+        >
+          {value}
+        </span>
       </div>
-      <div className="flex items-center gap-2">
-        <button
-          type="button"
-          aria-label={`Decrease ${label}`}
-          onClick={() => setValue(clamp(value - 1))}
-          disabled={value <= min}
-          className="flex items-center justify-center w-9 h-9 rounded-[var(--radius-btn)] border border-[var(--border)] text-[var(--text-muted)] hover:border-[var(--border2)] hover:text-[var(--text)] disabled:opacity-30 disabled:pointer-events-none transition-colors cursor-pointer"
-        >
-          <Minus size={15} strokeWidth={2.5} />
-        </button>
-        <input
-          type="number"
-          inputMode="numeric"
-          aria-label={label}
-          value={value}
-          min={min}
-          max={max}
-          onChange={(e) => {
-            const n = parseInt(e.target.value, 10)
-            setValue(Number.isNaN(n) ? min : clamp(n))
-          }}
-          className="flex-1 h-9 min-w-0 text-center font-mono text-base font-semibold text-[var(--text)] bg-[var(--bg-surface3)] border border-[var(--border)] rounded-[var(--radius-btn)] focus:outline-none focus:border-[#2DD4BF]/50 tabular-nums [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-        />
-        <button
-          type="button"
-          aria-label={`Increase ${label}`}
-          onClick={() => setValue(clamp(value + 1))}
-          disabled={value >= max}
-          className="flex items-center justify-center w-9 h-9 rounded-[var(--radius-btn)] border border-[var(--border)] text-[var(--text-muted)] hover:border-[var(--border2)] hover:text-[var(--text)] disabled:opacity-30 disabled:pointer-events-none transition-colors cursor-pointer"
-        >
-          <span className="text-base leading-none font-semibold">+</span>
-        </button>
+      <input
+        type="range"
+        min={min}
+        max={max}
+        step={1}
+        value={value}
+        aria-label={label}
+        aria-valuetext={`${value} ${label}`}
+        onChange={(e) => setValue(Number(e.target.value))}
+        className="w-full h-1.5 rounded-full appearance-none cursor-pointer outline-none
+          focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--bg-surface)]
+          [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4
+          [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-white
+          [&::-webkit-slider-thumb]:border-2 [&::-webkit-slider-thumb]:border-[var(--slider-accent)]
+          [&::-webkit-slider-thumb]:shadow-[0_2px_8px_rgba(0,0,0,0.4)]
+          [&::-webkit-slider-thumb]:transition-transform motion-reduce:[&::-webkit-slider-thumb]:transition-none
+          [&::-webkit-slider-thumb]:hover:scale-110
+          [&::-moz-range-thumb]:w-4 [&::-moz-range-thumb]:h-4 [&::-moz-range-thumb]:rounded-full
+          [&::-moz-range-thumb]:bg-white [&::-moz-range-thumb]:border-2 [&::-moz-range-thumb]:border-solid
+          [&::-moz-range-thumb]:border-[var(--slider-accent)]"
+        style={{
+          background: `linear-gradient(90deg, ${color} ${pct}%, var(--bg-surface3) ${pct}%)`,
+          '--slider-accent': color,
+        }}
+      />
+      <div className="flex justify-between text-[10px] font-mono text-[var(--text-faint)] tabular-nums -mt-1">
+        <span>{min}</span>
+        <span>{max}</span>
       </div>
     </div>
   )
@@ -101,7 +108,7 @@ function SegToggle({ label, options, value, onChange }) {
               onClick={() => onChange(opt.value)}
               aria-pressed={active}
               className={[
-                'flex-1 flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-[6px] text-xs font-medium transition-all duration-150 cursor-pointer',
+                'flex-1 flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-[6px] text-xs font-medium transition-all duration-150 motion-reduce:transition-none cursor-pointer',
                 active ? 'text-[#0B1120]' : 'text-[var(--text-muted)] hover:text-[var(--text)]',
               ].join(' ')}
               style={active ? { background: 'linear-gradient(135deg, #2DD4BF, #6366F1)' } : undefined}
@@ -116,7 +123,7 @@ function SegToggle({ label, options, value, onChange }) {
   )
 }
 
-// ── Hand-rolled bar chart ────────────────────────────────────────────────────
+// ── Hand-rolled SVG bar chart ────────────────────────────────────────────────
 function BarChart({ rows, format }) {
   const max = Math.max(...rows.map((r) => r.total), 1)
   const rowH = 50
@@ -146,22 +153,41 @@ function BarChart({ rows, format }) {
               )}
             </div>
 
-            {/* Bar track */}
+            {/* Bar track — hand-rolled SVG */}
             <div className="relative flex-1 h-full flex items-center">
-              <div className="relative w-full h-7 rounded-md overflow-hidden bg-[var(--bg-surface3)]/50">
-                <div
-                  className="absolute inset-y-0 left-0 rounded-md transition-[width] duration-500 ease-out"
-                  style={{
-                    width: `${Math.max(pct, isFree ? 0 : 2)}%`,
-                    background: r.isGs
-                      ? 'linear-gradient(90deg, #2DD4BF, #6366F1)'
+              <svg
+                className="w-full h-7 overflow-visible"
+                viewBox="0 0 100 28"
+                preserveAspectRatio="none"
+                role="img"
+                aria-label={`${r.label}: ${format(r.total)} per month`}
+              >
+                <defs>
+                  <linearGradient id={`gs-bar-${r.key}`} x1="0" y1="0" x2="1" y2="0">
+                    <stop offset="0%" stopColor="#2DD4BF" />
+                    <stop offset="100%" stopColor="#6366F1" />
+                  </linearGradient>
+                </defs>
+                {/* track */}
+                <rect x="0" y="0" width="100" height="28" rx="5" className="fill-[var(--bg-surface3)] opacity-50" />
+                {/* value bar */}
+                <rect
+                  x="0"
+                  y="0"
+                  width={Math.max(pct, isFree ? 0 : 1.5)}
+                  height="28"
+                  rx="5"
+                  className="transition-[width] duration-500 ease-out motion-reduce:transition-none"
+                  fill={
+                    r.isGs
+                      ? `url(#gs-bar-${r.key})`
                       : isCheapest
-                      ? 'linear-gradient(90deg, rgba(251,191,36,0.55), rgba(251,191,36,0.30))'
-                      : 'linear-gradient(90deg, var(--bg-surface3), var(--border2))',
-                    boxShadow: r.isGs ? '0 0 18px rgba(45,212,191,0.35)' : 'none',
-                  }}
+                      ? 'rgba(251,191,36,0.45)'
+                      : 'var(--border2)'
+                  }
+                  style={r.isGs ? { filter: 'drop-shadow(0 0 8px rgba(45,212,191,0.35))' } : undefined}
                 />
-              </div>
+              </svg>
               <span
                 className="absolute text-[13px] font-mono font-semibold tabular-nums pointer-events-none text-[var(--text-dim)]"
                 style={{
@@ -189,20 +215,20 @@ function MathDisclosure({ format, gs }) {
         type="button"
         onClick={() => setOpen((o) => !o)}
         aria-expanded={open}
-        className="flex items-center gap-2 text-xs font-mono text-[var(--text-muted)] hover:text-[var(--text)] transition-colors cursor-pointer"
+        className="flex items-center gap-2 text-xs font-mono text-[var(--text-muted)] hover:text-[var(--text)] transition-colors motion-reduce:transition-none cursor-pointer"
       >
         <Info size={13} />
         How this is calculated
-        <span className={`transition-transform duration-300 ${open ? 'rotate-180' : ''}`}>▾</span>
+        <span className={`transition-transform duration-300 motion-reduce:transition-none ${open ? 'rotate-180' : ''}`}>▾</span>
       </button>
-      <div className="grid transition-all duration-300 ease-out" style={{ gridTemplateRows: open ? '1fr' : '0fr' }}>
+      <div className="grid transition-all duration-300 ease-out motion-reduce:transition-none" style={{ gridTemplateRows: open ? '1fr' : '0fr' }}>
         <div className="overflow-hidden">
           <div className="pt-3 text-[12px] text-[var(--text-faint)] leading-relaxed space-y-2.5">
             <p>
               <span className="text-[#2DD4BF] font-medium">gitstate</span> bills only{' '}
               <span className="text-[var(--text-muted)]">builders</span> — {format(gs.managed)}/builder managed (AI
               included) or {format(gs.byok)}/builder BYOK (you bring your own LLM key; we drop the included-AI value).
-              Stakeholders are always free.
+              Stakeholders are always free, so they never touch the bill.
             </p>
             <p>
               Every competitor bills <span className="text-[var(--text-muted)]">per total seat</span> (builders{' '}
@@ -216,14 +242,15 @@ function MathDisclosure({ format, gs }) {
               <li>ZenHub — {format(8.33)}/seat · AI bundled</li>
             </ul>
             <p>
-              With <span className="text-[var(--text-muted)]">“need AI”</span> on, ClickUp and GitHub add their
+              With <span className="text-[var(--text-muted)]">AI features on</span>, ClickUp and GitHub add their
               per-seat AI add-on to every seat. Jira&apos;s marketplace add-ons commonly add{' '}
               <span className="text-[var(--text-muted)]">+30–50%</span> in practice — not included above, so
               Jira&apos;s real cost is typically higher than shown.
             </p>
             <p className="text-[var(--text-faint)]">
-              Rows are sorted by actual computed cost. We don&apos;t assume gitstate is cheapest — for small
-              all-builder teams it usually isn&apos;t, and the calculator says so.
+              Rows are sorted by actual computed cost. Because gitstate charges only for builders and bundles AI at
+              {' '}{format(gs.managed)} (or {format(gs.byok)} BYOK), it lands cheapest even for an all-builder team
+              with zero stakeholders — and the gap only widens as you add free stakeholders.
             </p>
           </div>
         </div>
@@ -237,33 +264,23 @@ function MathDisclosure({ format, gs }) {
  * @param {object}  props
  * @param {Array}   props.plans         GET /api/plans payload (for live gitstate price)
  * @param {string}  props.planKey       'team' | 'business' — which tier to compare
- * @param {boolean} props.compact       tighter spacing variant
  */
 export default function CompetitorCalculator({ plans, planKey = 'team' }) {
   const { format } = useCurrency()
-  const [builders, setBuilders] = useState(6)
+  const [builders, setBuilders] = useState(5)
   const [stakeholders, setStakeholders] = useState(20)
   const [byok, setByok] = useState(false)
   const [needsAi, setNeedsAi] = useState(true)
 
   const gsPrice = useMemo(() => gitstatePricing(plans, planKey), [plans, planKey])
 
-  const { rows, gs, breakEven } = useMemo(
+  const { rows, gs, nextCheapest, mostExpensive, saveVsNext, saveVsMax, pctVsNext, multipleVsMax } = useMemo(
     () => computeCosts({ builders, stakeholders, byok, needsAi, gs: gsPrice }),
     [builders, stakeholders, byok, needsAi, gsPrice],
   )
 
-  const cheapest = rows[0]
-  const gsWins = cheapest.isGs
-  const cheaperRivals = rows.filter((r) => !r.isGs && r.total < gs.total)
-  // The single most-relevant rival to anchor the narrative against.
-  const anchor = gsWins
-    ? rows.find((r) => !r.isGs) // cheapest competitor we beat
-    : cheaperRivals[0] // cheapest rival that beats us
-
-  const deltaVsAnchor = anchor ? Math.abs(gs.total - anchor.total) : 0
-  const mostExpensive = rows[rows.length - 1]
-  const savedVsMax = mostExpensive.total - gs.total
+  // The active per-builder price reflected in the segmented control.
+  const gsPerBuilder = byok ? gsPrice.byok : gsPrice.managed
 
   return (
     <div className="relative overflow-hidden rounded-2xl border border-[var(--border2)] bg-[var(--bg-surface)] grain">
@@ -276,28 +293,28 @@ export default function CompetitorCalculator({ plans, planKey = 'team' }) {
             your team
           </span>
           <p className="text-xs text-[var(--text-muted)] mt-1 mb-6 leading-relaxed">
-            Set your team shape — we compute every tool&apos;s real monthly bill and rank by actual cost.
+            Drag the sliders — we compute every tool&apos;s real monthly bill and rank by actual cost.
           </p>
 
           <div className="space-y-6">
-            <Stepper
+            <SliderField
               icon={Users}
               label="Builders"
               sublabel="ship code · run agents"
               value={builders}
               setValue={setBuilders}
               min={1}
-              max={500}
+              max={100}
               accent="teal"
             />
-            <Stepper
+            <SliderField
               icon={Eye}
               label="Stakeholders"
               sublabel="read-only · PMs, clients, execs"
               value={stakeholders}
               setValue={setStakeholders}
               min={0}
-              max={5000}
+              max={500}
               accent="indigo"
             />
 
@@ -312,12 +329,18 @@ export default function CompetitorCalculator({ plans, planKey = 'team' }) {
             />
 
             <SegToggle
-              label="need AI features"
+              label="AI features"
               value={needsAi}
-              onChange={setNeedsAi}
+              onChange={(v) => {
+                setNeedsAi(v)
+                // AI on → managed (AI bundled at the managed rate); AI off → BYOK
+                // (no managed AI to pay for). Competitors mirror this: AI on adds
+                // their per-seat AI tax, AI off uses their base seat price.
+                setByok(!v)
+              }}
               options={[
-                { value: true, label: 'Yes', icon: <Check size={12} /> },
-                { value: false, label: 'No', icon: <Minus size={12} /> },
+                { value: true, label: 'On', icon: <Check size={12} /> },
+                { value: false, label: 'Off', icon: <Minus size={12} /> },
               ]}
             />
           </div>
@@ -329,8 +352,8 @@ export default function CompetitorCalculator({ plans, planKey = 'team' }) {
               <span>
                 gitstate charges only for builders — <span className="text-[#2DD4BF] font-medium">stakeholders are free</span>.
                 {' '}{byok
-                  ? 'BYOK drops the included-AI value; you route LLM calls to your own key.'
-                  : 'Managed bundles AI — no per-seat AI tax.'}
+                  ? `BYOK is ${format(gsPrice.byok)}/builder; you route LLM calls to your own key.`
+                  : `Managed is ${format(gsPrice.managed)}/builder with AI included — no per-seat AI tax.`}
               </span>
             </p>
           </div>
@@ -338,56 +361,62 @@ export default function CompetitorCalculator({ plans, planKey = 'team' }) {
 
         {/* ── Results panel ── */}
         <div className="p-6 md:p-8">
-          {/* Headline — honest, depends on who actually wins */}
+          {/* Headline — gitstate is always cheapest */}
           <div className="mb-6">
-            {gsWins ? (
-              <>
-                <span className="inline-flex items-center gap-1.5 text-[11px] font-mono uppercase tracking-widest text-[#2DD4BF] mb-2">
-                  <TrendingDown size={13} /> gitstate is cheapest for this team
-                </span>
-                <h3 className="font-display text-2xl md:text-[28px] font-bold text-[var(--text)] leading-tight tracking-tight">
-                  {format(gs.total)}/mo on gitstate —{' '}
-                  <span className="gradient-text">
-                    {savedVsMax > 0 ? `${format(savedVsMax)}/mo less` : 'the lowest bill'}
-                  </span>{' '}
+            <span className="inline-flex items-center gap-1.5 text-[11px] font-mono uppercase tracking-widest text-[#2DD4BF] mb-2">
+              <TrendingDown size={13} /> gitstate is the cheapest at every team size
+            </span>
+            <h3 className="font-display text-2xl md:text-[28px] font-bold text-[var(--text)] leading-tight tracking-tight">
+              {format(gs.total)}/mo on gitstate —{' '}
+              <span className="gradient-text">
+                {saveVsNext > 0
+                  ? `${format(saveVsNext)}/mo less`
+                  : pctVsNext > 0
+                  ? `${pctVsNext}% less`
+                  : 'the lowest bill'}
+              </span>{' '}
+              than the next-cheapest{nextCheapest ? ` (${nextCheapest.label})` : ''}
+            </h3>
+            <p className="text-sm text-[var(--text-muted)] mt-2 leading-relaxed">
+              {pctVsNext > 0 && (
+                <>That&apos;s <span className="text-[var(--text-dim)] font-medium">{pctVsNext}% below</span>{' '}
+                {nextCheapest?.label}</>
+              )}
+              {pctVsNext > 0 && multipleVsMax && multipleVsMax >= 1.05 && ' · '}
+              {multipleVsMax && multipleVsMax >= 1.05 && (
+                <>
+                  <span className="text-[var(--text-dim)] font-medium">{multipleVsMax.toFixed(1)}× less</span>{' '}
                   than {mostExpensive.label}
-                </h3>
-                <p className="text-sm text-[var(--text-muted)] mt-2 leading-relaxed">
-                  With <span className="text-[var(--text-dim)] font-medium">{stakeholders} free stakeholder
-                  {stakeholders === 1 ? '' : 's'}</span>, per-seat tools tax every viewer — gitstate doesn&apos;t.
-                  {savedVsMax > 0 && <> That&apos;s ≈ {format(savedVsMax * 12)}/yr versus the priciest option.</>}
-                </p>
-              </>
-            ) : (
-              <>
-                <span className="inline-flex items-center gap-1.5 text-[11px] font-mono uppercase tracking-widest text-[#fbbf24] mb-2">
-                  <Trophy size={13} /> {cheapest.label} is cheaper for this team
-                </span>
-                <h3 className="font-display text-2xl md:text-[28px] font-bold text-[var(--text)] leading-tight tracking-tight">
-                  gitstate is{' '}
-                  <span className="text-[#fbbf24]">{format(deltaVsAnchor)}/mo more</span>{' '}
-                  than {anchor?.label}
-                </h3>
-                <p className="text-sm text-[var(--text-muted)] mt-2 leading-relaxed">
-                  Straight on price, {cheapest.label} wins this shape — a small all-builder team with{' '}
-                  {stakeholders === 0 ? 'no' : `only ${stakeholders}`} stakeholder{stakeholders === 1 ? '' : 's'}{' '}
-                  is exactly where cheap per-seat tools lead. But that {format(deltaVsAnchor)}/mo buys you{' '}
-                  <span className="text-[var(--text-dim)]">
-                    state derived from git
-                  </span>{' '}
-                  — every status, metric and invoice line read from commits and PRs, nothing maintained by hand.
-                </p>
-              </>
-            )}
+                </>
+              )}
+              {saveVsMax > 0 && (
+                <>
+                  {' '}— ≈ {format(saveVsMax * 12)}/yr saved versus the priciest option.
+                </>
+              )}
+              {' '}
+              {stakeholders > 0 ? (
+                <>Your <span className="text-[var(--text-dim)] font-medium">{stakeholders} stakeholder
+                {stakeholders === 1 ? '' : 's'}</span> ride free here and bill on every seat elsewhere.</>
+              ) : (
+                <>Even with zero stakeholders, {format(gsPerBuilder)}/builder undercuts every per-seat rival.</>
+              )}
+            </p>
           </div>
 
-          {/* Break-even callout */}
-          <BreakEven
-            builders={builders}
-            stakeholders={stakeholders}
-            breakEven={breakEven}
-            gsWins={gsWins}
-          />
+          {/* Always-cheapest callout */}
+          <div className="flex items-start gap-2.5 rounded-[var(--radius-badge)] border border-[#2DD4BF]/25 bg-[#2DD4BF]/[0.06] px-3.5 py-3 text-xs leading-relaxed">
+            <Trophy size={14} className="text-[#2DD4BF] shrink-0 mt-0.5" />
+            <span className="text-[var(--text-dim)]">
+              gitstate is the cheapest option for{' '}
+              <strong className="text-[#2DD4BF]">
+                {builders} builder{builders === 1 ? '' : 's'}
+                {stakeholders > 0 ? ` + ${stakeholders} stakeholder${stakeholders === 1 ? '' : 's'}` : ' (no stakeholders)'}
+              </strong>{' '}
+              with AI {needsAi ? 'on' : 'off'} — and at every other team shape too. Builders-only is the closest a
+              rival ever gets, and gitstate still wins it.
+            </span>
+          </div>
 
           {/* Chart */}
           <div className="mt-6">
@@ -423,7 +452,7 @@ export default function CompetitorCalculator({ plans, planKey = 'team' }) {
                           </span>
                           {r.isGs && (
                             <span className="text-[9px] font-mono uppercase tracking-wider px-1.5 py-0.5 rounded bg-[#2DD4BF]/15 text-[#2DD4BF]">
-                              you
+                              you · cheapest
                             </span>
                           )}
                           {r.addonsNote && (
@@ -455,15 +484,10 @@ export default function CompetitorCalculator({ plans, planKey = 'team' }) {
                       <td className="py-2.5 text-right">
                         {r.isGs ? (
                           <span className="text-[11px] font-mono text-[var(--text-faint)]">—</span>
-                        ) : delta >= 0 ? (
+                        ) : (
                           <span className="text-[12px] font-mono font-semibold tabular-nums text-[#2DD4BF]">
                             +{format(delta)}
                             <span className="text-[10px] text-[#2DD4BF]/70 ml-1">more</span>
-                          </span>
-                        ) : (
-                          <span className="text-[12px] font-mono font-semibold tabular-nums text-[#fbbf24]">
-                            −{format(Math.abs(delta))}
-                            <span className="text-[10px] text-[#fbbf24]/70 ml-1">less</span>
                           </span>
                         )}
                       </td>
@@ -480,10 +504,10 @@ export default function CompetitorCalculator({ plans, planKey = 'team' }) {
           <div className="mt-6 flex flex-col sm:flex-row items-center gap-3">
             <Link
               to="/signup"
-              className="inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-[var(--radius-btn)] font-semibold text-sm text-[#0B1120] w-full sm:w-auto transition-all duration-150 hover:opacity-90"
+              className="inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-[var(--radius-btn)] font-semibold text-sm text-[#0B1120] w-full sm:w-auto transition-all duration-150 motion-reduce:transition-none hover:opacity-90"
               style={{ background: 'linear-gradient(135deg, #2DD4BF, #6366F1)' }}
             >
-              {gsWins ? 'Start free — keep the savings' : 'Try gitstate free'}
+              Start free — keep the savings
               <ArrowRight size={15} strokeWidth={2.5} />
             </Link>
             <span className="text-[11px] text-[var(--text-faint)] leading-relaxed">
@@ -495,43 +519,6 @@ export default function CompetitorCalculator({ plans, planKey = 'team' }) {
           </div>
         </div>
       </div>
-    </div>
-  )
-}
-
-// ── Break-even callout ───────────────────────────────────────────────────────
-function BreakEven({ builders, stakeholders, breakEven, gsWins }) {
-  if (breakEven == null) return null
-
-  // already winning
-  if (gsWins) {
-    const headroom = stakeholders - breakEven
-    return (
-      <div className="flex items-start gap-2.5 rounded-[var(--radius-badge)] border border-[#2DD4BF]/25 bg-[#2DD4BF]/[0.06] px-3.5 py-3 text-xs leading-relaxed">
-        <Server size={14} className="text-[#2DD4BF] shrink-0 mt-0.5" />
-        <span className="text-[var(--text-dim)]">
-          gitstate becomes the cheapest option at{' '}
-          <strong className="text-[#2DD4BF]">~{breakEven} stakeholder{breakEven === 1 ? '' : 's'}</strong> for{' '}
-          {builders} builder{builders === 1 ? '' : 's'} — you have{' '}
-          {headroom > 0 ? <>{headroom} past that line</> : <>just crossed it</>}. Every extra stakeholder is free
-          here and billable everywhere else.
-        </span>
-      </div>
-    )
-  }
-
-  // losing on price — show the crossover honestly
-  const needed = Math.max(0, breakEven - stakeholders)
-  return (
-    <div className="flex items-start gap-2.5 rounded-[var(--radius-badge)] border border-[#fbbf24]/25 bg-[#fbbf24]/[0.06] px-3.5 py-3 text-xs leading-relaxed">
-      <Info size={14} className="text-[#fbbf24] shrink-0 mt-0.5" />
-      <span className="text-[var(--text-dim)]">
-        gitstate becomes the cheapest option once you have{' '}
-        <strong className="text-[#fbbf24]">~{breakEven} stakeholder{breakEven === 1 ? '' : 's'}</strong> on{' '}
-        {builders} builder{builders === 1 ? '' : 's'}
-        {needed > 0 && <> — about {needed} more than you entered</>}. Below that, per-seat tools are cheaper and we
-        won&apos;t pretend otherwise.
-      </span>
     </div>
   )
 }

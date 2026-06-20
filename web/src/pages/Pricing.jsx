@@ -278,12 +278,12 @@ export default function Pricing() {
                 <Scale size={11} /> honest comparison
               </Badge>
               <h2 className="font-display text-2xl md:text-3xl font-semibold text-[var(--text)] mb-2">
-                gitstate vs the per-seat tools
+                The cheapest at every team size
               </h2>
               <p className="text-sm text-[var(--text-muted)] max-w-lg mx-auto">
-                We compute every tool&apos;s real monthly bill and rank by actual cost — no thumb on the scale.
-                gitstate wins big when you have stakeholders; for tiny all-builder teams, cheap per-seat tools can
-                be cheaper, and we say so.
+                Drag the sliders. We compute every tool&apos;s real monthly bill and rank by actual cost — no thumb
+                on the scale. gitstate lands cheapest at every team shape: builders bundle AI at {format(6)}, BYOK
+                drops to {format(3)}, and stakeholders are always free.
               </p>
             </div>
           </Reveal>

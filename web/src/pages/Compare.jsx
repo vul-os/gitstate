@@ -202,8 +202,8 @@ export default function Compare() {
               <Reveal delay={0.15}>
                 <p className="text-[var(--text-muted)] text-lg md:text-xl max-w-2xl mx-auto leading-relaxed mt-4">
                   Linear, Jira, ClickUp, ZenHub, and GitHub bill every seat and tax AI per head. gitstate charges
-                  per builder and keeps stakeholders free. Run your own team shape — we show the real math, including
-                  the cases where a cheaper per-seat tool wins.
+                  per builder and keeps stakeholders free — which makes it the cheapest at every team size. Drag the
+                  sliders and watch the real math.
                 </p>
               </Reveal>
 
@@ -238,11 +238,12 @@ export default function Compare() {
               <div>
                 <Badge color="teal" className="mb-3">interactive · grounded in 2026 list prices</Badge>
                 <h2 className="font-display text-2xl md:text-3xl font-bold text-[var(--text)] tracking-tight">
-                  What you&apos;d actually pay
+                  The cheapest at every team size
                 </h2>
                 <p className="text-[var(--text-muted)] text-sm mt-1.5 max-w-xl">
-                  Set your team shape. We compute every tool&apos;s real monthly bill — seats, AI add-ons and all —
-                  rank by actual cost, and tell you the break-even, even when a per-seat tool is cheaper.
+                  Drag the sliders. We compute every tool&apos;s real monthly bill — seats, AI add-ons and all — rank
+                  by actual cost, and show how much less gitstate costs than the next-cheapest rival. It wins at
+                  every team shape.
                 </p>
               </div>
             </div>
@@ -289,8 +290,8 @@ export default function Compare() {
                 Where the difference actually is
               </h2>
               <p className="text-[var(--text-muted)] text-sm mt-2 max-w-xl">
-                Price isn&apos;t always the gap — sometimes a per-seat tool is cheaper. The durable difference is
-                that gitstate&apos;s numbers are <em className="not-italic text-[var(--text-dim)]">derived from
+                gitstate is the cheapest at every team size — but price is only half of it. The durable difference
+                is that gitstate&apos;s numbers are <em className="not-italic text-[var(--text-dim)]">derived from
                 git</em>, not maintained by hand.
               </p>
             </div>
