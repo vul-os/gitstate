@@ -236,7 +236,7 @@ func RegisterAdminRoutes(mux *http.ServeMux, database *db.DB, cfg *config.Config
 
 	// Public auth routes — NOT behind the gate (the gate redirects here).
 	mux.Handle("GET /admin/login",  http.HandlerFunc(h.loginPage))
-	mux.Handle("POST /admin/login", http.HandlerFunc(h.loginSubmit))
+	mux.Handle("POST /admin/login", middleware.AuthRateLimit()(http.HandlerFunc(h.loginSubmit)))
 	mux.Handle("GET /admin/logout", http.HandlerFunc(h.logout))
 
 	// Gated console routes.

@@ -13,6 +13,7 @@ import (
 	"github.com/exo/gitstate/internal/auth"
 	"github.com/exo/gitstate/internal/config"
 	"github.com/exo/gitstate/internal/db"
+	"github.com/exo/gitstate/internal/middleware"
 	"github.com/exo/gitstate/internal/store"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -21,9 +22,12 @@ import (
 // Called by the orchestrator from router.go — this package does NOT edit router.go.
 func RegisterAuthRoutes(mux *http.ServeMux, database *db.DB, cfg *config.Config) {
 	h := &authHandlers{db: database, cfg: cfg}
-	mux.HandleFunc("POST /auth/signup", h.signup)
-	mux.HandleFunc("POST /auth/login", h.login)
-	mux.HandleFunc("POST /auth/refresh", h.refresh)
+	// Stricter per-IP limit on credential endpoints to blunt brute-forcing —
+	// the global 300/min budget is far too generous for login/signup/refresh.
+	authLimit := middleware.AuthRateLimit()
+	mux.Handle("POST /auth/signup", authLimit(http.HandlerFunc(h.signup)))
+	mux.Handle("POST /auth/login", authLimit(http.HandlerFunc(h.login)))
+	mux.Handle("POST /auth/refresh", authLimit(http.HandlerFunc(h.refresh)))
 	mux.HandleFunc("POST /auth/logout", h.logout)
 }
 
