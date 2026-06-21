@@ -463,6 +463,27 @@ func (h *adminHandlers) setSuper(w http.ResponseWriter, r *http.Request, value b
 		http.Error(w, "database unavailable", http.StatusServiceUnavailable)
 		return
 	}
+
+	// Hardening for revocation (demote): the "supreme" admins declared in
+	// configuration (.env SUPER_ADMIN_EMAILS) are immutable and can NEVER be
+	// revoked from the console — they're the break-glass root of trust. Nor may a
+	// super-admin revoke their own access (lock-out / privilege-confusion guard).
+	if !value {
+		target, err := store.GetUserByID(r.Context(), h.pool, id)
+		if err != nil {
+			http.Error(w, "db: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if isEmailAllowed(target.Email, h.cfg.Admin.SuperAdminEmails) {
+			http.Error(w, "cannot revoke a supreme admin defined in configuration (SUPER_ADMIN_EMAILS)", http.StatusForbidden)
+			return
+		}
+		if actor := middleware.UserFromContext(r.Context()); actor != nil && actor.ID == id {
+			http.Error(w, "cannot revoke your own super-admin access", http.StatusForbidden)
+			return
+		}
+	}
+
 	if err := store.SetUserSuperAdmin(r.Context(), h.pool, id, value); err != nil {
 		http.Error(w, "db: "+err.Error(), http.StatusInternalServerError)
 		return
