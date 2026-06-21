@@ -57,10 +57,20 @@ func main() {
 		LLMVolumeDiscount:  0.65, // we pay ~65% of the charged rate (committed-use discount)
 		LLMRetailMultiple:  1.25, // retail (what a BYOK customer pays direct) is ~25% above our charge
 
-		// Infra — scale-to-zero containers + serverless Postgres. Free orgs are dormant.
-		InfraFreeUSD:     0.15,
-		InfraPaidBaseUSD: 0.50,
-		InfraPerBuilder:  0.08,
+		// Infra — grounded in real Fly.io + Neon + Tigris 2026 pricing, amortized
+		// across the fleet at ~1k+ orgs (the COGS the admin "actual vs projected"
+		// dashboard reconciles against the Fly/Neon billing APIs):
+		//   · Fly Machines (API + sync workers, scale-to-zero, per-second): shared
+		//     base fleet (~2×512MB API + 2×1GB workers ≈ $18/mo) amortized + the
+		//     per-org marginal sync CPU on cached *incremental* clones (~$0.02/org);
+		//     Fly volume git-cache ~$0.15/GB/mo (~100MB/org ≈ $0.015).
+		//   · Neon serverless Postgres+pgvector: compute $0.16/CU-hr autosuspended
+		//     (~$0.18/paid org/mo blended) + storage $0.35/GB-mo (~$0.02/org).
+		//   · Tigris (S3-compatible, ZERO egress) for blobs/embeddings ≈ $0.02/org.
+		// Free orgs scale to zero (Neon autosuspend + stopped Machine) → storage-only.
+		InfraFreeUSD:     0.05, // dormant: Neon autosuspend + storage share only
+		InfraPaidBaseUSD: 0.45, // Neon $0.20 + Fly fleet share $0.15 + Tigris $0.02 + headroom
+		InfraPerBuilder:  0.07, // per-builder sync CPU + DB activity + git-cache volume
 
 		SupportFreeUSD:    0.03,
 		SupportPerBuilder: 0.30,
