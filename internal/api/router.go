@@ -62,6 +62,7 @@ func NewRouter(cfg *config.Config, database *db.DB) http.Handler {
 		RegisterTokenRoutes(mux, database, cfg)
 		RegisterContextRoutes(mux, database, cfg)
 		RegisterAgentRunRoutes(mux, database, cfg)
+		RegisterSearchRoutes(mux, database, cfg)
 		RegisterBillingRoutes(mux, database, cfg)
 		// EE Paystack charging: real when built with -tags ee, no-op stub otherwise.
 		eebilling.RegisterPaystackRoutes(mux, database, cfg)

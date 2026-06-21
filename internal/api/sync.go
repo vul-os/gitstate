@@ -42,6 +42,11 @@ func RegisterSyncRoutes(mux *http.ServeMux, database *db.DB, cfg *config.Config)
 	readIssues := func(handler http.Handler) http.Handler {
 		return tokenOrAuth(middleware.RequireScope("read:issues")(handler))
 	}
+	// Write access for a scoped API token (gsk_…) so an agent (MCP update_issue_state)
+	// can move an issue's state; human JWT sessions still work unchanged.
+	writeIssues := func(handler http.Handler) http.Handler {
+		return tokenOrAuth(middleware.RequireScope("write:issues")(handler))
+	}
 
 	mux.Handle("GET /api/repos", auth(http.HandlerFunc(h.listRepos)))
 	mux.Handle("POST /api/repos", auth(http.HandlerFunc(h.connectRepo)))
@@ -49,7 +54,7 @@ func RegisterSyncRoutes(mux *http.ServeMux, database *db.DB, cfg *config.Config)
 
 	mux.Handle("GET /api/issues", readIssues(http.HandlerFunc(h.listIssues)))
 	mux.Handle("POST /api/issues", auth(http.HandlerFunc(h.createIssue)))
-	mux.Handle("PATCH /api/issues/{id}", auth(http.HandlerFunc(h.patchIssue)))
+	mux.Handle("PATCH /api/issues/{id}", writeIssues(http.HandlerFunc(h.patchIssue)))
 }
 
 type syncHandlers struct {
