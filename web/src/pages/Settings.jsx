@@ -13,6 +13,7 @@ import { useWebhooks } from '../lib/useWebhooks.js'
 import { Card, Badge, Button } from '../components/ui/index.js'
 import { Reveal } from '../components/Reveal.jsx'
 import { NotificationsBody } from '../components/notifications/NotificationsSection.jsx'
+import { ApiTokensBody } from '../components/settings/ApiTokens.jsx'
 import {
   get, put,
   calendarStartUrl, fetchCalendarStatus, patchCalendar, disconnectCalendar,
@@ -779,6 +780,16 @@ export default function Settings() {
       </SectionCard>
 
       <WebhooksSection delay={0.245} />
+
+      <SectionCard
+        icon={KeyRound}
+        title="API tokens"
+        description="Personal access tokens for agents, the gittrack CLI and MCP integrations."
+        delay={0.248}
+        accent="var(--chart-5)"
+      >
+        <ApiTokensBody />
+      </SectionCard>
 
       <SectionCard icon={AlertTriangle} title="Danger zone" description="Irreversible actions." delay={0.25} tone="danger">
         <div className="flex items-center justify-between py-2">
