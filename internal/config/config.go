@@ -152,6 +152,20 @@ type AdminConfig struct {
 	// admin reads fall back to the main pool (current behavior; no special bypass).
 	// Populated from the ADMIN_DATABASE_URL env var.
 	DatabaseURL string `yaml:"-"`
+
+	// Geo-analytics: path to a local MaxMind/db-ip .mmdb for country/city lookup
+	// (free GeoLite2 or db-ip Lite). Empty ⇒ events still recorded, geo "unknown".
+	GeoIPDBPath string `yaml:"-"` // GEOIP_DB_PATH
+	// AnalyticsSalt salts the IP hash so raw IPs are never stored. GENERATE_DAILY
+	// rotation is the operator's call; a stable per-deploy secret is fine.
+	AnalyticsSalt string `yaml:"-"` // ANALYTICS_SALT
+
+	// Cloud COGS reconciliation (actual vs the billsim projection). All optional;
+	// the COGS dashboard degrades to "projection only" when a key is absent.
+	FlyAPIToken  string `yaml:"-"` // FLY_API_TOKEN (Fly.io billing/usage)
+	FlyOrgSlug   string `yaml:"-"` // FLY_ORG_SLUG
+	NeonAPIKey   string `yaml:"-"` // NEON_API_KEY (Neon consumption API)
+	NeonProjectID string `yaml:"-"` // NEON_PROJECT_ID
 }
 
 // envVarRe matches ${ENV_VAR} references in YAML values.
@@ -348,4 +362,10 @@ func overlayEnv(cfg *Config) {
 	// Separate audited BYPASSRLS service connection for cross-org admin
 	// aggregates (decisions S2). Empty → fall back to the main pool.
 	setStr(&cfg.Admin.DatabaseURL, "ADMIN_DATABASE_URL")
+	setStr(&cfg.Admin.GeoIPDBPath, "GEOIP_DB_PATH")
+	setStr(&cfg.Admin.AnalyticsSalt, "ANALYTICS_SALT")
+	setStr(&cfg.Admin.FlyAPIToken, "FLY_API_TOKEN")
+	setStr(&cfg.Admin.FlyOrgSlug, "FLY_ORG_SLUG")
+	setStr(&cfg.Admin.NeonAPIKey, "NEON_API_KEY")
+	setStr(&cfg.Admin.NeonProjectID, "NEON_PROJECT_ID")
 }
