@@ -249,14 +249,19 @@ function MiniHeatmap() {
         </div>
       ) : (
         <Link to="/analytics" className="block">
-          <div className="flex gap-[3px] overflow-x-auto pb-1">
+          {/* Responsive grid: week columns fill the card width (1fr each), cells
+              stay square — no fixed width / left-aligned dead space. */}
+          <div
+            className="grid gap-[3px] w-full"
+            style={{ gridTemplateColumns: `repeat(${weeks.length}, minmax(0, 1fr))` }}
+          >
             {weeks.map((col, wi) => (
-              <div key={wi} className="flex flex-col gap-[3px] shrink-0">
+              <div key={wi} className="grid gap-[3px]" style={{ gridTemplateRows: 'repeat(7, minmax(0, 1fr))' }}>
                 {col.map(cell => (
                   <div
                     key={cell.iso}
                     title={`${cell.iso}: ${cell.count} commits`}
-                    className="w-[9px] h-[9px] rounded-[2px]"
+                    className="aspect-square rounded-[2px]"
                     style={{ background: cell.future ? 'transparent' : miniColor(cell.count, max) }}
                   />
                 ))}

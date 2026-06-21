@@ -11,7 +11,7 @@
  *
  * All charts hand-rolled SVG (no chart dependency). Both themes, loading skeletons, empty states.
  */
-import { useState, useMemo, useRef } from 'react'
+import { useState, useMemo, useRef, useLayoutEffect } from 'react'
 import {
   useSummary, useHeatmap, useCommitsOverTime,
   useContributors, useRepoStats, useDayCommits,
@@ -237,7 +237,7 @@ function StatTiles({ summary, loading }) {
 
 const WEEKS = 53
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
-const CELL = 12 // px including gap
+const BASE_CELL = 12 // px including gap (fallback before measure)
 const GAP = 3
 
 // teal → indigo scale for cell intensity
@@ -284,6 +284,18 @@ function Heatmap({ heatmap, loading, endISO, selectedDate, onSelect }) {
   const [hover, setHover] = useState(null) // {x,y,cell}
   const wrapRef = useRef(null)
 
+  // Responsive cell size: fill the container width with square cells (the SVG
+  // text labels stay crisp — we resize cells, not stretch the SVG).
+  const [measuredW, setMeasuredW] = useState(0)
+  useLayoutEffect(() => {
+    const el = wrapRef.current
+    if (!el || typeof ResizeObserver === 'undefined') return
+    const ro = new ResizeObserver(([e]) => setMeasuredW(Math.round(e.contentRect.width)))
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
+  const CELL = measuredW > 0 ? Math.max(BASE_CELL, (measuredW - 30) / WEEKS) : BASE_CELL
+
   // month labels: place at first week whose first day's month differs from prev
   const monthLabels = useMemo(() => {
     const out = []
@@ -314,7 +326,7 @@ function Heatmap({ heatmap, loading, endISO, selectedDate, onSelect }) {
 
   return (
     <div className="relative" ref={wrapRef}>
-      <div className="overflow-x-auto pb-1">
+      <div className="pb-1">
         <svg width={width} height={height} className="block" role="img" aria-label="Contribution heatmap">
           {/* month labels */}
           {monthLabels.map(m => (
