@@ -21,7 +21,7 @@
  *   legend: boolean (default true for multi-series)
  *   emptyText, emptyIcon
  */
-import { useState, useCallback, useId } from 'react'
+import { useState, useCallback, useId, useRef, useLayoutEffect } from 'react'
 
 const PAD = { top: 18, right: 22, bottom: 38, left: 50 }
 const PALETTE = ['var(--chart-1)', 'var(--chart-2)', 'var(--chart-3)', 'var(--chart-4)', 'var(--chart-5)', 'var(--chart-6)']
@@ -46,6 +46,22 @@ export function LineChart({
   const [hovered, setHovered] = useState(null)
   const gid = useId().replace(/:/g, '')
 
+  // Responsive width: render the chart at its container's actual width so it
+  // fills the card (the `width` prop is just the initial/fallback). Without this
+  // the fixed viewBox + preserveAspectRatio left dead space in any wide card.
+  const wrapRef = useRef(null)
+  const [cw, setCw] = useState(width)
+  useLayoutEffect(() => {
+    const el = wrapRef.current
+    if (!el || typeof ResizeObserver === 'undefined') return
+    const ro = new ResizeObserver(([entry]) => {
+      const w = Math.round(entry.contentRect.width)
+      if (w > 0) setCw(w)
+    })
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
+
   // Normalise to a series array. Single-series stays the visual default.
   const isMulti = Array.isArray(series) && series.length > 0
   const allSeries = isMulti
@@ -55,7 +71,7 @@ export function LineChart({
   const xCount = Math.max(...allSeries.map(s => s.points.length), 0)
   const showLegend = legend ?? isMulti
 
-  const W = width - PAD.left - PAD.right
+  const W = cw - PAD.left - PAD.right
   const H = height - PAD.top - PAD.bottom
 
   const handleMouseMove = useCallback((e) => {
@@ -73,7 +89,7 @@ export function LineChart({
     return (
       <div
         className="flex flex-col items-center justify-center gap-2 rounded-[var(--radius-card)] text-center text-xs text-[var(--text-faint)] font-mono border border-dashed border-[var(--border)]"
-        style={{ width: '100%', maxWidth: width, height, background: 'var(--bg-surface2)' }}
+        style={{ width: '100%', height, background: 'var(--bg-surface2)' }}
       >
         {emptyIcon}
         <span className="max-w-[80%]">{emptyText}</span>
@@ -114,12 +130,12 @@ export function LineChart({
   const drawArea = fill && !isMulti
 
   return (
-    <div style={{ position: 'relative', width: '100%', maxWidth: width, height }}>
+    <div ref={wrapRef} style={{ position: 'relative', width: '100%', height }}>
       <svg
-        viewBox={`0 0 ${width} ${height}`}
+        viewBox={`0 0 ${cw} ${height}`}
         width="100%"
         height={height}
-        preserveAspectRatio="xMidYMid meet"
+        preserveAspectRatio="none"
         data-point-count={xCount}
         data-inner-w={W}
         onMouseMove={handleMouseMove}
@@ -233,7 +249,7 @@ export function LineChart({
         <div
           style={{
             position: 'absolute',
-            left: clamp(toX(hovered) + 12, 0, width - 180),
+            left: clamp(toX(hovered) + 12, 0, cw - 180),
             top: clamp(toY(allSeries[0].points[hovered].y) - 42, 0, height - 32),
             pointerEvents: 'none',
             background: 'var(--bg-surface)',

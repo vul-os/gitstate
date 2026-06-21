@@ -5,7 +5,7 @@
  * reduced-motion safe, with hairline grid, gradient under-fill, a hover
  * crosshair + focus dots and a tooltip.
  */
-import { useState, useCallback, useId } from 'react'
+import { useState, useCallback, useId, useRef, useLayoutEffect } from 'react'
 import { useBurndown } from '../lib/useBurndown.js'
 
 function Spinner() {
@@ -26,7 +26,21 @@ function DualLineChart({ points, width = 600, height = 200 }) {
   const [hovered, setHovered] = useState(null)
   const gid = useId().replace(/:/g, '')
 
-  const W = width - PAD.left - PAD.right
+  // Responsive: render at the container's actual width so the chart fills the card.
+  const wrapRef = useRef(null)
+  const [cw, setCw] = useState(width)
+  useLayoutEffect(() => {
+    const el = wrapRef.current
+    if (!el || typeof ResizeObserver === 'undefined') return
+    const ro = new ResizeObserver(([entry]) => {
+      const w = Math.round(entry.contentRect.width)
+      if (w > 0) setCw(w)
+    })
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
+
+  const W = cw - PAD.left - PAD.right
   const H = height - PAD.top - PAD.bottom
 
   const handleMouseMove = useCallback((e) => {
@@ -44,7 +58,7 @@ function DualLineChart({ points, width = 600, height = 200 }) {
     return (
       <div
         className="flex items-center justify-center rounded-[var(--radius-card)] text-xs text-[var(--text-faint)] font-mono border border-dashed border-[var(--border)]"
-        style={{ width: '100%', maxWidth: width, height, background: 'var(--bg-surface2)' }}
+        style={{ width: '100%', height, background: 'var(--bg-surface2)' }}
       >
         No burndown data yet.
       </div>
@@ -93,12 +107,12 @@ function DualLineChart({ points, width = 600, height = 200 }) {
   const hov = hovered != null ? points[hovered] : null
 
   return (
-    <div style={{ position: 'relative', width: '100%', maxWidth: width, height }}>
+    <div ref={wrapRef} style={{ position: 'relative', width: '100%', height }}>
       <svg
-        viewBox={`0 0 ${width} ${height}`}
+        viewBox={`0 0 ${cw} ${height}`}
         width="100%"
         height={height}
-        preserveAspectRatio="xMidYMid meet"
+        preserveAspectRatio="none"
         data-point-count={points.length}
         data-inner-w={W}
         onMouseMove={handleMouseMove}
@@ -181,7 +195,7 @@ function DualLineChart({ points, width = 600, height = 200 }) {
         <div
           style={{
             position: 'absolute',
-            left: clamp(toX(hovered) + 12, 0, width - 190),
+            left: clamp(toX(hovered) + 12, 0, cw - 190),
             top: clamp(toY(hov.remaining ?? hov.ideal ?? 0) - 50, 0, height - 44),
             pointerEvents: 'none',
             background: 'var(--bg-surface)',
