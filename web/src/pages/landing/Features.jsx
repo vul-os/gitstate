@@ -1,8 +1,8 @@
 /**
  * Features — "Everything derived from git"
- * Six capabilities rendered as premium cards with distinct Lucide icons,
- * gradient accents, depth + hover lift. Two hero cards embed product shots
- * via BrowserFrame for visual interest.
+ * Six capabilities rendered as a uniform grid of premium cards with distinct
+ * Lucide icons, gradient accents, depth + hover lift. Product screenshots live
+ * in the dedicated ShowcaseGallery, so this grid stays clean in both themes.
  */
 import {
   GitFork,
@@ -15,7 +15,6 @@ import {
 import { Reveal, RevealList } from '../../components/Reveal.jsx'
 import {
   Badge,
-  BrowserFrame,
   GradientText,
   Glow,
   Section,
@@ -63,9 +62,7 @@ const FEATURES = [
     label: 'AI sizing',
     title: 'LLM diff-difficulty sizing',
     body: 'Effort sizing from an LLM reading the actual diff — not story-point poker. Calibrated from your observed cycle time, not vibes.',
-    shot: '/shots/cycle-time.png',
-    shotUrl: 'app.gitstate.dev/cycle-time',
-    shotAlt: 'gitstate cycle-time chart',
+    shot: null,
   },
   {
     icon: ReceiptText,
@@ -75,9 +72,7 @@ const FEATURES = [
     label: 'Provenance',
     title: 'Every item shows its source',
     body: "Git-derived work and manual work live on one board, each tagged with where it came from. Evidence-backed billing builds on the same honest provenance.",
-    shot: '/shots/board.png',
-    shotUrl: 'app.gitstate.dev/board',
-    shotAlt: 'gitstate board — every item tagged git-derived or manual',
+    shot: null,
   },
   {
     icon: UserRoundCheck,
@@ -180,96 +175,6 @@ function FeatureCard({ f }) {
   )
 }
 
-/* ── Hero card with product shot ────────────────────────────────────────────── */
-
-function FeatureHeroCard({ f }) {
-  const Icon = f.icon
-  return (
-    <div
-      className="group relative flex flex-col rounded-[var(--radius-card)] overflow-hidden transition-all duration-300 hover:-translate-y-0.5"
-      style={{
-        background: 'var(--bg-surface)',
-        border: '1px solid var(--border)',
-        boxShadow: 'var(--shadow-card)',
-      }}
-      onMouseEnter={e => {
-        e.currentTarget.style.border = `1px solid rgba(${f.accentRgb},0.22)`
-        e.currentTarget.style.boxShadow = `var(--shadow-card-hover), 0 0 32px rgba(${f.accentRgb},0.07)`
-      }}
-      onMouseLeave={e => {
-        e.currentTarget.style.border = '1px solid var(--border)'
-        e.currentTarget.style.boxShadow = 'var(--shadow-card)'
-      }}
-    >
-      {/* Product shot — top half */}
-      <div
-        className="relative overflow-hidden"
-        style={{
-          background: `linear-gradient(160deg, rgba(${f.accentRgb},0.06) 0%, var(--bg-surface2) 100%)`,
-          borderBottom: '1px solid var(--border)',
-        }}
-      >
-        {/* Ambient glow behind screenshot */}
-        <div
-          aria-hidden="true"
-          className="absolute inset-0 pointer-events-none"
-          style={{
-            background: `radial-gradient(ellipse 80% 60% at 50% 120%, rgba(${f.accentRgb},0.1) 0%, transparent 70%)`,
-          }}
-        />
-        <div className="relative z-10 p-3 pb-0">
-          <BrowserFrame
-            src={f.shot}
-            alt={f.shotAlt}
-            url={f.shotUrl}
-            className="w-full"
-          />
-        </div>
-        {/* Fade-out gradient at the bottom of the screenshot area */}
-        <div
-          aria-hidden="true"
-          className="absolute inset-x-0 bottom-0 h-8 pointer-events-none z-20"
-          style={{
-            background: 'linear-gradient(to top, var(--bg-surface) 0%, transparent 100%)',
-          }}
-        />
-      </div>
-
-      {/* Text section — bottom half */}
-      <div className="relative z-10 flex flex-col gap-3 p-6">
-        {/* Icon + badge row */}
-        <div className="flex items-start justify-between">
-          <div
-            className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0 transition-transform duration-200 group-hover:scale-105"
-            style={{
-              background: `linear-gradient(135deg, rgba(${f.accentRgb},0.15) 0%, rgba(${f.accentRgb},0.06) 100%)`,
-              boxShadow: `inset 0 0 0 1px rgba(${f.accentRgb},0.2), 0 1px 4px rgba(0,0,0,0.2)`,
-              color: f.accent,
-            }}
-          >
-            <Icon size={18} strokeWidth={1.5} aria-hidden="true" />
-          </div>
-          <Badge color={f.badgeColor} className="text-[10px] shrink-0">
-            {f.label}
-          </Badge>
-        </div>
-
-        <div className="flex flex-col gap-1.5">
-          <h3
-            className="font-display text-base font-semibold tracking-[-0.02em] leading-snug"
-            style={{ color: 'var(--text)' }}
-          >
-            {f.title}
-          </h3>
-          <p className="text-sm leading-relaxed" style={{ color: 'var(--text-muted)' }}>
-            {f.body}
-          </p>
-        </div>
-      </div>
-    </div>
-  )
-}
-
 /* ── Section ─────────────────────────────────────────────────────────────────── */
 
 export default function Features() {
@@ -302,19 +207,15 @@ export default function Features() {
           </div>
         </Reveal>
 
-        {/* Card grid — hero cards (with shots) span naturally in the layout */}
+        {/* Uniform capability grid — even card heights, clean in both themes */}
         <RevealList
           className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4"
           staggerDelay={0.07}
           inView
         >
-          {FEATURES.map(f =>
-            f.shot ? (
-              <FeatureHeroCard key={f.title} f={f} />
-            ) : (
-              <FeatureCard key={f.title} f={f} />
-            )
-          )}
+          {FEATURES.map(f => (
+            <FeatureCard key={f.title} f={f} />
+          ))}
         </RevealList>
       </Container>
     </Section>
