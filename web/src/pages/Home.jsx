@@ -5,13 +5,13 @@
 
 function StatCard({ label, value, trend, mono }) {
   return (
-    <div className="bg-[#111827] border border-[#1e2d45] rounded-xl p-5 flex flex-col gap-1">
-      <span className="text-xs font-medium text-[#64748b] uppercase tracking-widest">{label}</span>
-      <span className={`text-3xl font-bold text-[#e2e8f0] tracking-tight mt-1 ${mono ? 'font-mono' : ''}`}>
+    <div className="bg-[var(--bg-surface)] border border-[var(--border)] rounded-xl p-5 flex flex-col gap-1">
+      <span className="text-xs font-medium text-[var(--text-muted)] uppercase tracking-widest">{label}</span>
+      <span className={`text-3xl font-bold text-[var(--text)] tracking-tight mt-1 ${mono ? 'font-mono' : ''}`}>
         {value}
       </span>
       {trend && (
-        <span className="text-xs text-[#2DD4BF] font-mono mt-0.5">{trend}</span>
+        <span className="text-xs text-[var(--brand-teal)] font-mono mt-0.5">{trend}</span>
       )}
     </div>
   )
@@ -42,8 +42,8 @@ export default function Home() {
     <div className="w-full">
       {/* Page header */}
       <div className="mb-8">
-        <h1 className="text-2xl font-bold text-[#e2e8f0] tracking-tight">Overview</h1>
-        <p className="text-sm text-[#64748b] mt-1">
+        <h1 className="text-2xl font-bold text-[var(--text)] tracking-tight">Overview</h1>
+        <p className="text-sm text-[var(--text-muted)] mt-1">
           Derived from git — no tickets to maintain.
         </p>
       </div>
@@ -57,13 +57,13 @@ export default function Home() {
       </div>
 
       {/* Activity area */}
-      <div className="bg-[#111827] border border-[#1e2d45] rounded-xl p-6 mb-6">
+      <div className="bg-[var(--bg-surface)] border border-[var(--border)] rounded-xl p-6 mb-6">
         <div className="flex items-center justify-between mb-4">
-          <h2 className="text-sm font-semibold text-[#e2e8f0]">Commit activity</h2>
-          <span className="text-xs font-mono text-[#64748b] bg-[#0d1628] px-2 py-0.5 rounded">last 12 weeks</span>
+          <h2 className="text-sm font-semibold text-[var(--text)]">Commit activity</h2>
+          <span className="text-xs font-mono text-[var(--text-muted)] bg-[var(--bg-surface2)] px-2 py-0.5 rounded">last 12 weeks</span>
         </div>
         <EmptyGraph />
-        <p className="text-xs text-[#334155] mt-3 font-mono">
+        <p className="text-xs text-[var(--text-faint)] mt-3 font-mono">
           Connect a repository in Projects to start tracking.
         </p>
       </div>
@@ -81,8 +81,8 @@ export default function Home() {
             </svg>
           </div>
           <div>
-            <h3 className="text-sm font-semibold text-[#2DD4BF] mb-1">Git is the real ledger</h3>
-            <p className="text-xs text-[#64748b] leading-relaxed">
+            <h3 className="text-sm font-semibold text-[var(--brand-teal)] mb-1">Git is the real ledger</h3>
+            <p className="text-xs text-[var(--text-muted)] leading-relaxed">
               gitstate derives project state, cycle time, and involvement directly from your
               repositories. Merged = done. PR open = in progress. No manual ticket updates.
             </p>

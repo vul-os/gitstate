@@ -73,13 +73,13 @@ function SliderField({ icon: Icon, label, sublabel, value, setValue, min, max, a
         className="w-full h-1.5 rounded-full appearance-none cursor-pointer outline-none
           focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--bg-surface)]
           [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4
-          [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-white
+          [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-[var(--brand-teal)]
           [&::-webkit-slider-thumb]:border-2 [&::-webkit-slider-thumb]:border-[var(--slider-accent)]
-          [&::-webkit-slider-thumb]:shadow-[0_2px_8px_rgba(0,0,0,0.4)]
+          [&::-webkit-slider-thumb]:shadow-[var(--shadow-card)]
           [&::-webkit-slider-thumb]:transition-transform motion-reduce:[&::-webkit-slider-thumb]:transition-none
           [&::-webkit-slider-thumb]:hover:scale-110
           [&::-moz-range-thumb]:w-4 [&::-moz-range-thumb]:h-4 [&::-moz-range-thumb]:rounded-full
-          [&::-moz-range-thumb]:bg-white [&::-moz-range-thumb]:border-2 [&::-moz-range-thumb]:border-solid
+          [&::-moz-range-thumb]:bg-[var(--brand-teal)] [&::-moz-range-thumb]:border-2 [&::-moz-range-thumb]:border-solid
           [&::-moz-range-thumb]:border-[var(--slider-accent)]"
         style={{
           background: `linear-gradient(90deg, ${color} ${pct}%, var(--bg-surface3) ${pct}%)`,

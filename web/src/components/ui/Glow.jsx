@@ -23,7 +23,7 @@ export function Glow({
   return (
     <div
       aria-hidden="true"
-      className={['absolute pointer-events-none', className].join(' ')}
+      className={['gs-glow absolute pointer-events-none', className].join(' ')}
       style={{
         width: size,
         height: size,

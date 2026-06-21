@@ -383,7 +383,7 @@ function PlansTab() {
 
       {/* Plan grid */}
       {sorted.length === 0 ? (
-        <div className="text-sm text-[#475569] text-center py-8">No plan data returned. Check billing configuration.</div>
+        <div className="text-sm text-[var(--text-muted)] text-center py-8">No plan data returned. Check billing configuration.</div>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           {sorted.map(plan => (
@@ -952,7 +952,7 @@ function PaystackReturn() {
       {status === 'verifying' && (
         <>
           <Spinner size={32} />
-          <p className="text-sm text-[#64748b]">Verifying your payment…</p>
+          <p className="text-sm text-[var(--text-muted)]">Verifying your payment…</p>
         </>
       )}
       {status === 'success' && (

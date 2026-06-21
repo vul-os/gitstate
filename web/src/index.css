@@ -80,18 +80,28 @@
   color-scheme: dark;
 }
 
-/* Light theme — warm off-white, not stark white */
+/* Light theme — warm off-white with real elevation steps, AA-contrast text */
 .light {
-  --bg:          #f5f3ef;
-  --bg-surface:  #fdfcf9;
-  --bg-surface2: #ede9e2;
-  --bg-surface3: #e3ddd5;
-  --border:      #ddd8d0;
-  --border2:     #c9c3ba;
-  --text:        #0f172a;
-  --text-dim:    #1e293b;
-  --text-muted:  #475569;
-  --text-faint:  #94a3b8;
+  --bg:          #f4f2ed;  /* warm paper base, not stark white */
+  --bg-surface:  #ffffff;  /* cards lift cleanly off the warm base */
+  --bg-surface2: #f0ede6;  /* recessed / hover wells */
+  --bg-surface3: #e8e4db;  /* deepest inset (pills, tracks) */
+  --border:      #e3ddd2;  /* hairline divider */
+  --border2:     #cfc8ba;  /* stronger edge / focus border */
+  --text:        #0f172a;  /* ~16:1 on white */
+  --text-dim:    #283548;  /* ~10:1 */
+  --text-muted:  #51606f;  /* ~6.5:1 — AA for body */
+  --text-faint:  #6b7787;  /* ~4.6:1 — AA for small meta */
+
+  /* Subtle, light-appropriate shadows — the dark rgba(0,0,0,.3–.5) values are
+     far too heavy on a light surface, so override with soft warm-neutral lifts. */
+  --shadow-card:        0 1px 2px rgba(15,23,42,0.04), 0 2px 6px rgba(15,23,42,0.05), 0 8px 24px rgba(15,23,42,0.05);
+  --shadow-card-hover:  0 1px 3px rgba(15,23,42,0.06), 0 6px 16px rgba(15,23,42,0.08), 0 16px 36px rgba(15,23,42,0.08);
+  --shadow-float:       0 2px 6px rgba(15,23,42,0.08), 0 12px 28px rgba(15,23,42,0.10), 0 0 0 1px rgba(15,23,42,0.04);
+
+  /* Brand glows are dark-mode ambience; reduce to near-flat on light. */
+  --shadow-glow-teal:   0 0 0 1px rgba(45,212,191,0.10);
+  --shadow-glow-indigo: 0 0 0 1px rgba(99,102,241,0.10);
 
   color-scheme: light;
 }
@@ -216,4 +226,51 @@
   .border-glow-indigo {
     box-shadow: inset 0 0 0 1px rgba(99,102,241,0.12), 0 0 24px rgba(99,102,241,0.06);
   }
+}
+
+/* ─── Light-mode ambience toning ─────────────────────────────────────────────
+   The grain texture, ambient radial backdrops and gradient meshes are dark-mode
+   atmosphere. On the warm off-white base they wash the page out and crush
+   contrast, so mute or disable them under .light for a clean, flat read. */
+.light .grain::after {
+  display: none;
+}
+
+.light .ambient-teal,
+.light .ambient-indigo {
+  background: radial-gradient(ellipse 80% 60% at 50% 0%,
+    rgba(99,102,241,0.05) 0%, transparent 70%);
+}
+.light .ambient-brand {
+  background:
+    radial-gradient(ellipse 70% 50% at 15% 20%, rgba(45,212,191,0.045) 0%, transparent 60%),
+    radial-gradient(ellipse 60% 50% at 85% 80%, rgba(99,102,241,0.045) 0%, transparent 60%);
+}
+
+.light .glow-teal,
+.light .glow-indigo,
+.light .glow-brand {
+  background: none;
+}
+
+/* Decorative <Glow> mesh blobs are dark-mode atmosphere. On the warm paper
+   base they render as muddy grey/purple ghosts, so fade them right down. */
+.light .gs-glow {
+  opacity: 0.28;
+  filter: blur(2px) saturate(1.3);
+}
+
+.light .border-glow-teal {
+  box-shadow: inset 0 0 0 1px rgba(45,212,191,0.18);
+}
+.light .border-glow-indigo {
+  box-shadow: inset 0 0 0 1px rgba(99,102,241,0.18);
+}
+
+/* Keep the brand gradient text readable on light — bias away from the pale
+   teal end toward the deeper indigo so it holds contrast on white. */
+.light .gradient-text {
+  background: linear-gradient(135deg, #0d9488 0%, #4f46e5 60%, #4338ca 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
 }

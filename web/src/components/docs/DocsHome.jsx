@@ -76,7 +76,7 @@ function DocCard({ doc, query }) {
     <Link
       to={`/docs/${doc.slug}`}
       className="group relative flex flex-col gap-2 overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--bg-surface)] p-4 transition-all duration-200 hover:-translate-y-0.5 hover:border-[var(--border2)] hover:shadow-lg"
-      style={{ boxShadow: '0 1px 2px rgba(0,0,0,0.12)' }}
+      style={{ boxShadow: 'var(--shadow-card)' }}
     >
       {/* hover sheen */}
       <span
@@ -286,7 +286,7 @@ export default function DocsHome({ docs = [] }) {
             />
             <div
               className="relative overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--bg-surface)]"
-              style={{ boxShadow: '0 1px 2px rgba(0,0,0,0.2), 0 24px 64px rgba(0,0,0,0.32)' }}
+              style={{ boxShadow: 'var(--shadow-card-hover)' }}
             >
               {/* fake window chrome */}
               <div className="flex items-center gap-1.5 border-b border-[var(--border)] bg-[var(--bg-surface2)] px-4 py-2.5">
@@ -321,7 +321,7 @@ export default function DocsHome({ docs = [] }) {
                 key={doc.slug}
                 to={`/docs/${doc.slug}`}
                 className="group relative flex flex-col gap-2 overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--bg-surface)] p-3.5 transition-all duration-200 hover:-translate-y-0.5 hover:border-[var(--brand-teal)]/40"
-                style={{ boxShadow: '0 1px 2px rgba(0,0,0,0.12)' }}
+                style={{ boxShadow: 'var(--shadow-card)' }}
               >
                 <span
                   aria-hidden="true"

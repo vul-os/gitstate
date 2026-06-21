@@ -1,7 +1,13 @@
 /**
  * Inline gitstate logo — mark + wordmark variant or mark-only.
  * Avoids a network request; safe to use in the sidebar and auth pages.
+ *
+ * The wordmark's "git" is theme-aware: it inherits `currentColor`, which we
+ * drive from the active theme (dark text on light bg, light text on dark bg).
+ * "state" stays brand teal. The navy mark badge is an intentional branded
+ * element kept in both themes.
  */
+import { useTheme } from '../lib/theme.jsx'
 
 export function LogoMark({ size = 36, className = '' }) {
   return (
@@ -48,6 +54,9 @@ export function LogoMark({ size = 36, className = '' }) {
 export function LogoFull({ height = 40, className = '' }) {
   // Preserve aspect ratio: original is 280×72, so width = height * (280/72)
   const width = Math.round(height * (280 / 72))
+  const { resolved } = useTheme()
+  // "git" inherits currentColor — dark ink in light mode, near-white in dark.
+  const gitColor = resolved === 'light' ? '#0f172a' : '#e2e8f0'
   return (
     <svg
       width={width}
@@ -57,6 +66,7 @@ export function LogoFull({ height = 40, className = '' }) {
       xmlns="http://www.w3.org/2000/svg"
       role="img"
       aria-label="gitstate"
+      style={{ color: gitColor }}
       className={className}
     >
       <defs>
@@ -93,7 +103,7 @@ export function LogoFull({ height = 40, className = '' }) {
         fontFamily="ui-monospace, 'SF Mono', Menlo, monospace"
         fontSize="30"
         fontWeight="700"
-        fill="#E2E8F0"
+        fill="currentColor"
       >
         {'git'}
         <tspan fill="#2DD4BF">state</tspan>

@@ -12,9 +12,9 @@ export function IssueCard({ issue, onClick }) {
       onClick={() => onClick(issue)}
       className="rounded-[var(--radius-card)] p-3.5 cursor-pointer group transition-all duration-150 hover:translate-y-[-1px] hover:border-[var(--border2)]"
       style={{
-        background: 'var(--bg)',
-        border: `1px solid ${isGit ? 'rgba(45,212,191,0.15)' : 'var(--border)'}`,
-        boxShadow: '0 1px 6px rgba(0,0,0,0.15)',
+        background: 'var(--bg-surface)',
+        border: `1px solid ${isGit ? 'rgba(45,212,191,0.25)' : 'var(--border)'}`,
+        boxShadow: 'var(--shadow-card)',
       }}
     >
       {/* Source badge row */}
@@ -34,7 +34,7 @@ export function IssueCard({ issue, onClick }) {
       </div>
 
       {/* Title */}
-      <p className="text-sm font-medium text-[var(--text)] leading-snug line-clamp-2 mb-2 group-hover:text-white transition-colors">
+      <p className="text-sm font-medium text-[var(--text)] leading-snug line-clamp-2 mb-2 group-hover:text-[var(--brand-teal)] transition-colors">
         {issue.title}
       </p>
 

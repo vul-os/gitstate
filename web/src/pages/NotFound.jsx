@@ -12,7 +12,7 @@ export default function NotFound() {
   return (
     <div
       className="min-h-screen flex flex-col items-center justify-center px-6 text-center"
-      style={{ background: '#0B1120' }}
+      style={{ background: 'var(--bg)' }}
     >
       {/* Subtle glow */}
       <div
@@ -43,10 +43,10 @@ export default function NotFound() {
         </div>
 
         <div>
-          <h1 className="text-xl font-bold text-[#e2e8f0] mb-2">
+          <h1 className="text-xl font-bold text-[var(--text)] mb-2">
             This state was not derived from git.
           </h1>
-          <p className="text-sm text-[#64748b] leading-relaxed">
+          <p className="text-sm text-[var(--text-muted)] leading-relaxed">
             The page you're looking for doesn't exist — or it was merged and the ticket is still open somewhere.
           </p>
         </div>
@@ -70,8 +70,8 @@ export default function NotFound() {
         <div className="flex flex-col sm:flex-row gap-3 w-full">
           <button
             onClick={() => navigate(-1)}
-            className="flex-1 px-5 py-2.5 rounded-xl text-sm font-semibold text-[#94a3b8] transition-all duration-150 hover:text-[#e2e8f0] hover:border-[#334155]"
-            style={{ border: '1px solid #1e2d45' }}
+            className="flex-1 px-5 py-2.5 rounded-xl text-sm font-semibold text-[var(--text-muted)] transition-all duration-150 hover:text-[var(--text)] hover:border-[var(--border2)]"
+            style={{ border: '1px solid var(--border)' }}
           >
             Go back
           </button>
