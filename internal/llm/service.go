@@ -52,6 +52,22 @@ type DiffMeta struct {
 	PRID    string // pull_request UUID (optional)
 	PRTitle string // human-readable PR title (optional)
 	RepoName string // e.g. "owner/repo" (optional)
+	// Area is the cohort area (top-level dir) the change touches, used to frame
+	// the exemplars (optional).
+	Area string
+	// Exemplars are similar past merged PRs in the same cohort, injected as
+	// calibration anchors ("ran ~Xh predicted vs ~Yh actual"). Optional.
+	Exemplars []Exemplar
+}
+
+// Exemplar is a past merged PR used as a difficulty anchor in the prompt. It
+// gives the model concrete predicted-vs-actual ground truth from this org so its
+// difficulty judgment is grounded in how long similar work actually took.
+type Exemplar struct {
+	Title         string
+	Difficulty    float64
+	PredictedHours float64
+	ActualHours   float64
 }
 
 // DifficultySummary is the parsed result of EstimateDifficulty.
@@ -165,6 +181,23 @@ func buildDiffPrompt(diff string, meta DiffMeta) string {
 	if meta.PRID != "" {
 		fmt.Fprintf(&b, "PR ID: %s\n", meta.PRID)
 	}
+
+	// Calibration anchors: similar past merged PRs from this org. These ground the
+	// model's difficulty judgment in how long comparable work ACTUALLY took (the
+	// self-calibrating loop), without dictating the answer.
+	if len(meta.Exemplars) > 0 {
+		if meta.Area != "" {
+			fmt.Fprintf(&b, "\nFor calibration, here are similar past merged PRs in `%s` (predicted vs actual time taken):\n", meta.Area)
+		} else {
+			b.WriteString("\nFor calibration, here are similar past merged PRs (predicted vs actual time taken):\n")
+		}
+		for _, ex := range meta.Exemplars {
+			fmt.Fprintf(&b, "- difficulty %.1f: %q ran ~%.1fh predicted vs ~%.1fh actual\n",
+				ex.Difficulty, ex.Title, ex.PredictedHours, ex.ActualHours)
+		}
+		b.WriteString("Use these only as soft anchors for how effort scales here; judge THIS diff on its own merits.\n")
+	}
+
 	if b.Len() > 0 {
 		b.WriteString("\n")
 	}

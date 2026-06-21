@@ -27,6 +27,14 @@ type EffortEstimate struct {
 	Evidence   map[string]interface{} // jsonb column
 	Model      string
 	CreatedAt  time.Time
+
+	// Calibration fields (migration 017). Populated by EstimateForPR /
+	// RecomputeCalibration; nil/zero on legacy rows.
+	PredictedSecs *float64 // calibrated estimate at creation
+	ActualSecs    *int64   // observed lead time, backfilled at merge
+	CohortKey     string   // cohort used for the conversion
+	SizeBucket    string   // xs|s|m|l|xl
+	ChangeType    string   // feature|fix|refactor|chore|docs|test
 }
 
 // SaveEstimateInput carries the fields required to insert an effort estimate.

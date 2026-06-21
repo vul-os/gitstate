@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/exo/gitstate/internal/db"
+	"github.com/exo/gitstate/internal/metrics"
 	"github.com/exo/gitstate/internal/store"
 	"github.com/jackc/pgx/v5"
 )
@@ -138,6 +139,20 @@ func SyncRepo(ctx context.Context, database *db.DB, provider Provider, orgID str
 		return store.UpdateRepoSyncedAt(ctx, tx, orgID, repo.ID)
 	}); err != nil {
 		log.Error("sync: update last_synced_at", "err", err)
+	}
+
+	// ── 5. Post-sync metrics: cycle times + self-calibrating effort curves ─────
+	// Fresh merged PRs change the cycle-time series and the difficulty→time
+	// calibration. ComputeCycleTimes produces the lead times that
+	// RecomputeCalibration then backfills into effort_estimates.actual_secs and
+	// folds into the per-cohort curves. Non-fatal: a metrics failure must not fail
+	// the sync. The LLM is not needed here (nil-provider service is fine).
+	metricsSvc := metrics.New(database, nil)
+	if err := metricsSvc.ComputeCycleTimes(ctx, orgID, repo.ID); err != nil {
+		log.Error("sync: compute cycle times", "err", err)
+	}
+	if err := metricsSvc.RecomputeCalibration(ctx, orgID); err != nil {
+		log.Error("sync: recompute calibration", "err", err)
 	}
 
 	log.Info("sync: repo sync complete",

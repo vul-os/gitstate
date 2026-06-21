@@ -13,8 +13,10 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"regexp"
 	"time"
 
+	"github.com/exo/gitstate/internal/calibration"
 	"github.com/exo/gitstate/internal/db"
 	"github.com/exo/gitstate/internal/llm"
 	"github.com/exo/gitstate/internal/store"
@@ -303,9 +305,43 @@ func (s *Service) EstimateForPR(ctx context.Context, orgID, prID, diff string) (
 		return nil, fmt.Errorf("metrics.EstimateForPR: PR %s does not belong to org %s", prID, orgID)
 	}
 
+	// ── Derive cohort / size / change_type from the PR + its diff ───────────────
+	paths := diffChangedPaths(diff)
+	topDirs := calibration.TopDirsFromPaths(paths)
+	stats := calibration.DiffStats{
+		Additions:    pr.Additions,
+		Deletions:    pr.Deletions,
+		ChangedFiles: pr.ChangedFiles,
+		TopDirs:      topDirs,
+	}
+	prMeta := calibration.PRMeta{
+		RepoID: pr.RepoID,
+		Title:  pr.Title,
+		Paths:  paths,
+	}
+	changeType := calibration.ChangeType(prMeta)
+	sizeBucket := calibration.SizeBucket(stats)
+	cohortCandidates := calibration.CohortCandidates(prMeta, stats, changeType)
+	richestCohort := cohortCandidates[0]
+	area := ""
+	if len(topDirs) > 0 {
+		area = topDirs[0]
+	}
+
 	meta := llm.DiffMeta{
 		PRID:    prID,
 		PRTitle: pr.Title,
+		Area:    area,
+	}
+
+	// Fetch a few exemplars (similar past merged PRs in the richest cohort, with
+	// predicted + actual) to anchor the difficulty prompt. Cold-start: no rows,
+	// the estimate still proceeds with an empty anchor list.
+	if exs, err := s.fetchExemplars(ctx, orgID, richestCohort); err != nil {
+		slog.Warn("metrics: fetch exemplars failed (continuing without anchors)",
+			"org_id", orgID, "cohort", richestCohort, "err", err)
+	} else {
+		meta.Exemplars = exs
 	}
 
 	// Resolve the org's LLM mode: BYOK (org's own key, $0 managed cost) vs managed
@@ -326,6 +362,15 @@ func (s *Service) EstimateForPR(ctx context.Context, orgID, prID, diff string) (
 		return nil, fmt.Errorf("metrics.EstimateForPR: llm estimate: %w", err)
 	}
 
+	// Convert the model difficulty into calibrated seconds using the org's own
+	// learned curve (richest cohort first, empirical-Bayes shrinkage, cold-start
+	// fixed prior). This reads the DB inside its own WithOrg — never errors on
+	// "no data", only on real failures.
+	calRes, err := calibration.CalibratedSecs(ctx, s.db, orgID, summary.Difficulty, cohortCandidates)
+	if err != nil {
+		return nil, fmt.Errorf("metrics.EstimateForPR: calibrate: %w", err)
+	}
+
 	var saved *store.EffortEstimate
 	if err := s.db.WithOrg(ctx, orgID, func(tx pgx.Tx) error {
 		in := store.SaveEstimateInput{
@@ -341,6 +386,16 @@ func (s *Service) EstimateForPR(ctx context.Context, orgID, prID, diff string) (
 			return err
 		}
 		saved = est
+
+		// Persist the calibration fields on the freshly-inserted row.
+		if err := store.UpdateEstimateCalibration(ctx, tx, orgID, est.ID,
+			calRes.PredictedSecs, calRes.CohortKey, sizeBucket, changeType); err != nil {
+			return err
+		}
+		saved.PredictedSecs = &calRes.PredictedSecs
+		saved.CohortKey = calRes.CohortKey
+		saved.SizeBucket = sizeBucket
+		saved.ChangeType = changeType
 
 		// Meter managed LLM usage so it flows into billing overage (decisions P4,
 		// billing.GenerateInvoice aggregates kind="llm_tokens"). BYOK records $0 —
@@ -360,6 +415,85 @@ func (s *Service) EstimateForPR(ctx context.Context, orgID, prID, diff string) (
 	}
 
 	return saved, nil
+}
+
+// fetchExemplars loads up to 3 recent merged PRs in the given cohort that have
+// both a prediction and an actual, and converts them to LLM anchors (hours).
+// Returns an empty slice (not an error) on cold start.
+func (s *Service) fetchExemplars(ctx context.Context, orgID, cohortKey string) ([]llm.Exemplar, error) {
+	var exs []store.Exemplar
+	if err := s.db.WithOrg(ctx, orgID, func(tx pgx.Tx) error {
+		var e error
+		exs, e = store.ListExemplars(ctx, tx, orgID, cohortKey, 3)
+		return e
+	}); err != nil {
+		return nil, err
+	}
+	out := make([]llm.Exemplar, 0, len(exs))
+	for _, ex := range exs {
+		anchor := llm.Exemplar{Title: ex.PRTitle, Difficulty: ex.Difficulty}
+		if ex.PredictedSec != nil {
+			anchor.PredictedHours = *ex.PredictedSec / 3600
+		}
+		if ex.ActualSecs != nil {
+			anchor.ActualHours = float64(*ex.ActualSecs) / 3600
+		}
+		out = append(out, anchor)
+	}
+	return out, nil
+}
+
+// RecomputeCalibration re-derives the org's effort-calibration curves and
+// accuracy summary from its merged history. It is the closed-loop counterpart to
+// EstimateForPR and is invoked from the post-sync metrics path. Delegates to the
+// calibration package (which owns the WithOrg tx + the math).
+func (s *Service) RecomputeCalibration(ctx context.Context, orgID string) error {
+	return calibration.RecomputeCalibration(ctx, s.db, orgID, time.Now())
+}
+
+// diffFilePathRe matches the b-side path of a unified-diff file header:
+//
+//	+++ b/internal/api/x.go
+//	+++ internal/api/x.go   (no a/ b/ prefix)
+//
+// The "/dev/null" sentinel (deletions) is filtered out by the caller.
+var diffFilePathRe = regexp.MustCompile(`(?m)^\+\+\+ (?:b/)?(.+)$`)
+
+// diffChangedPaths extracts the changed file paths from a unified git diff so the
+// cohort area (top-level dir) can be derived. Best-effort: returns nil when the
+// diff is empty or has no recognisable headers (area cohort is then skipped).
+func diffChangedPaths(diff string) []string {
+	if diff == "" {
+		return nil
+	}
+	matches := diffFilePathRe.FindAllStringSubmatch(diff, -1)
+	seen := map[string]struct{}{}
+	var out []string
+	for _, m := range matches {
+		p := m[1]
+		// Strip a trailing tab + timestamp that some diff tools append.
+		if i := indexByte(p, '\t'); i >= 0 {
+			p = p[:i]
+		}
+		if p == "" || p == "/dev/null" {
+			continue
+		}
+		if _, ok := seen[p]; ok {
+			continue
+		}
+		seen[p] = struct{}{}
+		out = append(out, p)
+	}
+	return out
+}
+
+func indexByte(s string, b byte) int {
+	for i := 0; i < len(s); i++ {
+		if s[i] == b {
+			return i
+		}
+	}
+	return -1
 }
 
 // llmEstimateUsage produces an approximate (token-quantity, managed-cost-USD)
