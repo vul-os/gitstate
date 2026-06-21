@@ -77,6 +77,25 @@
   --brand-teal:   #2DD4BF;
   --brand-indigo: #6366F1;
 
+  /* Categorical data-viz palette — dark surfaces (vivid, high-chroma) */
+  --chart-1: #2DD4BF; /* teal */
+  --chart-2: #6366F1; /* indigo */
+  --chart-3: #F59E0B; /* amber */
+  --chart-4: #FB7185; /* rose */
+  --chart-5: #A78BFA; /* violet */
+  --chart-6: #22D3EE; /* cyan */
+
+  /* Semantic status — dark */
+  --ok:   #34D399;
+  --warn: #FBBF24;
+  --bad:  #F87171;
+  --info: #38BDF8;
+
+  /* Chart chrome — gridlines, axis labels, focus halo backdrop */
+  --chart-grid: rgba(148,163,184,0.10);
+  --chart-axis: var(--text-faint);
+  --chart-dot-ring: var(--bg-surface);
+
   color-scheme: dark;
 }
 
@@ -102,6 +121,26 @@
   /* Brand glows are dark-mode ambience; reduce to near-flat on light. */
   --shadow-glow-teal:   0 0 0 1px rgba(45,212,191,0.10);
   --shadow-glow-indigo: 0 0 0 1px rgba(99,102,241,0.10);
+
+  /* Categorical data-viz palette — light/paper-safe (deepened so vivid darks
+     read against the warm off-white without washing out or vibrating). */
+  --chart-1: #0D9488; /* teal, deepened */
+  --chart-2: #4F46E5; /* indigo, deepened */
+  --chart-3: #D97706; /* amber, deepened */
+  --chart-4: #E11D5E; /* rose, deepened */
+  --chart-5: #7C3AED; /* violet, deepened */
+  --chart-6: #0891B2; /* cyan, deepened */
+
+  /* Semantic status — light (AA on paper: chips/text carry these as fg) */
+  --ok:   #059669;
+  --warn: #B45309;
+  --bad:  #DC2626;
+  --info: #0284C7;
+
+  /* Chart chrome — slightly stronger grid so hairlines survive on paper */
+  --chart-grid: rgba(15,23,42,0.07);
+  --chart-axis: var(--text-faint);
+  --chart-dot-ring: var(--bg-surface);
 
   color-scheme: light;
 }

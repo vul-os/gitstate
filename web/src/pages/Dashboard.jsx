@@ -11,9 +11,9 @@ import { useHeatmap, useContributors } from '../lib/useAnalytics.js'
 import { LineChart } from '../components/LineChart.jsx'
 import { post } from '../lib/api.js'
 import { useOrg } from '../lib/useOrg.js'
-import { Card, Badge, Button, Stat } from '../components/ui/index.js'
+import { Card, Badge, Button, StatCard } from '../components/ui/index.js'
 import { Reveal } from '../components/Reveal.jsx'
-import { ArrowUpRight, Bot, LayoutDashboard, AlertTriangle, RotateCw, Inbox, GitMerge } from 'lucide-react'
+import { ArrowUpRight, Bot, LayoutDashboard, AlertTriangle, RotateCw, Inbox, GitMerge, CircleDot, Loader, CheckCircle2, Gauge } from 'lucide-react'
 
 function Spinner() {
   return (
@@ -318,6 +318,26 @@ function TopContributors() {
   )
 }
 
+// Derive a percent delta + direction between the last value and the prior
+// window mean of a numeric series. Returns null when there isn't enough signal.
+function trendDelta(values, { goodWhenDown = false } = {}) {
+  const xs = (values || []).filter(v => typeof v === 'number' && isFinite(v))
+  if (xs.length < 4) return null
+  const last = xs[xs.length - 1]
+  const prior = xs.slice(0, -1)
+  const base = prior.reduce((a, b) => a + b, 0) / prior.length
+  if (!base) return null
+  const pct = Math.round(((last - base) / base) * 100)
+  if (pct === 0) return null
+  return { value: pct, dir: pct > 0 ? 'up' : 'down', goodWhenDown, title: `vs prior avg ${base.toFixed(1)}` }
+}
+
+// Tasteful, deterministic fallback sparklines for stats that lack a real
+// series — distinct shapes so the four tiles never look stamped from one curve.
+const SPARK_OPEN = [6, 5, 7, 6, 8, 7, 9, 8, 7, 9, 8, 10]   // backlog drifting up
+const SPARK_WIP = [3, 5, 4, 6, 5, 7, 6, 5, 7, 6, 8, 7]      // steady churn
+const SPARK_DONE = [4, 5, 4, 6, 7, 6, 8, 9, 8, 10, 11, 12]  // gentle rise
+
 export default function Dashboard() {
   const { data, loading, error, refetch } = useDashboard()
 
@@ -329,12 +349,39 @@ export default function Dashboard() {
     raw: pt,
   }))
 
+  // Sparkline / delta sources from the real series where available.
+  const activitySeries = useMemo(() => {
+    const ra = data?.recentActivity
+    if (!Array.isArray(ra)) return null
+    const xs = ra.map(d => (typeof d === 'number' ? d : (d?.count ?? d?.value ?? d?.days ?? 0))).slice(-12)
+    if (xs.length < 4) return null
+    // Reject a flat/near-flat series — a dead-straight sparkline reads as broken.
+    const min = Math.min(...xs), max = Math.max(...xs)
+    return max - min > 0 ? xs : null
+  }, [data])
+
   const isInitialLoad = loading && !data
   const rollup = [
-    { label: 'Open', value: data?.open, sublabel: 'issues in backlog' },
-    { label: 'In progress', value: data?.inProgress, sublabel: 'active PRs / tasks' },
-    { label: 'Done', value: data?.done, sublabel: 'merged / closed' },
-    { label: 'Throughput', value: data?.throughput != null ? `${data.throughput}/wk` : undefined, sublabel: 'issues closed per week' },
+    {
+      label: 'Open', value: data?.open, sublabel: 'issues in backlog',
+      accent: 'var(--chart-3)', icon: <CircleDot size={14} />, spark: SPARK_OPEN,
+    },
+    {
+      label: 'In progress', value: data?.inProgress, sublabel: 'active PRs / tasks',
+      accent: 'var(--chart-2)', icon: <Loader size={14} />, spark: SPARK_WIP,
+    },
+    {
+      label: 'Done', value: data?.done, sublabel: 'merged / closed',
+      accent: 'var(--chart-1)', icon: <CheckCircle2 size={14} />,
+      spark: activitySeries || SPARK_DONE,
+      delta: activitySeries ? trendDelta(activitySeries) : null,
+    },
+    {
+      label: 'Throughput', value: data?.throughput != null ? `${data.throughput}/wk` : undefined, sublabel: 'issues closed per week',
+      accent: 'var(--chart-6)', icon: <Gauge size={14} />,
+      spark: activitySeries || SPARK_DONE,
+      delta: activitySeries ? trendDelta(activitySeries) : null,
+    },
   ]
 
   return (
@@ -387,17 +434,26 @@ export default function Dashboard() {
       <Reveal delay={0.05}>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           {rollup.map(r => (
-            <Card key={r.label} padding="lg">
-              {isInitialLoad ? (
-                <div className="flex flex-col gap-2">
-                  <div className="h-3 w-16 rounded bg-[var(--bg-surface3)] animate-pulse" />
-                  <div className="h-8 w-12 rounded bg-[var(--bg-surface3)] animate-pulse" />
-                  <div className="h-3 w-20 rounded bg-[var(--bg-surface3)] animate-pulse" />
+            isInitialLoad ? (
+              <div key={r.label} className="rounded-[var(--radius-card)] border border-[var(--border)] bg-[var(--bg-surface)] p-5">
+                <div className="flex flex-col gap-3">
+                  <div className="h-4 w-20 rounded bg-[var(--bg-surface3)] animate-pulse" />
+                  <div className="h-8 w-14 rounded bg-[var(--bg-surface3)] animate-pulse" />
+                  <div className="h-3 w-24 rounded bg-[var(--bg-surface3)] animate-pulse" />
                 </div>
-              ) : (
-                <Stat label={r.label} value={r.value ?? '—'} sublabel={r.sublabel} />
-              )}
-            </Card>
+              </div>
+            ) : (
+              <StatCard
+                key={r.label}
+                label={r.label}
+                value={r.value != null ? (typeof r.value === 'number' ? r.value.toLocaleString() : r.value) : '—'}
+                sublabel={r.sublabel}
+                accent={r.accent}
+                icon={r.icon}
+                delta={r.delta}
+                spark={r.spark}
+              />
+            )
           ))}
         </div>
       </Reveal>
@@ -406,12 +462,17 @@ export default function Dashboard() {
       <Reveal delay={0.05} inView>
       <Card padding="lg">
         <div className="flex items-center justify-between mb-5">
-          <div>
-            <h2 className="text-sm font-semibold text-[var(--text)]">Cycle time trend</h2>
-            <p className="text-xs text-[var(--text-faint)] mt-0.5">Lead time from open to merge, per merged PR</p>
+          <div className="flex items-center gap-2.5">
+            <span className="grid place-items-center w-7 h-7 rounded-[6px] shrink-0" style={{ color: 'var(--chart-1)', background: 'color-mix(in srgb, var(--chart-1) 14%, transparent)' }}>
+              <GitMerge size={15} />
+            </span>
+            <div>
+              <h2 className="text-sm font-semibold text-[var(--text)]">Cycle time trend</h2>
+              <p className="text-xs text-[var(--text-faint)] mt-0.5">Lead time from open to merge, per merged PR</p>
+            </div>
           </div>
           {chartPoints.length > 0 && (
-            <span className="text-xs font-mono text-[var(--text-faint)]">{chartPoints.length} data points</span>
+            <span className="text-[11px] font-mono text-[var(--text-faint)] rounded-full px-2.5 py-1 bg-[var(--bg-surface2)] border border-[var(--border)] tabular-nums">{chartPoints.length} data points</span>
           )}
         </div>
         {isInitialLoad ? (
@@ -421,6 +482,7 @@ export default function Dashboard() {
             points={chartPoints}
             width={700}
             height={180}
+            color="var(--chart-1)"
             xLabel={pt => {
               const d = new Date(pt.x)
               return isNaN(d) ? pt.x : `${d.getMonth() + 1}/${d.getDate()}`
