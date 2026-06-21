@@ -18,7 +18,7 @@
 import { useState, useMemo } from 'react'
 import {
   useContribution, saveWeights, DIMENSION_KEYS, DIMENSIONS, dimColor,
-  useContributionTrends, useEquity, useKudos,
+  useContributionTrends, useKudos,
 } from '../lib/useContribution.js'
 import { useOrg } from '../lib/useOrg.js'
 import { useAuth } from '../lib/useAuth.js'
@@ -28,7 +28,6 @@ import { WeightTuner } from '../components/contribution/WeightTuner.jsx'
 import { ContributorCard } from '../components/contribution/ContributorCard.jsx'
 import { ContributorDrawer } from '../components/contribution/ContributorDrawer.jsx'
 import { TrendsChart } from '../components/contribution/TrendsChart.jsx'
-import { EquityLedger } from '../components/contribution/EquityLedger.jsx'
 import { KudosModal, KudosFeed } from '../components/contribution/Kudos.jsx'
 import { computeComposite } from '../components/contribution/helpers.js'
 import { ShieldCheck, Info, Scale, Bot, Users, Sparkles, TrendingUp, Heart, Crown, ShieldHalf } from 'lucide-react'
@@ -213,7 +212,6 @@ function rankMembers(members, weights, serverOrderById) {
 const TABS = [
   { key: 'people', label: 'People', icon: Users },
   { key: 'trends', label: 'Over time', icon: TrendingUp },
-  { key: 'equity', label: 'Equity (advisory)', icon: Scale },
 ]
 
 export default function Contribution() {
@@ -231,7 +229,6 @@ export default function Contribution() {
 
   const { data, loading, error } = useContribution(range)
   const trends = useContributionTrends({ periods: 6, interval: 'month' })
-  const equity = useEquity({})
   const kudos = useKudos({})
 
   const kudosCounts = useMemo(() => kudos.data?.counts ?? {}, [kudos.data])
@@ -361,9 +358,7 @@ export default function Contribution() {
               <Button variant="outline" size="sm" leftIcon={<Heart size={14} />} onClick={() => openKudos(null)}>
                 Give kudos
               </Button>
-              {tab !== 'equity' && (
-                <PeriodSelector preset={preset} setPreset={setPreset} range={range} setRange={setRange} />
-              )}
+              <PeriodSelector preset={preset} setPreset={setPreset} range={range} setRange={setRange} />
             </div>
           </div>
         </div>
@@ -458,20 +453,6 @@ export default function Contribution() {
             <KudosFeed kudos={kudos.data?.kudos ?? []} loading={kudos.loading} />
           </Card>
         </div>
-      )}
-
-      {/* ── Equity (advisory) ─────────────────────────────────────── */}
-      {tab === 'equity' && (
-        <Reveal>
-          <EquityLedger
-            data={equity.data}
-            loading={equity.loading}
-            error={equity.error}
-            period={undefined}
-            canEdit={canEdit}
-            onRefetch={equity.refetch}
-          />
-        </Reveal>
       )}
 
       {/* Main layout: roster + sticky tuner */}

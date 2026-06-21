@@ -68,7 +68,7 @@ fails, so it drops straight into CI.
 | `02-dashboard` | Stat tiles render; the cycle-time-trend `LineChart` has real data points (`data-point-count > 0` + a line path with geometry). |
 | `03-board` | All four kanban columns render; **drags a card to another column** and verifies the move **persisted** via the API, then restores it. |
 | `04-analytics` | Analytics heatmap (cells) + Commits-over-time chart + leaderboard/data tables; Cycle Time chart + merged-PRs table; Involvement member cards. |
-| `05-contribution` | Roster loads; **People / Over time / Equity** tabs switch; **moving a weight slider re-orders the ranking**; opening a contributor drawer shows evidence + composite. |
+| `05-contribution` | Roster loads; **People / Over time** tabs switch; **moving a weight slider re-orders the ranking**; opening a contributor drawer shows evidence + composite. |
 | `06-capacity` | Balances render; the **leave-request form** opens with its controls; the **Approvals** tab shows pending requests. |
 | `07-eng-health` | DORA cards render: **change-failure rate, lead time p50, deploy frequency** + the change-failure-over-time chart. |
 | `08-invoices` | Invoice list + detail with line items; reads the share token and loads the **public `/i/:token`** invoice in a fresh, **unauthenticated** context (client-facing line items + totals render). |

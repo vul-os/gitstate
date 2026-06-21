@@ -163,47 +163,6 @@ export function useContributionTrends({ periods = 6, interval = 'month' } = {}) 
   return { data: state.data, loading: state.loading, error: state.error, refetch: doFetch }
 }
 
-// ── Equity ledger (advisory) ─────────────────────────────────────────────────
-
-/**
- * Advisory equity ledger for a period. `data` shape:
- *   { period, advisory:true, note, rows:[{ userId, name, email, composite,
- *       suggestedPct, actualPct|null, poolLabel, note }] }
- * `period` is a YYYY-MM-DD inside the target month (omitted ⇒ current month).
- */
-export function useEquity({ period } = {}) {
-  const { activeOrgId } = useOrg()
-  const [state, dispatch] = useReducer(reducer, null, makeInit)
-  const genRef = useRef(0)
-
-  const doFetch = useCallback(async () => {
-    if (!activeOrgId) return
-    const gen = ++genRef.current
-    dispatch({ type: 'FETCH_START' })
-    try {
-      const qs = period ? `?period=${encodeURIComponent(period)}` : ''
-      const raw = await api.get(`/api/equity${qs}`)
-      if (genRef.current !== gen) return
-      dispatch({ type: 'FETCH_DONE', data: raw ?? null })
-    } catch (e) {
-      if (genRef.current !== gen) return
-      dispatch({ type: 'FETCH_ERROR', error: e.message ?? 'Failed to load equity ledger' })
-    }
-  }, [activeOrgId, period])
-
-  useEffect(() => { doFetch().catch(() => {}) }, [doFetch])
-
-  return { data: state.data, loading: state.loading, error: state.error, refetch: doFetch }
-}
-
-/**
- * Record an admin-entered actual grant (owner/admin). `actualPct` null clears it.
- * Resolves to the refreshed ledger.
- */
-export function saveEquity({ userId, period, actualPct, poolLabel, note }) {
-  return api.put('/api/equity', { userId, period, actualPct, poolLabel, note })
-}
-
 // ── Kudos (peer recognition) ──────────────────────────────────────────────────
 
 /**

@@ -5,8 +5,6 @@
 //   - contribution_snapshots — a cached composite (+ the 6 dimension scores) per
 //     member per period, so "contribution over time" (trends) renders without
 //     recomputing every window on every page load. Idempotent upsert.
-//   - equity_allocations    — the advisory equity ledger: a contribution-weighted
-//     suggested_pct (model) alongside an admin-entered actual_pct (the real grant).
 //   - kudos                 — peer recognition (SPACE "satisfaction"; a partial
 //     answer to reviewer collusion — a human signal that doesn't feed the score).
 //
@@ -89,82 +87,6 @@ func ListContributionSnapshots(ctx context.Context, tx pgx.Tx, orgID string, sin
 		out = append(out, s)
 	}
 	return out, rows.Err()
-}
-
-// ── Equity ledger ───────────────────────────────────────────────────────────
-
-// EquityAllocation is one member's row in the advisory equity ledger: the
-// contribution-weighted suggested share (model) and the admin-entered actual
-// grant (which is what really happened — the model only informs it).
-type EquityAllocation struct {
-	UserID       string    `json:"userId"`
-	Name         string    `json:"name"`
-	Email        string    `json:"email"`
-	PeriodStart  time.Time `json:"periodStart"`
-	PeriodEnd    time.Time `json:"periodEnd"`
-	SuggestedPct float64   `json:"suggestedPct"`
-	ActualPct    *float64  `json:"actualPct"` // null until an admin records a real grant
-	PoolLabel    string    `json:"poolLabel"`
-	Note         string    `json:"note"`
-}
-
-// ListEquityAllocations returns the stored ledger rows for a period (the
-// admin-entered actual_pct / pool_label / note), keyed by user. The advisory
-// suggested_pct is recomputed live from contribution by the service layer, so
-// callers treat the stored suggested_pct as a fallback only.
-// Must run inside db.WithOrg.
-func ListEquityAllocations(ctx context.Context, tx pgx.Tx, orgID string, start, end time.Time) (map[string]EquityAllocation, error) {
-	const q = `
-		SELECT e.user_id::text, COALESCE(u.name,''), COALESCE(u.email::text,''),
-		       e.period_start, e.period_end, e.suggested_pct::float8, e.actual_pct,
-		       e.pool_label, COALESCE(e.note,'')
-		FROM equity_allocations e
-		LEFT JOIN users u ON u.id = e.user_id
-		WHERE e.org_id = $1 AND e.period_start = ($2)::date AND e.period_end = ($3)::date`
-	rows, err := tx.Query(ctx, q, orgID, start, end)
-	if err != nil {
-		return nil, fmt.Errorf("store: list equity allocations: %w", err)
-	}
-	defer rows.Close()
-
-	out := map[string]EquityAllocation{}
-	for rows.Next() {
-		var a EquityAllocation
-		var actual *float64
-		if err := rows.Scan(&a.UserID, &a.Name, &a.Email, &a.PeriodStart, &a.PeriodEnd,
-			&a.SuggestedPct, &actual, &a.PoolLabel, &a.Note); err != nil {
-			return nil, fmt.Errorf("store: scan equity allocation: %w", err)
-		}
-		a.ActualPct = actual
-		out[a.UserID] = a
-	}
-	return out, rows.Err()
-}
-
-// UpsertEquityAllocation writes the model's suggested_pct AND any admin-entered
-// actual_pct / pool_label / note for one member in a period (idempotent on
-// org_id,user_id,period_start,period_end). suggestedPct is always refreshed from
-// the live model; actual_pct/pool_label/note are preserved/overwritten as given.
-// Must run inside db.WithOrg.
-func UpsertEquityAllocation(ctx context.Context, tx pgx.Tx, a EquityAllocation, orgID string) error {
-	const q = `
-		INSERT INTO equity_allocations
-		    (org_id, user_id, period_start, period_end, suggested_pct, actual_pct, pool_label, note)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-		ON CONFLICT (org_id, user_id, period_start, period_end) DO UPDATE SET
-			suggested_pct = EXCLUDED.suggested_pct,
-			actual_pct    = EXCLUDED.actual_pct,
-			pool_label    = EXCLUDED.pool_label,
-			note          = EXCLUDED.note`
-	label := a.PoolLabel
-	if label == "" {
-		label = "Contribution pool"
-	}
-	if _, err := tx.Exec(ctx, q, orgID, a.UserID, a.PeriodStart, a.PeriodEnd,
-		a.SuggestedPct, a.ActualPct, label, a.Note); err != nil {
-		return fmt.Errorf("store: upsert equity allocation: %w", err)
-	}
-	return nil
 }
 
 // ── Kudos ───────────────────────────────────────────────────────────────────

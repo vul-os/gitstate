@@ -495,9 +495,8 @@ func Profiles(raw []RawMember, method NormMethod, w Weights) []Member {
 	// GAMING RESISTANCE: agent-bot identities are EXCLUDED from the cohort used for
 	// within-project normalization. They are surfaced (flagged) in the output but
 	// must never shift a human's percentile / min-max — otherwise a bot inflating a
-	// dimension would deflate every human on it (and contradict ComputeEquity, which
-	// already excludes bots). humanIdx maps a position in the human-only vectors back
-	// to the original raw index.
+	// dimension would deflate every human on it. humanIdx maps a position in the
+	// human-only vectors back to the original raw index.
 	humanIdx := make([]int, 0, n)
 	for i, m := range raw {
 		if !m.IsAgentBot {

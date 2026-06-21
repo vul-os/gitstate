@@ -2,9 +2,6 @@
 // DB-backed tests for the three contribution extensions:
 //   - snapshots:  UpsertContributionSnapshot is idempotent (re-upsert overwrites,
 //     never duplicates) and dimensions JSON round-trips.
-//   - equity:     suggested_pct = a member's composite ÷ Σ(human composites) × 100
-//     (agent identities EXCLUDED from the pool) — we compute the shares from a
-//     fixture and persist/read them via UpsertEquityAllocation/ListEquityAllocations.
 //   - kudos:      InsertKudo + ListKudos + KudosCounts aggregate per recipient.
 //
 // One transaction, always rolled back. RLS enforced under the app role.
@@ -13,7 +10,6 @@ package store
 import (
 	"context"
 	"fmt"
-	"math"
 	"os"
 	"testing"
 	"time"
@@ -105,85 +101,6 @@ func TestContributionExtras(t *testing.T) {
 		t.Errorf("snapshot joined name = %q, want alice", snaps[0].Name)
 	}
 
-	// ── Equity: suggested_pct = composite ÷ Σ human composites × 100. ──
-	// Fixture composites: alice=60, bob=40, agentBot=100 (EXCLUDED).
-	// Pool sum (humans only) = 100 → alice 60%, bob 40%.
-	type member struct {
-		userID    string
-		composite float64
-		isAgent   bool
-	}
-	roster := []member{
-		{alice, 60, false},
-		{bob, 40, false},
-		{"agent-bot", 100, true}, // no real user id; excluded
-	}
-	var poolSum float64
-	for _, m := range roster {
-		if m.isAgent {
-			continue
-		}
-		poolSum += m.composite
-	}
-	round1 := func(x float64) float64 { return math.Round(x*10) / 10 }
-	for _, m := range roster {
-		if m.isAgent {
-			continue // agents are not in the equity pool
-		}
-		suggested := round1(100 * m.composite / poolSum)
-		if err := UpsertEquityAllocation(ctx, tx, EquityAllocation{
-			UserID:       m.userID,
-			PeriodStart:  start,
-			PeriodEnd:    end,
-			SuggestedPct: suggested,
-		}, orgID); err != nil {
-			t.Fatalf("UpsertEquityAllocation %s: %v", m.userID, err)
-		}
-	}
-	allocs, err := ListEquityAllocations(ctx, tx, orgID, start, end)
-	if err != nil {
-		t.Fatalf("ListEquityAllocations: %v", err)
-	}
-	if len(allocs) != 2 {
-		t.Fatalf("equity allocations = %d, want 2 (agents excluded)", len(allocs))
-	}
-	if allocs[alice].SuggestedPct != 60 {
-		t.Errorf("alice suggested = %v, want 60", allocs[alice].SuggestedPct)
-	}
-	if allocs[bob].SuggestedPct != 40 {
-		t.Errorf("bob suggested = %v, want 40", allocs[bob].SuggestedPct)
-	}
-	var total float64
-	for _, a := range allocs {
-		total += a.SuggestedPct
-	}
-	if total != 100 {
-		t.Errorf("suggested-pct sum = %v, want 100", total)
-	}
-
-	// Upsert an admin actual_pct on alice; re-list reflects it.
-	actual := 55.0
-	if err := UpsertEquityAllocation(ctx, tx, EquityAllocation{
-		UserID: alice, PeriodStart: start, PeriodEnd: end,
-		SuggestedPct: 60, ActualPct: &actual, PoolLabel: "Seed pool", Note: "founder",
-	}, orgID); err != nil {
-		t.Fatalf("UpsertEquityAllocation actual: %v", err)
-	}
-	allocs2, err := ListEquityAllocations(ctx, tx, orgID, start, end)
-	if err != nil {
-		t.Fatalf("ListEquityAllocations #2: %v", err)
-	}
-	if len(allocs2) != 2 {
-		t.Errorf("equity allocations after actual upsert = %d, want 2 (idempotent)", len(allocs2))
-	}
-	a := allocs2[alice]
-	if a.ActualPct == nil || *a.ActualPct != 55 {
-		t.Errorf("alice actual_pct = %v, want 55", a.ActualPct)
-	}
-	if a.PoolLabel != "Seed pool" {
-		t.Errorf("alice pool label = %q, want Seed pool", a.PoolLabel)
-	}
-
 	// ── Kudos: insert + list + per-recipient counts. ──
 	if _, err := InsertKudo(ctx, tx, orgID, alice, bob, "review", "great review"); err != nil {
 		t.Fatalf("InsertKudo a→b: %v", err)
@@ -223,6 +140,6 @@ func TestContributionExtras(t *testing.T) {
 		t.Errorf("alice kudos count = %d, want 1", counts[alice])
 	}
 
-	t.Logf("contribution extras OK: 1 snapshot (idempotent), equity 60/40, kudos counts bob=%d alice=%d",
+	t.Logf("contribution extras OK: 1 snapshot (idempotent), kudos counts bob=%d alice=%d",
 		counts[bob], counts[alice])
 }

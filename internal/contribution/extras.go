@@ -5,9 +5,6 @@
 //   - Trends  — the composite (+ 6 dimension scores) per member across the last
 //     ~N periods, persisted to contribution_snapshots (idempotent) and returned
 //     as a per-member series for the over-time chart / sparklines.
-//   - Equity  — an ADVISORY ledger: suggestedPct = composite ÷ Σcomposites × 100
-//     (a contribution-weighted share of a pool; agent bots excluded) alongside any
-//     admin-recorded actual_pct. The model INFORMS; it never decides.
 //   - Kudos   — peer recognition (a human signal that does NOT feed the score).
 //
 // Every DB touch runs org-scoped via db.WithOrg so RLS enforces the boundary.
@@ -163,128 +160,6 @@ func lastComposite(s TrendSeries) float64 {
 		return 0
 	}
 	return s.Points[len(s.Points)-1].Composite
-}
-
-// ── Equity ledger (advisory) ────────────────────────────────────────────────
-
-// EquityRow is one member's advisory equity line: the contribution-weighted
-// suggested share alongside the admin-entered actual grant.
-type EquityRow struct {
-	UserID       string   `json:"userId"`
-	Name         string   `json:"name"`
-	Email        string   `json:"email"`
-	Composite    float64  `json:"composite"`
-	SuggestedPct float64  `json:"suggestedPct"`
-	ActualPct    *float64 `json:"actualPct"`
-	PoolLabel    string   `json:"poolLabel"`
-	Note         string   `json:"note"`
-}
-
-// EquityLedger is the full advisory ledger for a period.
-type EquityLedger struct {
-	Period   Period      `json:"period"`
-	Advisory bool        `json:"advisory"` // ALWAYS true — the model informs, never decides
-	Rows     []EquityRow `json:"rows"`
-}
-
-// ComputeEquity builds the advisory ledger for a period: suggestedPct = each
-// (human) member's composite ÷ Σcomposites × 100. Agent bots are EXCLUDED from
-// the pool (their output never converts to a person's equity). Any stored
-// actual_pct / pool_label / note is merged in. The model is advisory only.
-func (s *Service) ComputeEquity(ctx context.Context, orgID string, p Period) (EquityLedger, error) {
-	rep, err := s.Compute(ctx, orgID, p)
-	if err != nil {
-		return EquityLedger{}, err
-	}
-
-	// Sum composites over HUMAN members with a real user identity.
-	var total float64
-	for _, m := range rep.Members {
-		if m.IsAgentBot || m.UserID == "" {
-			continue
-		}
-		if m.Composite > 0 {
-			total += m.Composite
-		}
-	}
-
-	// Load any admin-entered actuals for this exact period window.
-	var stored map[string]store.EquityAllocation
-	err = s.db.WithOrg(ctx, orgID, func(tx pgx.Tx) error {
-		var e error
-		stored, e = store.ListEquityAllocations(ctx, tx, orgID, p.From, p.To)
-		return e
-	})
-	if err != nil {
-		return EquityLedger{}, err
-	}
-
-	rows := make([]EquityRow, 0, len(rep.Members))
-	for _, m := range rep.Members {
-		if m.IsAgentBot || m.UserID == "" {
-			continue
-		}
-		suggested := 0.0
-		if total > 0 && m.Composite > 0 {
-			suggested = round1(100 * m.Composite / total)
-		}
-		row := EquityRow{
-			UserID:       m.UserID,
-			Name:         m.Name,
-			Email:        m.Email,
-			Composite:    m.Composite,
-			SuggestedPct: suggested,
-			PoolLabel:    "Contribution pool",
-		}
-		if a, ok := stored[m.UserID]; ok {
-			row.ActualPct = a.ActualPct
-			if a.PoolLabel != "" {
-				row.PoolLabel = a.PoolLabel
-			}
-			row.Note = a.Note
-		}
-		rows = append(rows, row)
-	}
-
-	return EquityLedger{Period: p, Advisory: true, Rows: rows}, nil
-}
-
-// SetEquityActual records an admin's REAL grant for one member in a period
-// (actual_pct / pool_label / note). suggestedPct is recomputed from the live
-// model and stored alongside so the ledger row is self-describing. Caller
-// enforces owner/admin. Returns the refreshed ledger.
-func (s *Service) SetEquityActual(ctx context.Context, orgID, userID string, p Period, actualPct *float64, poolLabel, note string) (EquityLedger, error) {
-	// Recompute the model so the persisted suggested_pct matches the current view.
-	ledger, err := s.ComputeEquity(ctx, orgID, p)
-	if err != nil {
-		return EquityLedger{}, err
-	}
-	var suggested float64
-	for _, r := range ledger.Rows {
-		if r.UserID == userID {
-			suggested = r.SuggestedPct
-			break
-		}
-	}
-	if poolLabel == "" {
-		poolLabel = "Contribution pool"
-	}
-
-	err = s.db.WithOrg(ctx, orgID, func(tx pgx.Tx) error {
-		return store.UpsertEquityAllocation(ctx, tx, store.EquityAllocation{
-			UserID:       userID,
-			PeriodStart:  p.From,
-			PeriodEnd:    p.To,
-			SuggestedPct: suggested,
-			ActualPct:    actualPct,
-			PoolLabel:    poolLabel,
-			Note:         note,
-		}, orgID)
-	})
-	if err != nil {
-		return EquityLedger{}, err
-	}
-	return s.ComputeEquity(ctx, orgID, p)
 }
 
 // ── Kudos ───────────────────────────────────────────────────────────────────

@@ -274,7 +274,7 @@ func main() {
 	// ── 10. Involvement texture (per member/project, monthly) ─────────────
 	s.seedInvolvement(org.ID, projects, commitStats)
 
-	// ── 10a. Contribution extras: trends snapshots · kudos · equity ledger ─
+	// ── 10a. Contribution extras: trends snapshots · kudos ────────────────
 	s.seedContributionExtras(org.ID)
 
 	// ── 10b. Client invoicing: demo clients + generated invoices ──────────
@@ -1102,21 +1102,19 @@ func (s *seeder) seedIssues(orgID string, repos []*store.Repo, projects []*proje
 
 // ── involvement texture ─────────────────────────────────────────────────────
 
-// seedContributionExtras backfills the three CONTRIBUTION extensions so the new
-// views (trends · equity · kudos) are never empty:
+// seedContributionExtras backfills the CONTRIBUTION extensions so the new
+// views (trends · kudos) are never empty:
 //
 //   - ~6 monthly contribution_snapshots per HUMAN member, with composites that
 //     VARY over time (some rising, some flat, one declining) so the over-time
 //     chart + sparklines read like a real team, not a flat line.
 //   - a handful of peer kudos between members (the human "satisfaction" signal).
-//   - a couple of equity_allocations with actual_pct set, so the advisory ledger
-//     shows suggested-vs-actual divergence out of the box.
 //
-// Idempotent: snapshots/equity upsert on their UNIQUE keys; kudos are cleared for
+// Idempotent: snapshots upsert on their UNIQUE keys; kudos are cleared for
 // the org first (they have no natural key) so re-running doesn't pile up dupes.
 func (s *seeder) seedContributionExtras(orgID string) {
-	// Human members only (agent bots are excluded from equity and don't get a
-	// personal trend). Order matters for deterministic archetypes below.
+	// Human members only (agent bots don't get a personal trend). Order matters
+	// for deterministic archetypes below.
 	humans := make([]*member, 0, len(members))
 	for _, m := range members {
 		if !m.isAgent && m.role != "stakeholder" {
@@ -1198,30 +1196,6 @@ func (s *seeder) seedContributionExtras(orgID string) {
 				continue
 			}
 			if _, err := store.InsertKudo(s.ctx, tx, orgID, k.from, k.to, k.dim, k.msg); err != nil {
-				return err
-			}
-		}
-		return nil
-	}))
-
-	// 3) Equity ledger — record a couple of admin-entered actual grants for the
-	//    CURRENT month so the advisory ledger shows suggested-vs-actual out of the
-	//    box. suggested_pct is left at 0 here; the live GET /api/equity recomputes
-	//    it from contribution, so the stored value is just a fallback.
-	curStart := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
-	curEnd := curStart.AddDate(0, 1, 0)
-	pct := func(v float64) *float64 { return &v }
-	s.must(s.db.WithOrg(s.ctx, orgID, func(tx pgx.Tx) error {
-		grants := []store.EquityAllocation{
-			{UserID: pick(0).user.ID, ActualPct: pct(22.5), PoolLabel: "FY26 contribution pool",
-				Note: "Founding owner; weighting reviewed with the team."},
-			{UserID: pick(1).user.ID, ActualPct: pct(18.0), PoolLabel: "FY26 contribution pool",
-				Note: "Senior reviewer — share reflects the invisible unblocking work."},
-			{UserID: pick(2).user.ID, ActualPct: pct(16.0), PoolLabel: "FY26 contribution pool", Note: ""},
-		}
-		for _, g := range grants {
-			g.PeriodStart, g.PeriodEnd = curStart, curEnd
-			if err := store.UpsertEquityAllocation(s.ctx, tx, g, orgID); err != nil {
 				return err
 			}
 		}
@@ -2504,7 +2478,7 @@ func (s *seeder) printSummary(
 ║  Leave:      %d   (%d pending → Approvals)   Time entries: %d
 ║  Deployments:%d   (%d failed)   Incidents: %d
 ║  Notifs:     %d channels · %d delivery-log entries · 2 webhook configs
-║  Contribution: ~6mo trend snapshots · peer kudos · advisory equity ledger
+║  Contribution: ~6mo trend snapshots · peer kudos
 ║  Invoicing:  %d clients · %d invoices (%d draft · %d sent · %d paid · %d overdue)  git-evidence lines
 ║
 ║  → Open http://localhost:8080/login

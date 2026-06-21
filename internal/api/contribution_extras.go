@@ -3,14 +3,11 @@
 // contributionHandlers, registered by RegisterContributionRoutes):
 //
 //	GET  /api/contribution/trends?periods=6&interval=month → per-member composite series
-//	GET  /api/equity?period=YYYY-MM-DD                      → advisory ledger (suggested vs actual)
-//	PUT  /api/equity   (owner/admin)                        → record actual_pct / pool_label / note
 //	GET  /api/kudos?user=                                   → peer recognition feed (+ counts)
 //	POST /api/kudos                                          → give kudos (giver = caller)
 //
 // All routes are behind RequireAuth + OrgScope; every read/write runs inside
-// db.WithOrg so RLS enforces the org boundary. The equity ledger is ADVISORY —
-// suggestedPct is the contribution-weighted share; it informs, never decides.
+// db.WithOrg so RLS enforces the org boundary.
 package api
 
 import (
@@ -60,129 +57,6 @@ func (h *contributionHandlers) trends(w http.ResponseWriter, r *http.Request) {
 		"interval": string(interval),
 		"periods":  periods,
 		"series":   series,
-	})
-}
-
-// ── Equity ledger (advisory) ────────────────────────────────────────────────
-
-// equityPeriod resolves the ledger window: ?period=YYYY-MM-DD anchors the calendar
-// month containing that date; omitted ⇒ the current calendar month. The month is
-// the natural equity-grant cadence and matches the snapshot windows.
-func equityPeriod(r *http.Request) contribution.Period {
-	now := time.Now().UTC()
-	anchor := now
-	if s := r.URL.Query().Get("period"); s != "" {
-		if t, err := parseContribDate(s); err == nil {
-			anchor = t
-		}
-	}
-	start := time.Date(anchor.Year(), anchor.Month(), 1, 0, 0, 0, 0, time.UTC)
-	end := start.AddDate(0, 1, 0)
-	return contribution.Period{From: start, To: end}
-}
-
-// GET /api/equity?period=
-func (h *contributionHandlers) equity(w http.ResponseWriter, r *http.Request) {
-	orgID := middleware.OrgFromContext(r.Context())
-	if orgID == "" {
-		writeError(w, http.StatusBadRequest, "X-Org-ID header required")
-		return
-	}
-	p := equityPeriod(r)
-	ledger, err := h.svc.ComputeEquity(r.Context(), orgID, p)
-	if err != nil {
-		slog.Error("equity ledger", "err", err)
-		writeError(w, http.StatusInternalServerError, "could not compute equity ledger")
-		return
-	}
-	if ledger.Rows == nil {
-		ledger.Rows = []contribution.EquityRow{}
-	}
-	writeJSON(w, http.StatusOK, map[string]any{
-		"period":   ledger.Period,
-		"advisory": true,
-		"note":     "Advisory only: suggestedPct is each member's contribution-weighted share of the pool. It informs allocation conversations — it does not decide them.",
-		"rows":     ledger.Rows,
-	})
-}
-
-type putEquityJSON struct {
-	UserID    string   `json:"userId"`
-	Period    string   `json:"period"`    // YYYY-MM-DD inside the target month (optional)
-	ActualPct *float64 `json:"actualPct"` // null clears a previously-entered grant
-	PoolLabel string   `json:"poolLabel"`
-	Note      string   `json:"note"`
-}
-
-// PUT /api/equity — owner/admin only.
-func (h *contributionHandlers) putEquity(w http.ResponseWriter, r *http.Request) {
-	orgID := middleware.OrgFromContext(r.Context())
-	if orgID == "" {
-		writeError(w, http.StatusBadRequest, "X-Org-ID header required")
-		return
-	}
-	user := middleware.UserFromContext(r.Context())
-	if user == nil {
-		writeError(w, http.StatusUnauthorized, "authentication required")
-		return
-	}
-	role, err := store.GetMemberRole(r.Context(), h.db.Pool(), orgID, user.ID)
-	if err != nil || !canManageMembers(role) {
-		writeError(w, http.StatusForbidden, "only owners and admins can record equity allocations")
-		return
-	}
-
-	var body putEquityJSON
-	if err := decodeJSON(r, &body); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
-		return
-	}
-	if strings.TrimSpace(body.UserID) == "" {
-		writeError(w, http.StatusBadRequest, "userId required")
-		return
-	}
-	// The grant target must be a member of THIS org — otherwise we'd persist an
-	// equity row for a stranger's id.
-	if _, err := store.GetMemberRole(r.Context(), h.db.Pool(), orgID, body.UserID); err != nil {
-		if errors.Is(err, store.ErrNotFound) {
-			writeError(w, http.StatusNotFound, "userId is not a member of this org")
-			return
-		}
-		slog.Error("equity put member lookup", "err", err)
-		writeError(w, http.StatusInternalServerError, "could not validate member")
-		return
-	}
-	if body.ActualPct != nil && (*body.ActualPct < 0 || *body.ActualPct > 100) {
-		writeError(w, http.StatusBadRequest, "actualPct must be between 0 and 100")
-		return
-	}
-
-	// Resolve the same calendar-month window the GET uses.
-	pr := r
-	if body.Period != "" {
-		q := r.URL.Query()
-		q.Set("period", body.Period)
-		clone := *r
-		u := *r.URL
-		u.RawQuery = q.Encode()
-		clone.URL = &u
-		pr = &clone
-	}
-	p := equityPeriod(pr)
-
-	ledger, err := h.svc.SetEquityActual(r.Context(), orgID, body.UserID, p, body.ActualPct, body.PoolLabel, body.Note)
-	if err != nil {
-		slog.Error("equity put", "err", err)
-		writeError(w, http.StatusInternalServerError, "could not save equity allocation")
-		return
-	}
-	if ledger.Rows == nil {
-		ledger.Rows = []contribution.EquityRow{}
-	}
-	writeJSON(w, http.StatusOK, map[string]any{
-		"period":   ledger.Period,
-		"advisory": true,
-		"rows":     ledger.Rows,
 	})
 }
 

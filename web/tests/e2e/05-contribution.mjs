@@ -30,15 +30,13 @@ test('contribution: roster, tabs, slider re-rank, drawer', async ({ page }) => {
   const before = await rosterNames(page)
   assert(before.length >= 2, `contribution: expected >=2 contributors, got ${before.length}`)
 
-  // Tab switching: Over time and Equity render without errors.
+  // Tab switching: Over time renders without errors.
   await page.getByRole('button', { name: 'Over time' }).click()
   await settle(page, { extra: 300 })
   await assertVisible(
     page.getByText('Composite over time'),
     'contribution: "Composite over time" after switching to Over time tab',
   )
-  await page.getByRole('button', { name: 'Equity (advisory)' }).click()
-  await settle(page, { extra: 300 })
   // Back to People for the re-rank test.
   await page.getByRole('button', { name: 'People', exact: true }).click()
   await settle(page, { extra: 300 })
