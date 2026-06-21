@@ -6,6 +6,7 @@ require (
 	github.com/golang-jwt/jwt/v5 v5.2.2
 	github.com/google/go-github/v66 v66.0.0
 	github.com/jackc/pgx/v5 v5.10.0
+	github.com/oschwald/maxminddb-golang/v2 v2.4.0
 	gitlab.com/gitlab-org/api/client-go v1.46.0
 	golang.org/x/crypto v0.31.0
 	golang.org/x/oauth2 v0.34.0

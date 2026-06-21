@@ -7,6 +7,7 @@ import (
 	"net/http"
 
 	"github.com/exo/gitstate/internal/admin"
+	"github.com/exo/gitstate/internal/analytics"
 	"github.com/exo/gitstate/internal/config"
 	"github.com/exo/gitstate/internal/db"
 	"github.com/exo/gitstate/internal/middleware"
@@ -82,6 +83,12 @@ func NewRouter(cfg *config.Config, database *db.DB) http.Handler {
 		corsOrigin = "http://localhost:5173" // Vite default
 	}
 
+	// Geo-analytics capture (innermost: runs after AuthContext so it sees the
+	// principal; records signup/login/pageview events with a salted IP hash +
+	// coarse geo, off the request path). Graceful when DB/mmdb/salt are absent.
+	geo := analytics.NewGeoResolver(cfg.Admin.GeoIPDBPath)
+	capture := analytics.Capture(database, cfg, geo)
+
 	return middleware.Chain(
 		mux,
 		middleware.Recoverer,
@@ -89,6 +96,7 @@ func NewRouter(cfg *config.Config, database *db.DB) http.Handler {
 		middleware.RateLimit(300), // per-IP global rate limit (token bucket)
 		middleware.CORS(corsOrigin),
 		middleware.AuthContext,
+		capture,
 	)
 }
 

@@ -357,6 +357,12 @@
       <a href="/admin/orgs" class="nav-link {{if eq .ActivePage "orgs"}}active{{end}}">
         <span class="nav-icon">◎</span> Organizations
       </a>
+      <a href="/admin/analytics" class="nav-link {{if eq .ActivePage "geo"}}active{{end}}">
+        <span class="nav-icon">◍</span> Geo &amp; Realtime
+      </a>
+      <a href="/admin/cogs" class="nav-link {{if eq .ActivePage "cogs"}}active{{end}}">
+        <span class="nav-icon">▦</span> Cloud COGS
+      </a>
 
       {{if .EE}}
       <div class="nav-label">Enterprise</div>

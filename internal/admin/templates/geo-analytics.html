@@ -1,0 +1,135 @@
+{{template "layout.html" .}}
+
+{{define "title"}}Geo Analytics{{end}}
+{{define "topbar"}}Geo &amp; Realtime{{end}}
+
+{{define "content"}}
+<div class="page-header">
+  <div>
+    <div class="page-title">Geo &amp; Realtime</div>
+    <div class="page-subtitle">Where traffic comes from and what is happening right now. IPs are never stored — only a salted hash and coarse geo.</div>
+  </div>
+  <div id="online-now" style="font-size:12px;color:var(--text-muted)"
+    hx-get="/admin/analytics/online" hx-trigger="load, every 10s" hx-swap="innerHTML">
+    <span class="realtime-dot"></span> {{.OnlineNow}} online now
+  </div>
+</div>
+
+<div class="grid-2">
+  <!-- Top countries -->
+  <div class="card">
+    <div class="card-title">
+      <span>Top Countries</span>
+      <span style="font-size:11px;color:var(--text-dim);font-weight:600;text-transform:uppercase;letter-spacing:.6px">Last 30 days</span>
+    </div>
+    {{if .Countries}}
+    <div class="plan-bars">
+      {{range .Countries}}
+      <div class="plan-row">
+        <div class="plan-name">{{flag .Country}} {{.Country}}</div>
+        <div class="plan-bar-track">
+          <div class="plan-bar-fill" style="width:{{planPct .Count $.MaxCountry}}%"></div>
+        </div>
+        <div class="plan-count">{{.Count}}</div>
+      </div>
+      {{end}}
+    </div>
+    {{else}}
+    <div class="empty">No geo-resolved traffic yet.</div>
+    {{end}}
+  </div>
+
+  <!-- Event kind breakdown -->
+  <div class="card">
+    <div class="card-title">
+      <span>Events by Kind</span>
+      <span style="font-size:11px;color:var(--text-dim);font-weight:600;text-transform:uppercase;letter-spacing:.6px">Last 30 days</span>
+    </div>
+    {{if .Kinds}}
+    <div class="plan-bars">
+      {{range .Kinds}}
+      <div class="plan-row">
+        <div class="plan-name">{{.Kind}}</div>
+        <div class="plan-bar-track">
+          <div class="plan-bar-fill" style="width:{{planPct .Count $.MaxKind}}%"></div>
+        </div>
+        <div class="plan-count">{{.Count}}</div>
+      </div>
+      {{end}}
+    </div>
+    {{else}}
+    <div class="empty">No events recorded yet.</div>
+    {{end}}
+  </div>
+</div>
+
+<!-- Signups & logins time-series -->
+<div class="card">
+  <div class="card-title">
+    <span>Signups &amp; Logins</span>
+    <span style="font-size:11px;color:var(--text-dim);font-weight:600;text-transform:uppercase;letter-spacing:.6px">Last 30 days</span>
+  </div>
+  {{if or .Signups .Logins}}
+  <div class="sparkline-wrap">
+    <svg viewBox="0 0 300 60" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg" style="width:100%;height:110px;display:block">
+      <defs>
+        <linearGradient id="sg" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="var(--gs-teal)" stop-opacity=".42"/>
+          <stop offset="100%" stop-color="var(--gs-teal)" stop-opacity="0"/>
+        </linearGradient>
+      </defs>
+      {{eventSparkline .Signups "var(--gs-teal)"}}
+      {{eventSparkline .Logins "var(--gs-indigo-light)"}}
+    </svg>
+  </div>
+  <div style="font-size:12px;color:var(--text-muted);margin-top:10px;display:flex;gap:18px">
+    <span><span style="display:inline-block;width:9px;height:9px;border-radius:2px;background:var(--gs-teal);margin-right:5px"></span>Signups</span>
+    <span><span style="display:inline-block;width:9px;height:9px;border-radius:2px;background:var(--gs-indigo-light);margin-right:5px"></span>Logins</span>
+  </div>
+  {{else}}
+  <div class="empty">No signup or login activity yet.</div>
+  {{end}}
+</div>
+
+<!-- Realtime activity feed -->
+<div class="card">
+  <div class="card-title">
+    <span>Realtime Activity</span>
+    <span style="font-size:11px;color:var(--text-dim);font-weight:600;text-transform:uppercase;letter-spacing:.6px">
+      <span class="realtime-dot"></span> Auto-refresh
+    </span>
+  </div>
+  <div id="activity-feed" hx-get="/admin/analytics/feed" hx-trigger="load, every 5s" hx-swap="innerHTML">
+    {{template "activity-feed" .}}
+  </div>
+</div>
+{{end}}
+
+{{define "activity-feed"}}
+<div class="table-wrap">
+  <table>
+    <thead>
+      <tr>
+        <th>When</th>
+        <th>Kind</th>
+        <th>Location</th>
+        <th>Path</th>
+        <th style="text-align:right">Status</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{range .Recent}}
+      <tr>
+        <td style="color:var(--text-muted)">{{clock .CreatedAt}}</td>
+        <td>{{kindBadge .Kind}}</td>
+        <td>{{flag .Country}} {{geoLabel .Country .Region .City}}</td>
+        <td class="mono">{{.Method}} {{.Path}}</td>
+        <td style="text-align:right">{{if .Status}}{{.Status}}{{else}}—{{end}}</td>
+      </tr>
+      {{else}}
+      <tr><td colspan="5" class="empty">No recent activity.</td></tr>
+      {{end}}
+    </tbody>
+  </table>
+</div>
+{{end}}
