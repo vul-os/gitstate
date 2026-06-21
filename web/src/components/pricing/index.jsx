@@ -92,35 +92,40 @@ export function PlanCard({ plan, recommended, format }) {
   const features = PLAN_FEATURES[plan.key] ?? []
 
   return (
-    <Card
-      padding="lg"
-      glow={recommended}
-      className={[
-        'group relative flex flex-col gap-5 transition-all duration-300',
-        recommended
-          ? 'border-[#2DD4BF]/45 shadow-[0_0_0_1px_rgba(45,212,191,0.25),0_8px_40px_rgba(45,212,191,0.12),0_24px_64px_rgba(0,0,0,0.35)] lg:-translate-y-2'
-          : 'hover:border-[var(--border2)] hover:-translate-y-1 hover:shadow-[var(--shadow-card-hover)]',
-      ].join(' ')}
-    >
+    // Non-clipping wrapper so the protruding "Recommended" pill isn't cut off by
+    // the Card's overflow-hidden (which still contains the card's glow/grain).
+    <div className={['group relative flex flex-col h-full', recommended ? 'lg:-translate-y-2' : ''].join(' ')}>
       {recommended && (
-        <>
-          {/* top accent rail */}
+        <div className="absolute -top-3 left-1/2 -translate-x-1/2 z-20">
           <span
-            aria-hidden
-            className="absolute inset-x-0 top-0 h-px"
-            style={{ background: 'linear-gradient(90deg, transparent, #2DD4BF, #6366F1, transparent)' }}
-          />
-          <Glow variant="teal" size={260} className="-top-8 right-0 opacity-50 group-hover:opacity-70 transition-opacity" />
-          <div className="absolute -top-3 left-1/2 -translate-x-1/2 z-10">
-            <span
-              className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-mono font-semibold uppercase tracking-wider text-[#0B1120] shadow-[0_4px_14px_rgba(45,212,191,0.4)]"
-              style={{ background: 'linear-gradient(135deg, #2DD4BF, #6366F1)' }}
-            >
-              <Sparkles size={11} strokeWidth={2.5} /> Recommended
-            </span>
-          </div>
-        </>
+            className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-mono font-semibold uppercase tracking-wider text-[#0B1120] shadow-[0_4px_14px_rgba(45,212,191,0.4)] whitespace-nowrap"
+            style={{ background: 'linear-gradient(135deg, #2DD4BF, #6366F1)' }}
+          >
+            <Sparkles size={11} strokeWidth={2.5} /> Recommended
+          </span>
+        </div>
       )}
+      <Card
+        padding="lg"
+        glow={recommended}
+        className={[
+          'relative flex flex-1 flex-col gap-5 transition-all duration-300',
+          recommended
+            ? 'border-[#2DD4BF]/45 shadow-[0_0_0_1px_rgba(45,212,191,0.25),0_8px_40px_rgba(45,212,191,0.12),var(--shadow-card)]'
+            : 'hover:border-[var(--border2)] hover:-translate-y-1 hover:shadow-[var(--shadow-card-hover)]',
+        ].join(' ')}
+      >
+        {recommended && (
+          <>
+            {/* top accent rail */}
+            <span
+              aria-hidden
+              className="absolute inset-x-0 top-0 h-px"
+              style={{ background: 'linear-gradient(90deg, transparent, #2DD4BF, #6366F1, transparent)' }}
+            />
+            <Glow variant="teal" size={260} className="-top-8 right-0 opacity-50 group-hover:opacity-70 transition-opacity" />
+          </>
+        )}
 
       {/* Header */}
       <div className="flex items-start justify-between gap-2 relative z-[1]">
@@ -242,7 +247,8 @@ export function PlanCard({ plan, recommended, format }) {
           )
         })}
       </ul>
-    </Card>
+      </Card>
+    </div>
   )
 }
 
