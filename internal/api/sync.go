@@ -36,12 +36,18 @@ func RegisterSyncRoutes(mux *http.ServeMux, database *db.DB, cfg *config.Config)
 	auth := func(handler http.Handler) http.Handler {
 		return requireAuth(orgScope(handler))
 	}
+	// Read access that also accepts a scoped API token (gsk_…) so agents/the
+	// gittrack CLI can list issues; human JWT sessions still work unchanged.
+	tokenOrAuth := middleware.RequireAuthOrToken(cfg, database)
+	readIssues := func(handler http.Handler) http.Handler {
+		return tokenOrAuth(middleware.RequireScope("read:issues")(handler))
+	}
 
 	mux.Handle("GET /api/repos", auth(http.HandlerFunc(h.listRepos)))
 	mux.Handle("POST /api/repos", auth(http.HandlerFunc(h.connectRepo)))
 	mux.Handle("POST /api/repos/{id}/sync", auth(http.HandlerFunc(h.triggerSync)))
 
-	mux.Handle("GET /api/issues", auth(http.HandlerFunc(h.listIssues)))
+	mux.Handle("GET /api/issues", readIssues(http.HandlerFunc(h.listIssues)))
 	mux.Handle("POST /api/issues", auth(http.HandlerFunc(h.createIssue)))
 	mux.Handle("PATCH /api/issues/{id}", auth(http.HandlerFunc(h.patchIssue)))
 }
