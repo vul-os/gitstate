@@ -138,7 +138,9 @@ func GetSubscription(ctx context.Context, pool *pgxpool.Pool, orgID string) (*Su
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	if _, err := tx.Exec(ctx, "SET LOCAL app.current_org = $1", orgID); err != nil {
+	// SET LOCAL does not accept bind parameters ($1); set_config(...,true) is the
+	// parameterized, transaction-local equivalent (mirrors db.WithOrg).
+	if _, err := tx.Exec(ctx, "SELECT set_config('app.current_org', $1, true)", orgID); err != nil {
 		return nil, fmt.Errorf("store.billing: get subscription: set org: %w", err)
 	}
 
