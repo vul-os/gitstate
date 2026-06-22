@@ -94,16 +94,20 @@ type GitConfig struct {
 	GitLab GitLabConfig `yaml:"gitlab"`
 }
 
-// GitHubConfig holds GitHub OAuth app credentials.
+// GitHubConfig holds GitHub OAuth app credentials. The same app powers BOTH
+// "Sign in with GitHub" (identity scopes) and "Connect repositories" (repo
+// scopes) — one app, incremental authorization. LoginEnabled is derived.
 type GitHubConfig struct {
 	OAuthClientID     string `yaml:"oauth_client_id"`
 	OAuthClientSecret string `yaml:"oauth_client_secret"`
+	LoginEnabled      bool   `yaml:"-"` // derived: true iff id+secret set
 }
 
-// GitLabConfig holds GitLab OAuth app credentials.
+// GitLabConfig holds GitLab OAuth app credentials (login + connect, one app).
 type GitLabConfig struct {
 	OAuthClientID     string `yaml:"oauth_client_id"`
 	OAuthClientSecret string `yaml:"oauth_client_secret"`
+	LoginEnabled      bool   `yaml:"-"` // derived: true iff id+secret set
 }
 
 // LLMConfig holds LLM provider settings.
@@ -268,6 +272,14 @@ func Load() (*Config, error) {
 	cfg.Auth.Providers.Microsoft.Enabled =
 		cfg.Auth.Providers.Microsoft.ClientID != "" &&
 			cfg.Auth.Providers.Microsoft.ClientSecret != ""
+
+	// GitHub/GitLab "Sign in with" reuse the git connect app (one app, incremental
+	// scopes): login asks for identity scopes only; "Connect repos" re-requests
+	// the heavier repo scopes later.
+	cfg.Git.GitHub.LoginEnabled =
+		cfg.Git.GitHub.OAuthClientID != "" && cfg.Git.GitHub.OAuthClientSecret != ""
+	cfg.Git.GitLab.LoginEnabled =
+		cfg.Git.GitLab.OAuthClientID != "" && cfg.Git.GitLab.OAuthClientSecret != ""
 
 	cfg.Accounting.Xero.Enabled =
 		cfg.Accounting.Xero.ClientID != "" && cfg.Accounting.Xero.ClientSecret != ""

@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -67,6 +68,37 @@ func GetUserByID(ctx context.Context, pool *pgxpool.Pool, id string) (*User, err
 		return nil, ErrNotFound
 	}
 	return u, err
+}
+
+// ErrEmailTaken is returned when updating a profile to an email another user holds.
+var ErrEmailTaken = errors.New("store: email already in use")
+
+// UpdateUserProfile updates a user's display name and/or contact email and returns
+// the updated row. Empty name/email leave that field unchanged. The users.email
+// citext UNIQUE constraint is surfaced as ErrEmailTaken so callers return 409.
+func UpdateUserProfile(ctx context.Context, pool *pgxpool.Pool, id, name, email string) (*User, error) {
+	const q = `
+		UPDATE users SET
+			name       = COALESCE(NULLIF($2,''), name),
+			email      = COALESCE(NULLIF($3,'')::citext, email),
+			updated_at = now()
+		WHERE id = $1
+		RETURNING id, email, name, COALESCE(avatar_url,''), COALESCE(password_hash,''),
+		          is_super_admin, created_at, updated_at`
+
+	row := pool.QueryRow(ctx, q, id, name, email)
+	u, err := scanUser(row)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		// 23505 = unique_violation on the email citext index.
+		if strings.Contains(err.Error(), "23505") || strings.Contains(err.Error(), "users_email_key") {
+			return nil, ErrEmailTaken
+		}
+		return nil, err
+	}
+	return u, nil
 }
 
 // scanUser reads a single user row.

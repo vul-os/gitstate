@@ -43,6 +43,7 @@ func NewRouter(cfg *config.Config, database *db.DB) http.Handler {
 		RegisterAuthRoutes(mux, database, cfg)
 		RegisterOAuthRoutes(mux, database, cfg)
 		RegisterOrgRoutes(mux, database, cfg)
+		RegisterProfileRoutes(mux, database, cfg)
 		RegisterProjectRoutes(mux, database, cfg)
 		RegisterSyncRoutes(mux, database, cfg)
 		RegisterConnectRoutes(mux, database, cfg)
@@ -121,9 +122,12 @@ type publicAuthConfig struct {
 	Providers publicProviderStatuses `json:"providers"`
 }
 
+// publicProviderStatuses lists which "Sign in with" buttons to render. The login
+// page surfaces developer identities (GitHub/GitLab); Google/Microsoft are used
+// for calendar, not login.
 type publicProviderStatuses struct {
-	Google    bool `json:"google"`
-	Microsoft bool `json:"microsoft"`
+	GitHub bool `json:"github"`
+	GitLab bool `json:"gitlab"`
 }
 
 type publicBillingInfo struct {
@@ -139,8 +143,8 @@ func handleAPIConfig(cfg *config.Config) http.HandlerFunc {
 			Auth: publicAuthConfig{
 				Password: cfg.Auth.Password,
 				Providers: publicProviderStatuses{
-					Google:    cfg.Auth.Providers.Google.Enabled,
-					Microsoft: cfg.Auth.Providers.Microsoft.Enabled,
+					GitHub: cfg.Git.GitHub.LoginEnabled,
+					GitLab: cfg.Git.GitLab.LoginEnabled,
 				},
 			},
 			Billing: publicBillingInfo{
