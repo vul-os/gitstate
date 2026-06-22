@@ -173,17 +173,18 @@ function Avatar({ user }) {
   )
 }
 
-export function Sidebar() {
+export function Sidebar({ onNavigate }) {
   const { user, logout } = useAuth()
   const navigate = useNavigate()
 
   async function handleLogout() {
+    onNavigate?.()
     await logout()
     navigate('/login', { replace: true })
   }
 
   return (
-    <aside className="flex flex-col w-[216px] shrink-0 h-screen sticky top-0 border-r border-[var(--border)] bg-[var(--bg-surface)]">
+    <aside className="flex flex-col w-full lg:w-[216px] shrink-0 h-screen lg:sticky lg:top-0 border-r border-[var(--border)] bg-[var(--bg-surface)]">
 
       {/* Logo */}
       <div className="flex items-center gap-2.5 px-4 h-14 border-b border-[var(--border)] shrink-0">
@@ -218,6 +219,7 @@ export function Sidebar() {
                 key={to}
                 to={to}
                 end={end}
+                onClick={onNavigate}
                 className={({ isActive }) =>
                   [
                     'flex items-center gap-2.5 px-2.5 py-[7px] rounded-lg text-[13px] font-medium transition-all duration-150',

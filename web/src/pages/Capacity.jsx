@@ -423,7 +423,8 @@ export default function Capacity() {
               </Card>
             ) : (
               <Card padding="none" className="overflow-hidden">
-                <table className="w-full">
+                <div className="overflow-x-auto">
+                <table className="w-full min-w-[520px]">
                   <thead>
                     <tr className="bg-[var(--bg-surface2)]/40 border-b border-[var(--border)]">
                       {[...(meId ? [] : ['Member']), 'Type', 'Dates', 'Days', 'Status', 'Note'].map(h => (
@@ -437,6 +438,7 @@ export default function Capacity() {
                     ))}
                   </tbody>
                 </table>
+                </div>
               </Card>
             )}
           </section>

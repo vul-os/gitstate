@@ -11,7 +11,7 @@ const TH = 'text-left px-4 py-2.5 text-[10px] font-semibold text-[var(--text-fai
 
 export function TableView({ issues, onCardClick }) {
   return (
-    <div className="rounded-[var(--radius-card)] overflow-hidden border border-[var(--border)] bg-[var(--bg-surface)] shadow-[var(--shadow-card)]">
+    <div className="rounded-[var(--radius-card)] overflow-x-auto border border-[var(--border)] bg-[var(--bg-surface)] shadow-[var(--shadow-card)]">
       <table className="w-full text-sm border-collapse">
         <thead>
           <tr className="bg-[var(--bg-surface2)]/40 border-b border-[var(--border)]">

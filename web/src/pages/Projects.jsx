@@ -279,7 +279,7 @@ export default function Projects() {
       {!loading && projects.length > 0 && (
         <>
           <Reveal>
-            <div className="grid grid-cols-3 gap-4 mb-6">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
               <StatCard label="Projects" value={stats.total.toLocaleString()} sublabel="total" accent="var(--chart-2)" icon={<Boxes size={14} />} />
               <StatCard label="Active" value={stats.active.toLocaleString()} sublabel="in progress" accent="var(--chart-1)" icon={<Activity size={14} />} />
               <StatCard label="Archived" value={stats.archived.toLocaleString()} sublabel="closed out" accent="var(--text-faint)" icon={<Archive size={14} />} />

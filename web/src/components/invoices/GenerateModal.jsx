@@ -145,7 +145,7 @@ export default function GenerateModal({ clients, projects, onClose, onCreated })
 
         {/* Inputs */}
         <div className="px-6 py-5 space-y-4">
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <Field label="Client" htmlFor={`${uid}-client`}>
               <div className="relative">
                 <select id={`${uid}-client`} value={clientId} onChange={(e) => onClientChange(e.target.value)} className={`${inputCls} appearance-none pr-8`}>
@@ -170,7 +170,7 @@ export default function GenerateModal({ clients, projects, onClose, onCreated })
             </Field>
           </div>
 
-          <div className="grid grid-cols-3 gap-4">
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
             <Field label="From" htmlFor={`${uid}-from`}>
               <input id={`${uid}-from`} type="date" value={from} onChange={(e) => { setFrom(e.target.value); setPreview(null) }} className={inputCls} />
             </Field>

@@ -47,7 +47,7 @@ export function CreateIssueModal({ projects, onClose, onCreate }) {
         role="dialog"
         aria-modal="true"
         aria-labelledby="create-issue-title"
-        className="fixed left-1/2 top-1/2 z-50 w-full max-w-lg -translate-x-1/2 -translate-y-1/2 rounded-[var(--radius-card)] bg-[var(--bg-surface)] border border-[var(--border)] shadow-[var(--shadow-float)]"
+        className="fixed left-1/2 top-1/2 z-50 w-[calc(100%-2rem)] max-w-lg -translate-x-1/2 -translate-y-1/2 max-h-[90vh] overflow-y-auto rounded-[var(--radius-card)] bg-[var(--bg-surface)] border border-[var(--border)] shadow-[var(--shadow-float)]"
       >
         {/* Header */}
         <div className="px-6 pt-6 pb-4 border-b border-[var(--border)]">

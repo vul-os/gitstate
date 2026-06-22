@@ -210,7 +210,7 @@ export default function Members() {
       {/* Headline counts */}
       {!loading && members.length > 0 && (
         <Reveal delay={0.04}>
-          <div className="grid grid-cols-3 gap-4 mb-6">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
             <StatCard
               label="Members"
               value={members.length.toLocaleString()}
