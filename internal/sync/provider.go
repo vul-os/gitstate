@@ -97,28 +97,72 @@ func NewGitHubProvider(ctx context.Context, token string) Provider {
 func (g *githubProvider) Platform() string { return "github" }
 
 func (g *githubProvider) ListRepos(ctx context.Context) ([]RemoteRepo, error) {
-	opts := &gogithub.RepositoryListByAuthenticatedUserOptions{
-		ListOptions: gogithub.ListOptions{PerPage: 100},
-	}
 	var out []RemoteRepo
+	seen := map[int64]bool{}
+	add := func(r *gogithub.Repository) {
+		id := r.GetID()
+		if id == 0 || seen[id] {
+			return
+		}
+		seen[id] = true
+		out = append(out, RemoteRepo{
+			ExternalID:    fmt.Sprintf("%d", id),
+			FullName:      r.GetFullName(),
+			DefaultBranch: r.GetDefaultBranch(),
+			CloneURL:      r.GetCloneURL(),
+		})
+	}
+
+	// 1. Repos the authenticated user owns / collaborates on. (/user/repos does NOT
+	//    reliably return all repos of an org the user belongs to — see step 2.)
+	uopts := &gogithub.RepositoryListByAuthenticatedUserOptions{ListOptions: gogithub.ListOptions{PerPage: 100}}
 	for {
-		repos, resp, err := g.client.Repositories.ListByAuthenticatedUser(ctx, opts)
+		repos, resp, err := g.client.Repositories.ListByAuthenticatedUser(ctx, uopts)
 		if err != nil {
-			return nil, fmt.Errorf("github: list repos: %w", err)
+			return nil, fmt.Errorf("github: list user repos: %w", err)
 		}
 		for _, r := range repos {
-			out = append(out, RemoteRepo{
-				ExternalID:    fmt.Sprintf("%d", r.GetID()),
-				FullName:      r.GetFullName(),
-				DefaultBranch: r.GetDefaultBranch(),
-				CloneURL:      r.GetCloneURL(),
-			})
+			add(r)
 		}
 		if resp.NextPage == 0 {
 			break
 		}
-		opts.Page = resp.NextPage
+		uopts.Page = resp.NextPage
 	}
+
+	// 2. ALL repos in each org the user belongs to. This is the fix for "only got
+	//    43 of 100+": /user/repos misses org repos the user isn't directly affiliated
+	//    with, so enumerate the user's orgs and page through /orgs/{org}/repos.
+	var orgs []*gogithub.Organization
+	oopts := &gogithub.ListOptions{PerPage: 100}
+	for {
+		page, resp, err := g.client.Organizations.List(ctx, "", oopts)
+		if err != nil {
+			break // best-effort: user repos are already collected
+		}
+		orgs = append(orgs, page...)
+		if resp.NextPage == 0 {
+			break
+		}
+		oopts.Page = resp.NextPage
+	}
+	for _, org := range orgs {
+		ropts := &gogithub.RepositoryListByOrgOptions{ListOptions: gogithub.ListOptions{PerPage: 100}}
+		for {
+			repos, resp, err := g.client.Repositories.ListByOrg(ctx, org.GetLogin(), ropts)
+			if err != nil {
+				break // org may restrict the OAuth app; skip it, keep the rest
+			}
+			for _, r := range repos {
+				add(r)
+			}
+			if resp.NextPage == 0 {
+				break
+			}
+			ropts.Page = resp.NextPage
+		}
+	}
+
 	return out, nil
 }
 

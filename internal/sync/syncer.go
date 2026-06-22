@@ -1,9 +1,12 @@
 package sync
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"log/slog"
+	"os"
+	"os/exec"
 	"regexp"
 	"strconv"
 	"strings"
@@ -11,6 +14,7 @@ import (
 
 	"github.com/exo/gitstate/internal/db"
 	"github.com/exo/gitstate/internal/embed"
+	"github.com/exo/gitstate/internal/git"
 	"github.com/exo/gitstate/internal/gitanalysis"
 	"github.com/exo/gitstate/internal/metrics"
 	"github.com/exo/gitstate/internal/store"
@@ -23,6 +27,73 @@ import (
 //
 // Capture group 1 is the issue number string.
 var issueRefRe = regexp.MustCompile(`(?i)(?:closes?|fixes?|resolves?)?\s*#(\d+)`)
+
+// cloneAndIngest does ONE full clone of the repo and populates BOTH the commits
+// table (so Analytics, Cycle Time, and Contribution have data) AND the deep
+// git-analysis tables (commit_files / blame-survival / SZZ). A full clone (no
+// --depth) is required because blame-survival needs real history. Best-effort:
+// every step logs and continues, so a private repo the token can't read, or a
+// blame hiccup, never fails the overall sync.
+func cloneAndIngest(ctx context.Context, database *db.DB, orgID string, repo store.Repo, token string, log *slog.Logger) {
+	tmp, err := os.MkdirTemp("", "gitstate-sync-*")
+	if err != nil {
+		log.Error("sync: temp dir", "err", err)
+		return
+	}
+	defer func() { _ = os.RemoveAll(tmp) }()
+
+	cloneCtx, cancel := context.WithTimeout(ctx, 10*time.Minute)
+	defer cancel()
+	var stderr bytes.Buffer
+	cmd := exec.CommandContext(cloneCtx, "git", "clone", "--no-tags", injectCloneToken(repo.CloneURL, token), tmp)
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		log.Error("sync: clone repo", "err", err, "stderr", strings.TrimSpace(stderr.String()))
+		return
+	}
+
+	// 1. Raw commits → commits table (feeds Analytics, the heatmap, Cycle Time, Contribution).
+	if commits, err := git.WalkCommits(ctx, tmp, time.Time{}); err != nil {
+		log.Error("sync: walk commits", "err", err)
+	} else if len(commits) > 0 {
+		if e := database.WithOrg(ctx, orgID, func(tx pgx.Tx) error {
+			for _, c := range commits {
+				if err := store.UpsertCommit(ctx, tx, &store.Commit{
+					OrgID: orgID, RepoID: repo.ID, SHA: c.SHA,
+					AuthorLogin: c.AuthorName, AuthorEmail: c.AuthorEmail, IsAgent: c.IsAgent,
+					Message: c.Message, Additions: c.Additions, Deletions: c.Deletions, CommittedAt: c.CommittedAt,
+				}); err != nil {
+					return err
+				}
+			}
+			return nil
+		}); e != nil {
+			log.Error("sync: store commits", "err", e)
+		} else {
+			log.Info("sync: commits stored", "count", len(commits))
+		}
+	}
+
+	// 2. Deep analysis → commit_files / blame-survival / SZZ (Contribution dashboards).
+	if res, err := gitanalysis.AnalyzeRepo(ctx, tmp); err != nil {
+		log.Error("sync: analyze git history", "err", err)
+	} else if err := store.StoreResult(ctx, database, orgID, repo.ID, res); err != nil {
+		log.Error("sync: store git analysis", "err", err)
+	}
+}
+
+// injectCloneToken adds x-access-token auth to an https clone URL so private repos
+// can be cloned with the org's stored token.
+func injectCloneToken(url, token string) string {
+	if token == "" || !strings.HasPrefix(url, "https://") {
+		return url
+	}
+	rest := url[len("https://"):]
+	if i := strings.IndexByte(rest, '/'); i >= 0 && strings.Contains(rest[:i], "@") {
+		return url // already has userinfo
+	}
+	return "https://x-access-token:" + token + "@" + rest
+}
 
 // SyncRepo pulls all issues and pull requests from the remote platform into the
 // gitstate database for the given repo, then computes derived_state from linked
@@ -154,12 +225,8 @@ func SyncRepo(ctx context.Context, database *db.DB, provider Provider, orgID str
 	// BEFORE ComputeCycleTimes so lead times have first-commit timestamps.
 	if repo.CloneURL == "" {
 		log.Warn("sync: no clone URL — skipping commit/contribution analysis")
-	} else if res, err := gitanalysis.CloneAndAnalyze(ctx, repo.CloneURL, cloneToken); err != nil {
-		log.Error("sync: clone + analyze git history", "err", err)
-	} else if err := store.StoreResult(ctx, database, orgID, repo.ID, res); err != nil {
-		log.Error("sync: store git analysis", "err", err)
 	} else {
-		log.Info("sync: git analysis stored")
+		cloneAndIngest(ctx, database, orgID, repo, cloneToken, log)
 	}
 
 	// ── 5. Post-sync metrics: cycle times + self-calibrating effort curves ─────
