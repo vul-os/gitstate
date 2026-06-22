@@ -1,4 +1,4 @@
-<!-- title: The Wedge | order: 2 | category: Getting Started | summary: Why gitstate exists and why the incumbents structurally can't copy it. -->
+<!-- title: The Wedge | order: 2 | category: Getting Started | tier: Using gitstate | summary: Why gitstate exists and why the incumbents structurally can't copy it. -->
 
 # The Wedge
 

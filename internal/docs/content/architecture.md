@@ -1,4 +1,4 @@
-<!-- title: Architecture | order: 40 | category: Reference | summary: The components, package map, request lifecycle, and open-core split. -->
+<!-- title: Architecture | order: 50 | category: Reference | tier: Developers & contributors | summary: The components, package map, request lifecycle, and open-core split. -->
 
 # Architecture
 

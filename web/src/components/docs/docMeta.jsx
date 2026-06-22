@@ -26,25 +26,64 @@ import {
   ListTree,
   Brain,
   CalendarClock,
+  Cloud,
+  CreditCard,
+  GitBranch,
 } from 'lucide-react'
 
+// ── Tiers ──────────────────────────────────────────────────────────────────────
+// The three top-level audiences, top → bottom. Every category belongs to exactly
+// one tier (see CATEGORY_TIER below). Both the docs home and the sidebar render
+// these as labelled dividers above their category groups.
+export const TIER_USING = 'Using gitstate'
+export const TIER_CLOUD = 'Cloud'
+export const TIER_DEV = 'Developers & contributors'
+
+export const TIER_ORDER = [TIER_USING, TIER_CLOUD, TIER_DEV]
+
+export const TIER_META = {
+  [TIER_USING]: { icon: BookOpen, blurb: 'Run gitstate day to day — concepts, surfaces, and answers.' },
+  [TIER_CLOUD]: { icon: Cloud, blurb: 'Billing and everything specific to gitstate Cloud.' },
+  [TIER_DEV]: { icon: GitBranch, blurb: 'Self-host, internals, and the API — for OSS contributors.' },
+}
+
 // Canonical category order + the icon/accent shown on the home page.
+// Ordered top → bottom across all three tiers.
 export const CATEGORY_ORDER = [
+  // Tier 1 — Using gitstate
   'Getting Started',
   'Concepts',
-  'Guides',
-  'Operations',
-  'Reference',
+  'Using gitstate',
   'Help',
+  // Tier 2 — Cloud
+  'Cloud',
+  // Tier 3 — Developers & contributors
+  'Self-hosting & operations',
+  'Reference',
+  'Project',
 ]
+
+// Maps each category to its tier. Categories not listed fall back to TIER_USING.
+export const CATEGORY_TIER = {
+  'Getting Started': TIER_USING,
+  Concepts: TIER_USING,
+  'Using gitstate': TIER_USING,
+  Help: TIER_USING,
+  Cloud: TIER_CLOUD,
+  'Self-hosting & operations': TIER_DEV,
+  Reference: TIER_DEV,
+  Project: TIER_DEV,
+}
 
 export const CATEGORY_META = {
   'Getting Started': { icon: Rocket, blurb: 'Install, run, and connect your first repo.' },
   Concepts: { icon: Compass, blurb: 'The mental model behind derived state.' },
-  Guides: { icon: BookOpen, blurb: 'Task-focused walkthroughs of each surface.' },
-  Operations: { icon: Wrench, blurb: 'Configure, deploy, and secure your instance.' },
-  Reference: { icon: Library, blurb: 'The API, data model, and command-line tools.' },
-  Help: { icon: HelpCircle, blurb: 'Answers, status, and where things are headed.' },
+  'Using gitstate': { icon: BookOpen, blurb: 'Task-focused walkthroughs of each surface.' },
+  Help: { icon: HelpCircle, blurb: 'Answers to the questions people ask first.' },
+  Cloud: { icon: CreditCard, blurb: 'Pricing, invoices, and account billing.' },
+  'Self-hosting & operations': { icon: Wrench, blurb: 'Deploy, configure, and secure your own instance.' },
+  Reference: { icon: Library, blurb: 'The API, data model, internals, and command-line tools.' },
+  Project: { icon: MapIcon, blurb: 'Status, what’s shipped, and where gitstate is heading.' },
 }
 
 // Per-slug icon for the doc cards (falls back to a category/keyword guess).
@@ -119,4 +158,33 @@ export function groupByCategory(docs = []) {
     ordered.push({ category: cat, docs: list })
   }
   return ordered
+}
+
+/**
+ * Group a flat doc list into ordered tiers, each holding its category sections:
+ *   [{ tier, blurb, icon, sections: [{ category, docs[] }] }]
+ * Tiers follow TIER_ORDER; categories within a tier follow CATEGORY_ORDER
+ * (already enforced by groupByCategory). Empty tiers are dropped.
+ */
+export function groupByTier(docs = []) {
+  const sections = groupByCategory(docs)
+  const byTier = new Map(TIER_ORDER.map((t) => [t, []]))
+  for (const s of sections) {
+    const tier = CATEGORY_TIER[s.category] ?? TIER_USING
+    if (!byTier.has(tier)) byTier.set(tier, [])
+    byTier.get(tier).push(s)
+  }
+  const out = []
+  for (const tier of TIER_ORDER) {
+    const list = byTier.get(tier) ?? []
+    if (list.length === 0) continue
+    const meta = TIER_META[tier] ?? {}
+    out.push({ tier, blurb: meta.blurb, icon: meta.icon, sections: list })
+  }
+  // Append any unknown tiers (defensive).
+  for (const [tier, list] of byTier) {
+    if (TIER_ORDER.includes(tier) || list.length === 0) continue
+    out.push({ tier, blurb: '', icon: undefined, sections: list })
+  }
+  return out
 }

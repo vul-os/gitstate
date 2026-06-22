@@ -1,4 +1,4 @@
-<!-- title: Glossary | order: 43 | category: Reference | summary: Plain-English definitions for the terms used across these docs. -->
+<!-- title: Glossary | order: 53 | category: Reference | tier: Developers & contributors | summary: Plain-English definitions for the terms used across these docs. -->
 
 # Glossary
 

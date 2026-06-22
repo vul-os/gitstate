@@ -1,4 +1,4 @@
-<!-- title: Configuration | order: 30 | category: Operations | summary: Every config flag and environment variable, and how features gate themselves. -->
+<!-- title: Configuration | order: 41 | category: Self-hosting & operations | tier: Developers & contributors | summary: Every config flag and environment variable, and how features gate themselves. -->
 
 # Configuration
 

@@ -1,4 +1,4 @@
-<!-- title: FAQ | order: 50 | category: Help | summary: Short answers to the questions people ask first. -->
+<!-- title: FAQ | order: 28 | category: Help | tier: Using gitstate | summary: Short answers to the questions people ask first. -->
 
 # FAQ
 

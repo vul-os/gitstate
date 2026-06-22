@@ -1,4 +1,4 @@
-<!-- title: Agents & MCP | order: 25 | category: Guides | summary: The AI/agent flywheel — API tokens, the gittrack CLI, the MCP server, and self-calibrating estimates. -->
+<!-- title: Agents & MCP | order: 24 | category: Using gitstate | tier: Using gitstate | summary: The AI/agent flywheel — API tokens, the gittrack CLI, the MCP server, and self-calibrating estimates. -->
 
 # Agents & MCP
 

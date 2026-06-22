@@ -1,4 +1,4 @@
-<!-- title: Integrations | order: 21 | category: Guides | summary: OAuth-app connect flow, PATs, and the LLM provider you bring. -->
+<!-- title: Integrations | order: 21 | category: Using gitstate | tier: Using gitstate | summary: OAuth-app connect flow, PATs, and the LLM provider you bring. -->
 
 # Integrations
 

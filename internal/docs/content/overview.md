@@ -1,4 +1,4 @@
-<!-- title: Overview | order: 1 | category: Getting Started | summary: What gitstate is, the five disciplines, and what's in the box. -->
+<!-- title: Overview | order: 1 | category: Getting Started | tier: Using gitstate | summary: What gitstate is, the five disciplines, and what's in the box. -->
 
 # Overview
 

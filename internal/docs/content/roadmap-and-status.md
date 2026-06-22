@@ -1,4 +1,4 @@
-<!-- title: Roadmap & Status | order: 51 | category: Help | summary: What's shipped, what's Enterprise-only, and where gitstate is heading. -->
+<!-- title: Roadmap & Status | order: 60 | category: Project | tier: Developers & contributors | summary: What's shipped, what's Enterprise-only, and where gitstate is heading. -->
 
 # Roadmap & Status
 

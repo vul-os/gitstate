@@ -24,7 +24,7 @@ import {
 } from 'lucide-react'
 import { Markdown } from '../components/Markdown.jsx'
 import DocsHome from '../components/docs/DocsHome.jsx'
-import { iconForSlug, groupByCategory } from '../components/docs/docMeta.jsx'
+import { iconForSlug, groupByCategory, groupByTier } from '../components/docs/docMeta.jsx'
 import { get } from '../lib/api.js'
 
 // ── Heading extractor ─────────────────────────────────────────────────────────
@@ -196,22 +196,28 @@ function SidebarSkeleton() {
 
 // ── Sidebar (shared between desktop and mobile drawer) ───────────────────────
 
-function SidebarNav({ groups, docsLoading, docsError, slug, onItemClick }) {
+function SidebarNav({ tiers, docsLoading, docsError, slug, onItemClick }) {
   const [filter, setFilter] = useState('')
   const filterRef = useRef(null)
   const q = filter.trim().toLowerCase()
 
-  // Filter docs within each group; drop empty groups while filtering.
-  const visibleGroups = q
-    ? groups
-        .map((g) => ({
-          ...g,
-          docs: g.docs.filter((d) =>
-            `${d.title} ${d.summary ?? ''} ${d.slug}`.toLowerCase().includes(q)
-          ),
+  // Filter docs within each category group; drop empty groups and empty tiers
+  // while filtering.
+  const visibleTiers = q
+    ? tiers
+        .map((t) => ({
+          ...t,
+          sections: t.sections
+            .map((g) => ({
+              ...g,
+              docs: g.docs.filter((d) =>
+                `${d.title} ${d.summary ?? ''} ${d.slug}`.toLowerCase().includes(q)
+              ),
+            }))
+            .filter((g) => g.docs.length > 0),
         }))
-        .filter((g) => g.docs.length > 0)
-    : groups
+        .filter((t) => t.sections.length > 0)
+    : tiers
 
   return (
     <>
@@ -261,21 +267,37 @@ function SidebarNav({ groups, docsLoading, docsError, slug, onItemClick }) {
           <SidebarSkeleton />
         ) : docsError ? (
           <p className="px-3 text-xs text-[var(--text-faint)]">Could not load docs index.</p>
-        ) : visibleGroups.length === 0 ? (
+        ) : visibleTiers.length === 0 ? (
           <p className="px-3 py-2 text-xs text-[var(--text-faint)]">
             No pages match <span className="font-mono text-[var(--text-muted)]">{filter}</span>.
           </p>
         ) : (
-          visibleGroups.map((g) => (
-            <SidebarGroup
-              key={g.category}
-              category={g.category}
-              docs={g.docs}
-              slug={slug}
-              onItemClick={onItemClick}
-              defaultOpen
-              forceOpen={!!q}
-            />
+          visibleTiers.map((t) => (
+            <div key={t.tier} className="mb-4">
+              {/* Tier divider */}
+              <div className="mb-1.5 mt-1 flex items-center gap-2 px-3">
+                {t.icon && (
+                  <span className="flex items-center justify-center text-[var(--brand-teal)]">
+                    {createElement(t.icon, { size: 12, strokeWidth: 2 })}
+                  </span>
+                )}
+                <span className="text-[11px] font-display font-semibold tracking-tight text-[var(--text)]">
+                  {t.tier}
+                </span>
+                <span className="ml-1 h-px flex-1 bg-[var(--border)]" aria-hidden="true" />
+              </div>
+              {t.sections.map((g) => (
+                <SidebarGroup
+                  key={g.category}
+                  category={g.category}
+                  docs={g.docs}
+                  slug={slug}
+                  onItemClick={onItemClick}
+                  defaultOpen
+                  forceOpen={!!q}
+                />
+              ))}
+            </div>
           ))
         )}
       </nav>
@@ -391,6 +413,7 @@ export default function Docs() {
 
   const headings = extractHeadings(doc?.content ?? '')
   const groups = useMemo(() => groupByCategory(docs), [docs])
+  const tiers = useMemo(() => groupByTier(docs), [docs])
   const activeMeta = docs.find((d) => d.slug === slug)
   const activeCategory = activeMeta?.category ?? null
 
@@ -490,7 +513,7 @@ export default function Docs() {
           </button>
         </div>
         <SidebarNav
-          groups={groups}
+          tiers={tiers}
           docsLoading={docsLoading}
           docsError={docsError}
           slug={slug}
@@ -524,7 +547,7 @@ export default function Docs() {
             }}
           >
             <SidebarNav
-              groups={groups}
+              tiers={tiers}
               docsLoading={docsLoading}
               docsError={docsError}
               slug={slug}

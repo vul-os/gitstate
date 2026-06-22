@@ -24,7 +24,7 @@ import {
 } from 'lucide-react'
 import {
   CATEGORY_META,
-  groupByCategory,
+  groupByTier,
   iconForSlug,
 } from './docMeta.jsx'
 
@@ -135,6 +135,36 @@ function CategorySection({ category, docs, query }) {
   )
 }
 
+// ── Tier divider ────────────────────────────────────────────────────────────────
+
+function TierHeader({ tier, blurb, icon, count }) {
+  const Icon = icon ?? BookOpen
+  return (
+    <div className="mb-8 mt-2">
+      <div className="flex items-center gap-3">
+        <span className="flex h-9 w-9 items-center justify-center rounded-xl border border-[var(--border)] bg-[var(--bg-surface)] text-[var(--brand-teal)]">
+          {createElement(Icon, { size: 18, strokeWidth: 1.75 })}
+        </span>
+        <div className="min-w-0">
+          <h2 className="font-display text-[1.35rem] font-semibold leading-tight tracking-tight text-[var(--text)]">
+            {tier}
+          </h2>
+          {blurb && <p className="text-[0.8125rem] leading-snug text-[var(--text-muted)]">{blurb}</p>}
+        </div>
+        {typeof count === 'number' && (
+          <span className="ml-auto rounded-full border border-[var(--border)] bg-[var(--bg-surface)] px-2.5 py-0.5 font-mono text-[11px] tabular-nums text-[var(--text-faint)]">
+            {count}
+          </span>
+        )}
+      </div>
+      <div
+        className="mt-4 h-px w-full"
+        style={{ background: 'linear-gradient(90deg, var(--brand-teal), transparent 60%)', opacity: 0.5 }}
+      />
+    </div>
+  )
+}
+
 // ── Home ──────────────────────────────────────────────────────────────────────
 
 export default function DocsHome({ docs = [] }) {
@@ -150,7 +180,7 @@ export default function DocsHome({ docs = [] }) {
     )
   }, [docs, query])
 
-  const sections = useMemo(() => groupByCategory(filtered), [filtered])
+  const tiers = useMemo(() => groupByTier(filtered), [filtered])
   const hasResults = filtered.length > 0
   const searching = query.trim().length > 0
 
@@ -343,10 +373,20 @@ export default function DocsHome({ docs = [] }) {
         </section>
       )}
 
-      {/* ── Sections ─────────────────────────────────────────────────────── */}
+      {/* ── Tiers → Sections ─────────────────────────────────────────────── */}
       {hasResults ? (
-        sections.map((s) => (
-          <CategorySection key={s.category} category={s.category} docs={s.docs} query={query} />
+        tiers.map((t) => (
+          <div key={t.tier} className="mb-14">
+            <TierHeader
+              tier={t.tier}
+              blurb={t.blurb}
+              icon={t.icon}
+              count={t.sections.reduce((n, s) => n + s.docs.length, 0)}
+            />
+            {t.sections.map((s) => (
+              <CategorySection key={s.category} category={s.category} docs={s.docs} query={query} />
+            ))}
+          </div>
         ))
       ) : (
         <div className="py-16 text-center">

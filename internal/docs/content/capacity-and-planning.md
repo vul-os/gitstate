@@ -1,4 +1,4 @@
-<!-- title: Capacity & Planning | order: 23 | category: Guides | summary: Availability minus approved leave, plus git-aware time tracking. -->
+<!-- title: Capacity & Planning | order: 23 | category: Using gitstate | tier: Using gitstate | summary: Availability minus approved leave, plus git-aware time tracking. -->
 
 # Capacity & Planning
 

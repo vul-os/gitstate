@@ -1,4 +1,4 @@
-<!-- title: Self-hosting | order: 31 | category: Operations | summary: Ship the single binary via Docker, fly.io, systemd, or bare metal. -->
+<!-- title: Self-hosting | order: 40 | category: Self-hosting & operations | tier: Developers & contributors | summary: Ship the single binary via Docker, fly.io, systemd, or bare metal. -->
 
 # Self-hosting
 

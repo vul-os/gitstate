@@ -1,4 +1,4 @@
-<!-- title: Billing | order: 24 | category: Guides | summary: Per-builder pricing, free stakeholders, and evidence invoices (EE). -->
+<!-- title: Billing | order: 30 | category: Cloud | tier: Cloud | summary: Per-builder pricing, free stakeholders, and evidence invoices (EE). -->
 
 # Billing
 

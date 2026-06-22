@@ -1,4 +1,4 @@
-<!-- title: Connecting Repos | order: 20 | category: Guides | summary: Connect GitHub/GitLab, sync issues & PRs, and auto-progress from git. -->
+<!-- title: Connecting Repos | order: 20 | category: Using gitstate | tier: Using gitstate | summary: Connect GitHub/GitLab, sync issues & PRs, and auto-progress from git. -->
 
 # Connecting Repos
 

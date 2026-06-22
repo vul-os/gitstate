@@ -1,4 +1,4 @@
-<!-- title: Data Model | order: 13 | category: Concepts | summary: The core tables gitstate derives state into, and the no-score invariant. -->
+<!-- title: Data Model | order: 13 | category: Concepts | tier: Using gitstate | summary: The core tables gitstate derives state into, and the no-score invariant. -->
 
 # Data Model
 

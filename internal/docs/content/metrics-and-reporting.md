@@ -1,4 +1,4 @@
-<!-- title: Metrics & Reporting | order: 22 | category: Guides | summary: Cycle time, involvement texture, dashboards, and the safe NL→report path. -->
+<!-- title: Metrics & Reporting | order: 22 | category: Using gitstate | tier: Using gitstate | summary: Cycle time, involvement texture, dashboards, and the safe NL→report path. -->
 
 # Metrics & Reporting
 
