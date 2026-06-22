@@ -99,6 +99,15 @@ type curveKey struct {
 func buildCurves(ctx context.Context, tx pgx.Tx, orgID string, samples []store.SampleRow, now time.Time) error {
 	groups := map[curveKey][]Sample{}
 	for _, s := range samples {
+		// Drop non-positive lead times. ListCohortSamples only filters
+		// actual_secs IS NOT NULL, so a zero/negative duration (e.g. clock
+		// skew → merged_at before the first commit) can slip through. The
+		// accuracy half of the recompute (buildAccuracy) already excludes
+		// actual_secs <= 0; the curve half must do the same or the two halves
+		// disagree and a spurious 0s sample drags median/p25/p75 toward zero.
+		if s.ActualSecs <= 0 {
+			continue
+		}
 		bucket := DifficultyBucket(s.Difficulty)
 		smp := Sample{ActualSecs: s.ActualSecs, MergedAt: s.MergedAt}
 		for _, cohort := range expandCohorts(s.CohortKey) {

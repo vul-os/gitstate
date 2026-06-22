@@ -204,3 +204,107 @@ func TestRecomputeCalibrationRoundTrip(t *testing.T) {
 			calibration.DefaultSecsForDifficulty(9), cold.PredictedSecs)
 	}
 }
+
+// TestRecomputeCalibrationDropsNonPositiveActuals proves the curve half of the
+// recompute excludes actual_secs <= 0 the same way the accuracy half does.
+// ListCohortSamples only filters actual_secs IS NOT NULL, so a zero/negative
+// lead time (e.g. clock skew → merged before first commit) can reach the curve
+// builder. Before the fix it was counted as a sample and dragged median/p25/p75
+// toward zero; after the fix the cell n must exclude it and the median must
+// reflect only the positive cluster.
+func TestRecomputeCalibrationDropsNonPositiveActuals(t *testing.T) {
+	dbURL := os.Getenv("DATABASE_URL")
+	if dbURL == "" {
+		t.Skip("DATABASE_URL not set — skipping calibration non-positive-actual test")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	database, err := db.New(ctx, &config.Config{Database: config.DatabaseConfig{URL: dbURL}})
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer database.Close()
+
+	ns := time.Now().UnixNano()
+	pool := database.Pool()
+
+	var orgID string
+	if err := pool.QueryRow(ctx,
+		`INSERT INTO organizations (slug, name) VALUES ($1,$2) RETURNING id`,
+		fmt.Sprintf("calibneg-%d", ns), "Calib Neg Test").Scan(&orgID); err != nil {
+		t.Fatalf("create org: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), `DELETE FROM organizations WHERE id=$1`, orgID)
+	})
+
+	now := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
+
+	var repoID string
+	if err := database.WithOrg(ctx, orgID, func(tx pgx.Tx) error {
+		if err := tx.QueryRow(ctx,
+			`INSERT INTO repos (org_id, platform, external_id, full_name)
+			 VALUES ($1,'github',$2,'acme/neg') RETURNING id`,
+			orgID, fmt.Sprintf("calibneg-repo-%d", ns)).Scan(&repoID); err != nil {
+			return err
+		}
+		cohort := fmt.Sprintf("repo:%s|area:internal", repoID)
+		// 6 healthy positive actuals (~36000s) + 1 poisoned zero and 1 negative.
+		actuals := []int64{30000, 33000, 36000, 36000, 39000, 42000, 0, -5000}
+		for i, secs := range actuals {
+			var prID string
+			if err := tx.QueryRow(ctx,
+				`INSERT INTO pull_requests
+				   (org_id, repo_id, platform, external_id, number, title, state, merged_at)
+				 VALUES ($1,$2,'github',$3,$4,$5,'merged',$6) RETURNING id`,
+				orgID, repoID, fmt.Sprintf("calibneg-pr-%d-%d", ns, i), i+1,
+				fmt.Sprintf("feat: thing %d", i), now.Add(-time.Duration(i)*24*time.Hour),
+			).Scan(&prID); err != nil {
+				return err
+			}
+			if _, err := tx.Exec(ctx,
+				`INSERT INTO cycle_times (org_id, pr_id, lead_time_secs, computed_at)
+				 VALUES ($1,$2,$3, now())`, orgID, prID, secs); err != nil {
+				return err
+			}
+			if _, err := tx.Exec(ctx,
+				`INSERT INTO effort_estimates
+				   (org_id, pr_id, difficulty, predicted_secs, cohort_key, size_bucket, change_type)
+				 VALUES ($1,$2,5,$3,$4,'m','feature')`,
+				orgID, prID, float64(36000), cohort); err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	if err := calibration.RecomputeCalibration(ctx, database, orgID, now); err != nil {
+		t.Fatalf("RecomputeCalibration: %v", err)
+	}
+
+	var cells map[string]store.CalibrationCell
+	if err := database.WithOrg(ctx, orgID, func(tx pgx.Tx) error {
+		var e error
+		cells, e = store.GetCalibrationCells(ctx, tx, orgID,
+			[]string{fmt.Sprintf("repo:%s|area:internal", repoID)}, 5)
+		return e
+	}); err != nil {
+		t.Fatalf("get cells: %v", err)
+	}
+	areaCell, ok := cells[fmt.Sprintf("repo:%s|area:internal", repoID)]
+	if !ok {
+		t.Fatal("expected repo|area cohort cell at bucket 5")
+	}
+	// Only the 6 positive actuals must count — the zero and the negative dropped.
+	if areaCell.N != 6 {
+		t.Errorf("non-positive actuals must be excluded: want n=6, got %d", areaCell.N)
+	}
+	// Median must reflect the positive cluster, NOT be dragged to ~0.
+	if areaCell.MedianSecs < 30000 || areaCell.MedianSecs > 42000 {
+		t.Errorf("median dragged by non-positive samples: %d (want 30000..42000)", areaCell.MedianSecs)
+	}
+}
