@@ -120,6 +120,44 @@ func TestValidateSQL_TableAllowlist(t *testing.T) {
 	}
 }
 
+// TestValidateSQL_CommaJoinBypass is a regression test for a cross-tenant /
+// credential-exfiltration hole: validateSQL only checked the table immediately
+// after FROM/JOIN, so an implicit comma join (`FROM issues, users`) or a quoted /
+// space-omitted identifier (`FROM "users"`) reached a NON-RLS identity table
+// (users / oauth_accounts / refresh_tokens) and could dump password hashes and
+// OAuth/refresh tokens. Every table in the FROM list must now be allowlisted.
+func TestValidateSQL_CommaJoinBypass(t *testing.T) {
+	mustReject := []string{
+		"SELECT * FROM issues, users",
+		"SELECT u.password_hash FROM issues, users u",
+		"SELECT * FROM issues u, oauth_accounts v",
+		"SELECT * FROM ISSUES, USERS",
+		`SELECT * FROM "users"`,
+		"SELECT * FROM issues, refresh_tokens",
+		"SELECT * FROM issues JOIN users ON true",
+		"SELECT * FROM issues CROSS JOIN users",
+		"SELECT * FROM issues, projects, users",
+		"SELECT * FROM issues i JOIN users u ON u.id = i.id",
+	}
+	for _, q := range mustReject {
+		if err := validateSQL(q); err == nil {
+			t.Errorf("comma-join/quoted bypass NOT rejected: %q", q)
+		}
+	}
+	// Legitimate multi-table reporting queries must still pass.
+	mustAllow := []string{
+		"SELECT i.id, p.name FROM issues i, projects p WHERE i.project_id = p.id",
+		"SELECT id FROM issues, commits, projects",
+		"SELECT id, created_at, updated_at FROM issues ORDER BY created_at LIMIT 10",
+		"SELECT c.sha FROM commits c JOIN pull_requests pr ON pr.id = c.pr_id",
+	}
+	for _, q := range mustAllow {
+		if err := validateSQL(q); err != nil {
+			t.Errorf("legitimate query wrongly rejected: %q: %v", q, err)
+		}
+	}
+}
+
 func TestStripFences(t *testing.T) {
 	cases := []struct {
 		name string

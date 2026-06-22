@@ -58,6 +58,23 @@ type capacityHandlers struct {
 	cfg *config.Config
 }
 
+// canWriteForUser authorizes a member-data write (leave / availability / time
+// entry) targeting targetUserID. A member may always write their OWN data; writing
+// data on behalf of ANOTHER member requires owner/admin (manager) privileges.
+// Without this, any org member could submit leave, set availability, or log time
+// against an arbitrary peer's user_id (a horizontal-privilege / data-integrity
+// hole). Returns true if the write is allowed.
+func (h *capacityHandlers) canWriteForUser(r *http.Request, orgID, callerID, targetUserID string) bool {
+	if targetUserID == "" || targetUserID == callerID {
+		return true
+	}
+	role, err := store.GetMemberRole(r.Context(), h.db.Pool(), orgID, callerID)
+	if err != nil {
+		return false
+	}
+	return canManageMembers(role)
+}
+
 // errSelfApprove is returned when an owner/admin tries to approve or reject their
 // OWN leave request (separation-of-duties guard).
 var errSelfApprove = errors.New("cannot approve or reject your own leave request")
@@ -145,6 +162,11 @@ func (h *capacityHandlers) createLeave(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	// Submitting leave for another member requires manager privileges.
+	if !h.canWriteForUser(r, orgID, user.ID, body.UserID) {
+		writeError(w, http.StatusForbidden, "only owners and admins can submit leave for another member")
 		return
 	}
 	// Default to the requesting user.
@@ -630,6 +652,11 @@ func (h *capacityHandlers) putAvailability(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
+	// Setting another member's availability requires manager privileges.
+	if !h.canWriteForUser(r, orgID, user.ID, body.UserID) {
+		writeError(w, http.StatusForbidden, "only owners and admins can set availability for another member")
+		return
+	}
 	if body.UserID == "" {
 		body.UserID = user.ID
 	}
@@ -740,6 +767,11 @@ func (h *capacityHandlers) createTimeEntry(w http.ResponseWriter, r *http.Reques
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	// Logging time for another member requires manager privileges.
+	if !h.canWriteForUser(r, orgID, user.ID, body.UserID) {
+		writeError(w, http.StatusForbidden, "only owners and admins can log time for another member")
 		return
 	}
 	if body.UserID == "" {

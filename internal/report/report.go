@@ -273,12 +273,24 @@ var reportTables = map[string]bool{
 	"involvement": true, "agent_runs": true,
 }
 
-// tableRefRe captures the identifier following FROM/JOIN (the referenced table);
 // cteRe captures CTE names defined via `<name> AS (` so they're allowed too.
-var (
-	tableRefRe = regexp.MustCompile(`(?i)\b(?:from|join)\s+([a-z_][a-z0-9_]*)`)
-	cteRe      = regexp.MustCompile(`(?i)\b([a-z_][a-z0-9_]*)\s+as\s*\(`)
-)
+var cteRe = regexp.MustCompile(`(?i)\b([a-z_][a-z0-9_]*)\s+as\s*\(`)
+
+// fromJoinKeywordRe locates every FROM/JOIN keyword that introduces a table list.
+// For each, validateSQL scans the following table-list body for EVERY
+// comma-separated table identifier (not just the first), closing the bypass where
+// an implicit comma join (`FROM issues, users`) only ever exposed the first table.
+var fromJoinKeywordRe = regexp.MustCompile(`(?i)\b(?:from|join)\b`)
+
+// fromClauseTerminatorRe marks where a FROM/JOIN table list ends: the next clause
+// keyword (WHERE/GROUP/HAVING/ORDER/LIMIT/OFFSET/set-ops/ON/USING) or another
+// FROM/JOIN. The text up to the first terminator is the table-list body.
+var fromClauseTerminatorRe = regexp.MustCompile(`(?i)\b(?:where|group\s+by|having|order\s+by|limit|offset|union|intersect|except|on|using|from|join)\b`)
+
+// tableIdentRe pulls a bare table identifier (optionally double-quoted) from a
+// position in a FROM-clause body: the start of the body or immediately after a
+// comma. Identifiers after an alias (not after a comma) are ignored.
+var tableIdentRe = regexp.MustCompile(`(?i)(?:^|,)\s*"?([a-z_][a-z0-9_]*)"?`)
 
 // validateSQL rejects any SQL that isn't a plain SELECT over the allowlisted
 // reporting tables. Returns a descriptive error explaining the violation.
@@ -311,19 +323,30 @@ func validateSQL(sql string) error {
 		}
 	}
 
-	// POSITIVE table allowlist: every FROM/JOIN target must be a known reporting
-	// table or a CTE defined in this query. Blocks reads of non-RLS identity
-	// tables (users/oauth_accounts/refresh_tokens) and any cross-org table.
+	// POSITIVE table allowlist: every table referenced in a FROM/JOIN clause —
+	// including every member of a comma-separated (implicit join) table list — must
+	// be a known reporting table or a CTE defined in this query. Blocks reads of
+	// non-RLS identity tables (users/oauth_accounts/refresh_tokens) and any
+	// cross-org table, even via `FROM issues, users` or `FROM "users"`.
 	allowed := map[string]bool{}
 	for _, m := range cteRe.FindAllStringSubmatch(lower, -1) {
 		allowed[m[1]] = true
 	}
-	for _, m := range tableRefRe.FindAllStringSubmatch(lower, -1) {
-		t := m[1]
-		if reportTables[t] || allowed[t] {
-			continue
+	// For each FROM/JOIN keyword, take the table-list body (up to the next clause
+	// terminator) and verify EVERY comma-separated table in it is allowlisted.
+	for _, kw := range fromJoinKeywordRe.FindAllStringIndex(lower, -1) {
+		rest := lower[kw[1]:]
+		body := rest
+		if loc := fromClauseTerminatorRe.FindStringIndex(rest); loc != nil {
+			body = rest[:loc[0]]
 		}
-		return fmt.Errorf("%w: table %q is not in the reporting allowlist", ErrQueryRejected, t)
+		for _, m := range tableIdentRe.FindAllStringSubmatch(body, -1) {
+			t := m[1]
+			if reportTables[t] || allowed[t] {
+				continue
+			}
+			return fmt.Errorf("%w: table %q is not in the reporting allowlist", ErrQueryRejected, t)
+		}
 	}
 
 	return nil

@@ -111,6 +111,16 @@ func (h *calendarHandlers) start(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The org is supplied via an attacker-controllable query param and this flow
+	// self-authenticates via ?token= (outside OrgScope), so verify the JWT user is
+	// actually a member of this org before binding a calendar connection to it.
+	// Otherwise any authenticated user could attach their calendar to (or overwrite
+	// a member's connection in) an org they don't belong to.
+	if _, err := store.GetMemberRole(r.Context(), h.db.Pool(), orgID, claims.UserID()); err != nil {
+		writeError(w, http.StatusForbidden, "not a member of this organization")
+		return
+	}
+
 	stateVal, err := oauthpkg.GenerateState()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "generate state")
@@ -126,7 +136,7 @@ func (h *calendarHandlers) start(w http.ResponseWriter, r *http.Request) {
 		MaxAge:   600,
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
-		Secure:   r.URL.Scheme == "https",
+		Secure:   requestIsHTTPS(r),
 	})
 
 	http.Redirect(w, r, p.AuthCodeURL(stateVal), http.StatusFound)

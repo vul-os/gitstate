@@ -160,6 +160,18 @@ func (h *accountingHandlers) start(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// CRITICAL: the org comes from an attacker-controllable query param, and this
+	// flow self-authenticates via ?token= (outside the OrgScope middleware), so we
+	// MUST verify the JWT user is an owner/admin of THIS org before sealing it into
+	// the state cookie. Without this, any authenticated user could start a flow
+	// against another org and have the callback overwrite that org's accounting
+	// connection (binding the victim's invoice pushes to the attacker's Xero/QB).
+	role, err := store.GetMemberRole(r.Context(), h.db.Pool(), orgID, claims.UserID())
+	if err != nil || !canManageMembers(role) {
+		writeError(w, http.StatusForbidden, "only owners and admins can connect accounting")
+		return
+	}
+
 	stateVal, err := generateShareToken()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "generate state")
