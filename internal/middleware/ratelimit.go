@@ -109,23 +109,18 @@ func (l *limiter) get(ip string) *bucket {
 	return b
 }
 
-// clientIP extracts the real client IP from the request, preferring
-// X-Forwarded-For (set by fly.io's proxy) over RemoteAddr.
+// clientIP returns the rate-limit key for the request.
+//
+// SECURITY: it never trusts the client-supplied X-Forwarded-For — its leftmost
+// value is fully attacker-controlled, so keying the limiter on it lets an
+// attacker rotate a spoofed XFF to mint a fresh bucket per request (defeating
+// the global + auth brute-force limits). On Fly the edge sets Fly-Client-IP,
+// which a client cannot forge past the proxy; otherwise we key on the real TCP
+// peer (RemoteAddr). Behind an untrusted proxy this over-limits (everyone shares
+// the proxy IP) rather than under-limits — fail-safe, not bypassable.
 func clientIP(r *http.Request) string {
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		// Take the first (leftmost) address — that is the original client.
-		if idx := len(xff); idx > 0 {
-			for i := 0; i < len(xff); i++ {
-				if xff[i] == ',' {
-					xff = xff[:i]
-					break
-				}
-			}
-			xff = trimSpace(xff)
-			if xff != "" {
-				return xff
-			}
-		}
+	if fly := trimSpace(r.Header.Get("Fly-Client-IP")); fly != "" {
+		return fly
 	}
 	ip, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
