@@ -183,22 +183,40 @@ func ListAvailability(ctx context.Context, tx pgx.Tx, orgID, userID string) ([]*
 	return out, rows.Err()
 }
 
-// UpsertAvailability inserts a new availability row (a more recent effective_from
-// supersedes the old one by query logic — no UPSERT needed since each row is a
-// point-in-time snapshot).
+// UpsertAvailability records a point-in-time availability snapshot for a member.
+// Each (org, user, effective_from) is a single snapshot: re-PUTing on the same
+// effective date overwrites that day's row in place rather than appending a
+// duplicate. (The availability table has no unique constraint on
+// (org_id, user_id, effective_from) — only a non-unique index — so a plain
+// ON CONFLICT clause has no arbiter and would never fire, silently stacking
+// duplicate same-date rows that GetAvailability then resolves nondeterministically
+// via ORDER BY effective_from DESC LIMIT 1. We therefore upsert explicitly:
+// UPDATE the existing same-date row if present, else INSERT.)
 func UpsertAvailability(ctx context.Context, tx pgx.Tx, orgID, userID string, weeklyHours float64, workingDays []int32, effectiveFrom time.Time) (*Availability, error) {
 	var a Availability
+	// effective_from is a DATE column; normalize to midnight so the equality
+	// match below is stable regardless of any time component on the input.
+	day := effectiveFrom.UTC().Truncate(24 * time.Hour)
 	err := tx.QueryRow(ctx, `
+		UPDATE availability
+		SET weekly_hours = $3, working_days = $4
+		WHERE org_id = $1 AND user_id = $2 AND effective_from = $5
+		RETURNING id, org_id, user_id, weekly_hours, working_days, effective_from, created_at`,
+		orgID, userID, weeklyHours, workingDays, day).
+		Scan(&a.ID, &a.OrgID, &a.UserID, &a.WeeklyHours, &a.WorkingDays, &a.EffectiveFrom, &a.CreatedAt)
+	if err == nil {
+		return &a, nil
+	}
+	if err != pgx.ErrNoRows {
+		return nil, err
+	}
+	// No row for this effective date yet — insert a fresh snapshot.
+	err = tx.QueryRow(ctx, `
 		INSERT INTO availability (org_id, user_id, weekly_hours, working_days, effective_from)
 		VALUES ($1, $2, $3, $4, $5)
-		ON CONFLICT DO NOTHING
 		RETURNING id, org_id, user_id, weekly_hours, working_days, effective_from, created_at`,
-		orgID, userID, weeklyHours, workingDays, effectiveFrom).
+		orgID, userID, weeklyHours, workingDays, day).
 		Scan(&a.ID, &a.OrgID, &a.UserID, &a.WeeklyHours, &a.WorkingDays, &a.EffectiveFrom, &a.CreatedAt)
-	if err == pgx.ErrNoRows {
-		// Row already existed for this effective_from; fetch it.
-		return GetAvailability(ctx, tx, orgID, userID, effectiveFrom)
-	}
 	return &a, err
 }
 
