@@ -26,7 +26,10 @@ Tokens may be stored **encrypted at rest** (AES-256-GCM, keyed by `TOKEN_ENC_KEY
 ### OAuth-app connect flow
 
 When a GitHub/GitLab OAuth app is configured (`GITHUB_OAUTH_CLIENT_ID` etc.), members can connect
-their account once and pick from the repos they can access — no copy-pasting tokens.
+their account once and pick from the repos they can access — no copy-pasting tokens. The same OAuth
+app also powers ["Sign in with GitHub/GitLab"](/docs/configuration); login requests identity scopes
+only, and this connect step incrementally re-requests the heavier repo scopes — so signing in does
+not by itself grant repo access.
 
 ```http
 GET  /api/connect/{platform}/start    # begins the OAuth-app flow (self-authenticating)

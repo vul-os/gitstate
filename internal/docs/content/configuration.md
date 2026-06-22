@@ -41,27 +41,49 @@ cp config.example.yaml config.yaml  # structure + flags
 | `ACCESS_TOKEN_TTL` | access token lifetime (default 15m) |
 | `REFRESH_TOKEN_TTL` | refresh lifetime (default 720h / 30d) |
 
-## OAuth — provider gating
+## Login — "Sign in with GitHub/GitLab"
 
-OAuth providers are **config-gated**: a provider is enabled (and its button appears on the login page)
-**only when both its client id and secret are set.** No dead buttons for self-hosters.
+Login is **email/password plus "Sign in with GitHub/GitLab"** (developer identities). Each "Sign in
+with X" button appears **only when that platform's client id and secret are set** — no dead buttons
+for self-hosters. The `/api/config` endpoint reports which login providers (`github`/`gitlab`) are
+enabled so the frontend renders the right buttons. `auth.providers.<p>.enabled` is **derived**
+(`id != "" && secret != ""`), never set by hand.
 
-| Var | Provider |
-|---|---|
-| `OAUTH_GOOGLE_CLIENT_ID` / `OAUTH_GOOGLE_CLIENT_SECRET` | Google |
-| `OAUTH_MICROSOFT_CLIENT_ID` / `OAUTH_MICROSOFT_CLIENT_SECRET` / `OAUTH_MICROSOFT_TENANT` | Microsoft |
+GitHub/GitLab use **one OAuth app per platform with incremental scopes**: login requests identity
+scopes only (`read:user` + `user:email` for GitHub, `read_user` for GitLab); the separate
+[Connect repositories](/docs/connecting-repos) step re-requests the heavier repo scopes. The same
+`GITHUB_OAUTH_CLIENT_ID/SECRET` and `GITLAB_OAUTH_CLIENT_ID/SECRET` (below) power **both** login and
+connect — so signing in with GitHub does **not** auto-grant repo access; you still click Connect.
 
-The `/api/config` endpoint reports which providers are enabled so the frontend renders the right
-buttons. `auth.providers.<p>.enabled` is **derived** (`id != "" && secret != ""`), never set by hand.
+On login the account email comes from the OAuth profile (GitHub's verified primary via
+`/user/emails`). If the user hid their email we store a `@users.noreply.github.com` /
+`@users.noreply.gitlab.com` placeholder and **Settings → Account** prompts for a real contact email
+(`GET` / `PATCH /api/profile`).
 
-## Git platform sync
+## Git platform sync (login + connect)
+
+These credentials power both "Sign in with GitHub/GitLab" and the repo-connect flow:
 
 | Var | Purpose |
 |---|---|
-| `GITHUB_OAUTH_CLIENT_ID` / `GITHUB_OAUTH_CLIENT_SECRET` | GitHub OAuth app |
-| `GITLAB_OAUTH_CLIENT_ID` / `GITLAB_OAUTH_CLIENT_SECRET` | GitLab OAuth app |
+| `GITHUB_OAUTH_CLIENT_ID` / `GITHUB_OAUTH_CLIENT_SECRET` | GitHub OAuth app (login + connect) |
+| `GITLAB_OAUTH_CLIENT_ID` / `GITLAB_OAUTH_CLIENT_SECRET` | GitLab OAuth app (login + connect) |
 | `GITHUB_APP_ID` / `GITHUB_APP_PRIVATE_KEY` | GitHub App (optional) |
 | `TOKEN_ENC_KEY` | AES-256-GCM key for at-rest repo-token encryption |
+
+**Callback URL setup:** register `$PUBLIC_URL/` as the OAuth app's authorization callback so that
+**both** `/auth/oauth/<p>/callback` (login) and `/api/connect/<p>/callback` (connect) match the
+registered base.
+
+## Calendar (Google / Microsoft)
+
+Google and Microsoft OAuth are used **only for the Calendar integration** (leave/availability sync in
+Settings) — they are **not** login buttons. Each is config-gated by its own client id + secret.
+
+| Var | Provider |
+|---|---|
+| `OAUTH_GOOGLE_CLIENT_ID` / `OAUTH_GOOGLE_CLIENT_SECRET` | Google Calendar |
+| `OAUTH_MICROSOFT_CLIENT_ID` / `OAUTH_MICROSOFT_CLIENT_SECRET` / `OAUTH_MICROSOFT_TENANT` | Microsoft Calendar |
 
 ## LLM (effort + reports)
 
@@ -110,7 +132,8 @@ Safe to ship to the browser — **no secrets here.**
 
 | Feature | Turns on when… |
 |---|---|
-| Google / Microsoft login | provider id + secret set |
+| "Sign in with GitHub/GitLab" | that platform's git oauth id + secret set |
+| Calendar (Google / Microsoft) | `OAUTH_GOOGLE_*` / `OAUTH_MICROSOFT_*` id + secret set |
 | Repo-token encryption | `TOKEN_ENC_KEY` set |
 | LLM effort & NL reports | `ANTHROPIC_API_KEY` set |
 | Billing | `-tags ee` build **and** `billing.enabled: true` |

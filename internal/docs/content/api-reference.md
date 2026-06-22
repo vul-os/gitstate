@@ -19,7 +19,7 @@ Go 1.22 method patterns.
 | Method | Path | Description |
 |---|---|---|
 | `GET` | `/healthz` | Liveness probe |
-| `GET` | `/api/config` | Public config: which OAuth providers are enabled, billing charge currency |
+| `GET` | `/api/config` | Public config: which login providers (`github`/`gitlab`) are enabled, billing charge currency |
 | `GET` | `/api/plans` | Public pricing/plan ladder |
 | `GET` | `/api/docs` | List doc pages (nav index, no content) |
 | `GET` | `/api/docs/{slug}` | One doc page (markdown content) |
@@ -32,8 +32,20 @@ Go 1.22 method patterns.
 | `POST` | `/auth/login` | Email + password login → tokens + user |
 | `POST` | `/auth/refresh` | Rotate refresh token, issue a new access token |
 | `POST` | `/auth/logout` | Revoke session (204) |
-| `GET` | `/auth/oauth/{provider}/start` | Begin Google/Microsoft OAuth (CSRF state cookie) |
+| `GET` | `/auth/oauth/{provider}/start` | Begin "Sign in with GitHub/GitLab" (identity scopes only; CSRF state cookie) |
 | `GET` | `/auth/oauth/{provider}/callback` | OAuth callback; redirects with tokens in the URL fragment |
+
+On GitHub/GitLab login the account email comes from the OAuth profile (GitHub's verified primary via
+`/user/emails`). If the user hid their email we store a `@users.noreply.github.com` /
+`@users.noreply.gitlab.com` placeholder; `GET /api/profile` returns `emailIsPlaceholder: true` so
+Settings → Account can prompt for a real contact email.
+
+## Profile
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/api/profile` | Authed: the user's name + contact email and an `emailIsPlaceholder` flag |
+| `PATCH` | `/api/profile` | Authed: update the user's name and/or contact email |
 
 ## Orgs & members
 

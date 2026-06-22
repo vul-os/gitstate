@@ -29,6 +29,11 @@ Authorization: Bearer <access-token>
 The server verifies the token by listing the repo on the platform; a bad token or wrong `fullName`
 returns *"repo not found on platform (check token scope and fullName)"*.
 
+> [!NOTE]
+> Signing in with GitHub/GitLab does **not** auto-grant repo access. Login requests identity scopes
+> only; this **Connect repositories** step incrementally re-requests the heavier repo scopes, so you
+> still click Connect once to authorize repos.
+
 ### Token scopes
 
 | Platform | Needed access |

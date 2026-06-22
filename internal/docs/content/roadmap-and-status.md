@@ -20,7 +20,9 @@ These ship in the default OSS binary and are fully self-hostable.
 | Capacity — availability, leave, time tracking | ✅ |
 | RLS multi-tenancy + super-admin audit log | ✅ |
 | At-rest repo-token encryption (AES-256-GCM) | ✅ |
-| OAuth-app connect flow (GitHub/GitLab) + Google/Microsoft login | ✅ |
+| "Sign in with GitHub/GitLab" + email/password login | ✅ |
+| OAuth-app connect flow (GitHub/GitLab, incremental scopes) | ✅ |
+| Calendar sync via Google/Microsoft (leave/availability) | ✅ |
 
 ## Optional — bring-your-own
 
@@ -29,7 +31,8 @@ These light up when you provide a key, and no-op cleanly otherwise.
 | Feature | Enable by setting |
 |---|---|
 | LLM effort estimation, NL→report, status synthesis | `ANTHROPIC_API_KEY` |
-| Google / Microsoft login | the provider's client id **and** secret |
+| "Sign in with GitHub/GitLab" | that platform's git oauth client id **and** secret |
+| Calendar sync (Google / Microsoft) | `OAUTH_GOOGLE_*` / `OAUTH_MICROSOFT_*` client id **and** secret |
 | Repo-token encryption | `TOKEN_ENC_KEY` |
 
 See [Configuration](/docs/configuration) for the full gating table.

@@ -12,7 +12,7 @@ gitstate is a single Go binary plus a React frontend, backed by Postgres with ro
 | Frontend | React 19 + Vite + Tailwind (JSX, no TSX) | served standalone in dev, embedded in the binary for prod |
 | Admin | Server-rendered HTML (`html/template` + htmx + SSE) | the super-admin "super pages"; not part of the SPA |
 | Database | Postgres (Neon) | **row-level security** enforces multi-tenant isolation |
-| Auth | internal JWT + rotating refresh | optional Google/Microsoft OAuth (config-gated) |
+| Auth | internal JWT + rotating refresh | email/password + optional "Sign in with GitHub/GitLab" (config-gated) |
 | Billing (EE) | Paystack | billed in USD, charged in ZAR at capture-time FX |
 | Deploy | fly.io primary; Docker, compose, systemd, bare binary | no lock-in |
 
@@ -24,7 +24,7 @@ gitstate is a single Go binary plus a React frontend, backed by Postgres with ro
 | `db` | pgx pool, `WithOrg(ctx, orgID, fn)` RLS session helper |
 | `store` | hand-written SQL data access (no heavy ORM) |
 | `auth` | JWT issue/verify, rotating refresh, argon2id passwords |
-| `oauth` | Google + Microsoft providers (config-gated) |
+| `oauth` | "Sign in with GitHub/GitLab" login (config-gated); Google + Microsoft kept for the calendar integration |
 | `git` | clone/fetch, walk commits, diff, blame, lead-time, agent detection |
 | `sync` | GitHub + GitLab issue/PR sync; auto-progress |
 | `llm` | diff-difficulty sizing + status synthesis (Anthropic default) |

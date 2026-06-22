@@ -49,7 +49,8 @@ encryption set `TOKEN_ENC_KEY`. Everything else is optional and feature-gates it
 
 | Feature | Enable by setting |
 |---|---|
-| Google / Microsoft login | the provider's client id **and** secret |
+| GitHub / GitLab login | that platform's git oauth client id **and** secret (`GITHUB_OAUTH_*` / `GITLAB_OAUTH_*`) |
+| Calendar sync (Google / Microsoft) | `OAUTH_GOOGLE_*` / `OAUTH_MICROSOFT_*` client id **and** secret |
 | LLM effort + NL reports | `ANTHROPIC_API_KEY` |
 | Billing (EE build) | `billing.enabled: true` + Paystack + exchange keys |
 | Super admin | `SUPER_ADMIN_EMAILS` |

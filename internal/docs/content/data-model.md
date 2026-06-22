@@ -11,7 +11,7 @@ the database, not just the app. This page maps the tables the rest of the docs r
 | Table | Holds |
 |---|---|
 | `users` | accounts (argon2id password hash, optional `is_super_admin`) |
-| `oauth_accounts` | linked Google / Microsoft identities |
+| `oauth_accounts` | linked GitHub / GitLab login identities |
 | `refresh_tokens` | hashed, rotating refresh tokens (reuse detection) |
 | `organizations` | the tenant root — everything is scoped under one |
 | `org_members` | membership + `role` (`owner` · `admin` · `member` · free `stakeholder`) |
