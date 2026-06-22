@@ -1,19 +1,17 @@
 package store
 
 // estimates.go — queries against the effort_estimates table (decisions P3).
-// Estimates are org-scoped (RLS); all writes use db.WithOrg (pgx.Tx).
-// Reads that happen outside a request context (e.g. batch processing) use the
-// pool directly via GetEstimateForPR / GetEstimateForIssue.
+// Estimates are org-scoped (FORCE RLS); all reads/writes run inside db.WithOrg
+// (pgx.Tx) so the org GUC is set — a bare-pool read would see current_org()=NULL
+// and return zero rows.
 
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // EffortEstimate mirrors a row from effort_estimates.
@@ -81,61 +79,6 @@ func SaveEstimate(ctx context.Context, tx pgx.Tx, in SaveEstimateInput) (*Effort
 	)
 
 	return scanEstimate(row)
-}
-
-// GetEstimateForPR returns the most recent difficulty estimate for a pull
-// request within the given org. Uses the pool directly (bypasses RLS via the
-// org_id predicate — callers must pass a trustworthy orgID).
-//
-// Returns ErrNotFound when no estimate exists yet.
-func GetEstimateForPR(ctx context.Context, pool *pgxpool.Pool, orgID, prID string) (*EffortEstimate, error) {
-	const q = `
-		SELECT id, org_id,
-		       pr_id::text,
-		       issue_id::text,
-		       difficulty::float8,
-		       COALESCE(rationale, ''),
-		       evidence,
-		       COALESCE(model, ''),
-		       created_at
-		FROM effort_estimates
-		WHERE org_id = $1 AND pr_id = $2
-		ORDER BY created_at DESC
-		LIMIT 1`
-
-	row := pool.QueryRow(ctx, q, orgID, prID)
-	est, err := scanEstimate(row)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, ErrNotFound
-	}
-	return est, err
-}
-
-// GetEstimateForIssue returns the most recent difficulty estimate for an issue
-// within the given org. Uses the pool directly (same RLS note as GetEstimateForPR).
-//
-// Returns ErrNotFound when no estimate exists yet.
-func GetEstimateForIssue(ctx context.Context, pool *pgxpool.Pool, orgID, issueID string) (*EffortEstimate, error) {
-	const q = `
-		SELECT id, org_id,
-		       pr_id::text,
-		       issue_id::text,
-		       difficulty::float8,
-		       COALESCE(rationale, ''),
-		       evidence,
-		       COALESCE(model, ''),
-		       created_at
-		FROM effort_estimates
-		WHERE org_id = $1 AND issue_id = $2
-		ORDER BY created_at DESC
-		LIMIT 1`
-
-	row := pool.QueryRow(ctx, q, orgID, issueID)
-	est, err := scanEstimate(row)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, ErrNotFound
-	}
-	return est, err
 }
 
 // scanEstimate reads a single effort_estimate row from any pgx.Row.
