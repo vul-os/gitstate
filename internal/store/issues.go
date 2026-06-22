@@ -266,6 +266,14 @@ func GetIssue(ctx context.Context, tx pgx.Tx, orgID, issueID string) (*Issue, er
 	row := tx.QueryRow(ctx, q, issueID, orgID)
 	out, err := scanIssues(singleRowToRows(row))
 	if err != nil {
+		// A missing row surfaces as pgx.ErrNoRows from Scan() inside the scan
+		// loop — before singleRowAdapter.Err() gets a chance to remap it — so
+		// collapse it to the sentinel callers expect. Without this, GetIssue on
+		// an unknown id wraps ErrNoRows and the context handler returns 500
+		// instead of a clean 404.
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrNotFound
+		}
 		return nil, fmt.Errorf("store: get issue: %w", err)
 	}
 	if len(out) == 0 {
