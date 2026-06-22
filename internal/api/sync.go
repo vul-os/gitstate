@@ -51,6 +51,7 @@ func RegisterSyncRoutes(mux *http.ServeMux, database *db.DB, cfg *config.Config)
 	mux.Handle("GET /api/repos", auth(http.HandlerFunc(h.listRepos)))
 	mux.Handle("POST /api/repos", auth(http.HandlerFunc(h.connectRepo)))
 	mux.Handle("POST /api/repos/{id}/sync", auth(http.HandlerFunc(h.triggerSync)))
+	mux.Handle("POST /api/repos/sync-all", auth(http.HandlerFunc(h.syncAll)))
 
 	mux.Handle("GET /api/issues", readIssues(http.HandlerFunc(h.listIssues)))
 	mux.Handle("POST /api/issues", auth(http.HandlerFunc(h.createIssue)))
@@ -321,6 +322,67 @@ func (h *syncHandlers) triggerSync(w http.ResponseWriter, r *http.Request) {
 	h.startBackgroundSync(orgID, *repo, token, baseURL)
 }
 
+// ── POST /api/repos/sync-all ──────────────────────────────────────────────────
+
+// syncAll re-syncs every repo in the org, SEQUENTIALLY in one background goroutine
+// (used after a bulk import). Sequential on purpose: firing one goroutine per repo
+// would hammer the platform API and exhaust the DB pool. Responds 202 with the
+// count queued; the per-repo sync is idempotent so re-syncing synced repos is safe.
+func (h *syncHandlers) syncAll(w http.ResponseWriter, r *http.Request) {
+	orgID := middleware.OrgFromContext(r.Context())
+
+	var repos []store.Repo
+	if err := h.db.WithOrg(r.Context(), orgID, func(tx pgx.Tx) error {
+		rs, e := store.ListRepos(r.Context(), tx, orgID)
+		repos = rs
+		return e
+	}); err != nil {
+		writeSyncError(w, "list repos", err)
+		return
+	}
+	if len(repos) == 0 {
+		writeJSON(w, http.StatusOK, map[string]any{"status": "no repos to sync", "count": 0})
+		return
+	}
+
+	writeJSON(w, http.StatusAccepted, map[string]any{"status": "sync queued", "count": len(repos)})
+
+	bgCtx := context.Background()
+	go func() {
+		tokenCache := map[string][2]string{} // platform → {token, baseURL}, resolved once
+		ok, failed := 0, 0
+		for _, repo := range repos {
+			tb, cached := tokenCache[repo.Platform]
+			if !cached {
+				tok, base, err := resolveStoredToken(bgCtx, h.db, orgID, repo.Platform)
+				if err != nil {
+					slog.Warn("sync-all: no stored token", "platform", repo.Platform, "err", err)
+					tokenCache[repo.Platform] = [2]string{} // cache the miss so we don't retry per repo
+					continue
+				}
+				tb = [2]string{tok, base}
+				tokenCache[repo.Platform] = tb
+			}
+			if tb[0] == "" {
+				continue
+			}
+			provider, err := gitSync.NewProvider(bgCtx, repo.Platform, tb[0], tb[1])
+			if err != nil {
+				slog.Error("sync-all: build provider", "repo", repo.FullName, "err", err)
+				failed++
+				continue
+			}
+			if err := gitSync.SyncRepo(bgCtx, h.db, provider, orgID, repo, tb[0]); err != nil {
+				slog.Error("sync-all: sync repo", "repo", repo.FullName, "err", err)
+				failed++
+				continue
+			}
+			ok++
+		}
+		slog.Info("sync-all: complete", "org", orgID, "synced", ok, "failed", failed, "total", len(repos))
+	}()
+}
+
 // startBackgroundSync runs a repo sync in a detached goroutine. Shared by the
 // import path (so a freshly connected repo pulls issues/PRs/commits immediately)
 // and the manual /sync trigger. Best-effort: it logs failures and never blocks
@@ -333,7 +395,7 @@ func (h *syncHandlers) startBackgroundSync(orgID string, repo store.Repo, token,
 			slog.Error("sync: build provider", "repo_id", repo.ID, "err", err)
 			return
 		}
-		if err := gitSync.SyncRepo(bgCtx, h.db, provider, orgID, repo); err != nil {
+		if err := gitSync.SyncRepo(bgCtx, h.db, provider, orgID, repo, token); err != nil {
 			slog.Error("sync: sync repo", "repo_id", repo.ID, "err", err)
 		}
 	}()

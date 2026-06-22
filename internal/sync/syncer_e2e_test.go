@@ -96,7 +96,9 @@ func TestSyncRepoEndToEnd(t *testing.T) {
 		t.Fatalf("load repo: %v", err)
 	}
 
-	if err := SyncRepo(ctx, database, prov, orgID, *repo); err != nil {
+	// Empty clone token; the fake provider's repo has no real clone URL, so the
+	// git-analysis step is skipped/best-effort and the API-driven assertions hold.
+	if err := SyncRepo(ctx, database, prov, orgID, *repo, ""); err != nil {
 		t.Fatalf("SyncRepo returned error: %v", err)
 	}
 

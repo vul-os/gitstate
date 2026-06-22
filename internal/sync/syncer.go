@@ -11,6 +11,7 @@ import (
 
 	"github.com/exo/gitstate/internal/db"
 	"github.com/exo/gitstate/internal/embed"
+	"github.com/exo/gitstate/internal/gitanalysis"
 	"github.com/exo/gitstate/internal/metrics"
 	"github.com/exo/gitstate/internal/store"
 	"github.com/jackc/pgx/v5"
@@ -39,7 +40,7 @@ var issueRefRe = regexp.MustCompile(`(?i)(?:closes?|fixes?|resolves?)?\s*#(\d+)`
 // Issue references are parsed from PR title + body using:
 //   - bare "#<N>" references
 //   - GitHub/GitLab closing keywords: "Closes #N", "Fixes #N", "Resolves #N"
-func SyncRepo(ctx context.Context, database *db.DB, provider Provider, orgID string, repo store.Repo) error {
+func SyncRepo(ctx context.Context, database *db.DB, provider Provider, orgID string, repo store.Repo, cloneToken string) error {
 	log := slog.With(
 		"org_id", orgID,
 		"repo_id", repo.ID,
@@ -48,7 +49,9 @@ func SyncRepo(ctx context.Context, database *db.DB, provider Provider, orgID str
 	)
 	log.Info("sync: starting repo sync")
 
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+	// Cloning a full repo + analyzing its history can take a while on large repos,
+	// so this sync gets a longer budget than the API-only steps would need.
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Minute)
 	defer cancel()
 
 	// ── 1. Fetch remote issues ────────────────────────────────────────────────
@@ -140,6 +143,23 @@ func SyncRepo(ctx context.Context, database *db.DB, provider Provider, orgID str
 		return store.UpdateRepoSyncedAt(ctx, tx, orgID, repo.ID)
 	}); err != nil {
 		log.Error("sync: update last_synced_at", "err", err)
+	}
+
+	// ── 4.5. Clone + analyze git history (commits, blame-survival, SZZ, coupling) ─
+	// The platform API returns issues/PRs but NOT commit-level data — so without
+	// this, Contribution, the commit heatmap/analytics, and cycle time (lead time =
+	// merged_at − first commit) are all empty. Clone the repo and run the analysis
+	// engine, then persist commits/commit_files/attribution. Best-effort: a clone
+	// failure (private repo without a token, network) must not fail the sync. Runs
+	// BEFORE ComputeCycleTimes so lead times have first-commit timestamps.
+	if repo.CloneURL == "" {
+		log.Warn("sync: no clone URL — skipping commit/contribution analysis")
+	} else if res, err := gitanalysis.CloneAndAnalyze(ctx, repo.CloneURL, cloneToken); err != nil {
+		log.Error("sync: clone + analyze git history", "err", err)
+	} else if err := store.StoreResult(ctx, database, orgID, repo.ID, res); err != nil {
+		log.Error("sync: store git analysis", "err", err)
+	} else {
+		log.Info("sync: git analysis stored")
 	}
 
 	// ── 5. Post-sync metrics: cycle times + self-calibrating effort curves ─────
