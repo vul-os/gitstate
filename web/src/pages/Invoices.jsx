@@ -12,10 +12,13 @@ import { useState, useCallback, useMemo } from 'react'
 import {
   Sparkles, Users, FileText, Plus, ChevronRight, ChevronDown, ArrowLeft,
   Link2, Check, Send, CircleDollarSign, Ban, Trash2, X, GitMerge, Receipt, Hourglass, Wallet,
+  ExternalLink, Loader2,
 } from 'lucide-react'
 import { useCurrency } from '../lib/currency.jsx'
 import { StatCard } from '../components/ui/index.js'
 import { useProjects } from '../lib/useProjects.js'
+import { useAccounting } from '../lib/useAccounting.js'
+import { pushInvoice } from '../lib/api.js'
 import {
   useClients, useInvoiceList, useInvoiceDetail,
   patchInvoice, deleteInvoice,
@@ -104,6 +107,116 @@ function StatusAction({ icon: Icon, label, onClick, busy, tone = 'default' }) {
     >
       {busy ? <Spinner size={12} /> : <Icon size={13} />} {label}
     </button>
+  )
+}
+
+// Brand marks for the accounting providers (inline; no extra deps).
+function XeroMark({ size = 15 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden>
+      <circle cx="12" cy="12" r="11" fill="#13B5EA" />
+      <path d="M8.6 12l-1.9-1.9a.7.7 0 1 1 1-1l1.9 1.9 1.9-1.9a.7.7 0 0 1 1 1L10.6 12l1.9 1.9a.7.7 0 0 1-1 1l-1.9-1.9-1.9 1.9a.7.7 0 1 1-1-1L8.6 12z" fill="#fff" />
+      <circle cx="15.4" cy="12" r="1.15" fill="#fff" />
+    </svg>
+  )
+}
+function QuickBooksMark({ size = 15 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden>
+      <circle cx="12" cy="12" r="11" fill="#2CA01C" />
+      <path d="M12 5.5a6.5 6.5 0 0 0-1 12.92V11.7a1.5 1.5 0 0 1 1.5-1.5h.6V6.6h-.6A1.1 1.1 0 0 0 12 5.5z" fill="#fff" opacity=".45" />
+      <path d="M13 5.58V12.3a1.5 1.5 0 0 1-1.5 1.5h-.6v3.6h.6A1.1 1.1 0 0 0 13 18.5 6.5 6.5 0 0 0 13 5.58z" fill="#fff" />
+    </svg>
+  )
+}
+
+const PROVIDER_META = {
+  xero: { label: 'Xero', Mark: XeroMark, accent: '#13B5EA' },
+  quickbooks: { label: 'QuickBooks', Mark: QuickBooksMark, accent: '#2CA01C' },
+}
+
+// AccountingPush — "Send to Xero / QuickBooks" action + the resulting external
+// link. Sits beside git-evidence + manual creation; enabled only when a provider
+// is connected. Once pushed, shows an "in Xero ↗" deep link from external_url.
+function AccountingPush({ invoice, onChanged }) {
+  const { providers, anyConfigured } = useAccounting()
+  const [busy, setBusy] = useState('')
+  const [error, setError] = useState(null)
+  const [link, setLink] = useState(null) // { provider, externalUrl } after a fresh push
+
+  const connected = providers.filter((p) => p.connected)
+  const externalUrl = link?.externalUrl ?? invoice.externalUrl
+  const externalProvider = link?.provider ?? invoice.externalProvider
+
+  async function send(provider) {
+    setBusy(provider); setError(null)
+    try {
+      const res = await pushInvoice(invoice.id, provider)
+      setLink({ provider, externalUrl: res.externalUrl })
+      onChanged?.()
+    } catch (e) {
+      setError(e.message ?? 'Could not send to accounting')
+    } finally {
+      setBusy('')
+    }
+  }
+
+  // Nothing configured server-side → don't clutter the UI at all.
+  if (!anyConfigured && !externalUrl) return null
+
+  return (
+    <div className="mt-4 rounded-[var(--radius-badge)] px-4 py-3.5" style={{ background: 'var(--bg)', border: '1px solid var(--border)' }}>
+      <div className="flex items-center gap-2 mb-2.5">
+        <Receipt size={13} style={{ color: 'var(--brand-teal)' }} />
+        <span className="text-xs font-semibold text-[var(--text-muted)]">Accounting</span>
+      </div>
+
+      {/* Already pushed → show the deep link. */}
+      {externalUrl && externalProvider && PROVIDER_META[externalProvider] && (
+        <a
+          href={externalUrl} target="_blank" rel="noopener noreferrer"
+          className="inline-flex items-center gap-2 rounded-[var(--radius-btn)] px-3 py-1.5 text-xs font-semibold transition-colors hover:brightness-110 mb-2"
+          style={{
+            border: `1px solid ${PROVIDER_META[externalProvider].accent}55`,
+            color: PROVIDER_META[externalProvider].accent,
+            background: `${PROVIDER_META[externalProvider].accent}14`,
+          }}
+        >
+          {(() => { const M = PROVIDER_META[externalProvider].Mark; return <M size={14} /> })()}
+          in {PROVIDER_META[externalProvider].label}
+          <ExternalLink size={12} />
+        </a>
+      )}
+
+      {/* Connect prompt or send buttons. */}
+      {connected.length === 0 ? (
+        <p className="text-[11px] text-[var(--text-faint)]">
+          Connect Xero or QuickBooks in <a href="/settings" className="text-[var(--brand-teal)] hover:underline">Settings</a> to push invoices to your books.
+        </p>
+      ) : (
+        <div className="flex flex-wrap items-center gap-2">
+          {connected.map((p) => {
+            const m = PROVIDER_META[p.provider]
+            if (!m) return null
+            const sent = externalProvider === p.provider && externalUrl
+            return (
+              <button
+                key={p.provider}
+                onClick={() => send(p.provider)}
+                disabled={!!busy}
+                className="inline-flex items-center gap-1.5 rounded-[var(--radius-btn)] px-3 py-1.5 text-xs font-semibold transition-colors disabled:opacity-50 hover:brightness-110"
+                style={{ border: `1px solid ${m.accent}55`, color: m.accent, background: 'var(--bg-surface)' }}
+              >
+                {busy === p.provider ? <Loader2 size={13} className="animate-spin" /> : <m.Mark size={14} />}
+                {sent ? `Re-send to ${m.label}` : `Send to ${m.label}`}
+              </button>
+            )
+          })}
+        </div>
+      )}
+
+      {error && <p className="text-[11px] mt-2" style={{ color: 'var(--bad)' }}>{error}</p>}
+    </div>
   )
 }
 
@@ -208,6 +321,9 @@ function InvoiceDetail({ id, onBack, onChanged }) {
             </button>
           </div>
         )}
+
+        {/* Push to Xero / QuickBooks (alongside git-evidence + manual creation). */}
+        <AccountingPush invoice={inv} onChanged={() => { refetch(); onChanged?.() }} />
       </div>
 
       {/* Line items */}

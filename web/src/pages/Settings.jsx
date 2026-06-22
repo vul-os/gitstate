@@ -4,12 +4,13 @@ import {
   User, Building2, Plug, AlertTriangle, LogOut, Users, CreditCard,
   ChevronRight, Pencil, Sparkles, KeyRound, Server, Check, Loader2,
   CalendarDays, Link2, Unlink, ArrowUpFromLine, ArrowDownToLine, Bell,
-  Webhook, Copy, RefreshCw, Rocket, Eye, EyeOff, CircleDot,
+  Webhook, Copy, RefreshCw, Rocket, Eye, EyeOff, CircleDot, Receipt,
   Settings as SettingsIcon,
 } from 'lucide-react'
 import { useAuth } from '../lib/useAuth.js'
 import { useOrg } from '../lib/useOrg.js'
 import { useWebhooks } from '../lib/useWebhooks.js'
+import { useAccounting } from '../lib/useAccounting.js'
 import { Card, Badge, Button } from '../components/ui/index.js'
 import { Reveal } from '../components/Reveal.jsx'
 import { NotificationsBody } from '../components/notifications/NotificationsSection.jsx'
@@ -17,6 +18,7 @@ import { ApiTokensBody } from '../components/settings/ApiTokens.jsx'
 import {
   get, put,
   calendarStartUrl, fetchCalendarStatus, patchCalendar, disconnectCalendar,
+  accountingStartUrl, disconnectAccounting,
 } from '../lib/api.js'
 
 function SectionCard({ icon: Icon, title, description, children, delay = 0, tone = 'default', accent = 'var(--brand-teal)' }) {
@@ -450,6 +452,138 @@ function CalendarSection({ delay }) {
   )
 }
 
+// ── Accounting (Xero / QuickBooks) ───────────────────────────────────────────
+
+function XeroMark() {
+  return (
+    <svg width="20" height="20" viewBox="0 0 24 24" aria-hidden>
+      <circle cx="12" cy="12" r="11" fill="#13B5EA" />
+      <path d="M8.6 12l-1.9-1.9a.7.7 0 1 1 1-1l1.9 1.9 1.9-1.9a.7.7 0 0 1 1 1L10.6 12l1.9 1.9a.7.7 0 0 1-1 1l-1.9-1.9-1.9 1.9a.7.7 0 1 1-1-1L8.6 12z" fill="#fff" />
+      <circle cx="15.4" cy="12" r="1.15" fill="#fff" />
+    </svg>
+  )
+}
+
+function QuickBooksMark() {
+  return (
+    <svg width="20" height="20" viewBox="0 0 24 24" aria-hidden>
+      <circle cx="12" cy="12" r="11" fill="#2CA01C" />
+      <path d="M12 5.5a6.5 6.5 0 0 0-1 12.92V11.7a1.5 1.5 0 0 1 1.5-1.5h.6V6.6h-.6A1.1 1.1 0 0 0 12 5.5z" fill="#fff" opacity=".45" />
+      <path d="M13 5.58V12.3a1.5 1.5 0 0 1-1.5 1.5h-.6v3.6h.6A1.1 1.1 0 0 0 13 18.5 6.5 6.5 0 0 0 13 5.58z" fill="#fff" />
+    </svg>
+  )
+}
+
+// AccountingRow — one provider's connect / connected-company / disconnect.
+function AccountingRow({ status, onChanged, brand, label, blurb, border }) {
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState(null)
+  const connected = status?.connected
+  const configured = status?.configured
+
+  function connect() {
+    const url = accountingStartUrl(status.provider)
+    if (url) window.location.href = url
+  }
+
+  async function disconnect() {
+    setBusy(true); setError(null)
+    try {
+      await disconnectAccounting(status.provider)
+      onChanged()
+    } catch (e) {
+      setError(e.message ?? 'Failed to disconnect')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className={`py-3 ${border ? 'border-t border-[var(--border)]' : ''}`}>
+      <div className="flex items-center gap-3">
+        <div className="w-9 h-9 rounded-[var(--radius-btn)] bg-[var(--bg)] border border-[var(--border)] flex items-center justify-center shrink-0">
+          {brand}
+        </div>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2">
+            <p className="text-sm text-[var(--text)]">{label}</p>
+            {connected && <Badge color="teal">connected</Badge>}
+          </div>
+          {!configured ? (
+            <p className="text-xs text-[var(--text-faint)]">Not configured on this server</p>
+          ) : connected ? (
+            <p className="text-xs text-[var(--text-faint)] truncate">{status.externalName || 'Connected'}</p>
+          ) : (
+            <p className="text-xs text-[var(--text-faint)]">{blurb}</p>
+          )}
+        </div>
+        {configured && (connected ? (
+          <Button
+            variant="outline" size="sm" onClick={disconnect} disabled={busy}
+            leftIcon={busy ? <Loader2 size={13} className="animate-spin" /> : <Unlink size={13} />}
+            className="hover:border-[color-mix(in_srgb,var(--bad)_30%,transparent)] hover:text-[var(--bad)] shrink-0"
+          >
+            Disconnect
+          </Button>
+        ) : (
+          <Button
+            variant="outline" size="sm" onClick={connect}
+            leftIcon={<Link2 size={13} />} className="shrink-0"
+          >
+            Connect
+          </Button>
+        ))}
+      </div>
+      {error && <p className="text-xs text-[var(--bad)] mt-2 ml-12">{error}</p>}
+    </div>
+  )
+}
+
+// AccountingSection — connect Xero / QuickBooks so invoices can be pushed to the
+// org's books with one click (alongside git-evidence + manual creation).
+function AccountingSection({ delay }) {
+  const { xero, quickbooks, anyConfigured, loading, error, refetch } = useAccounting()
+
+  return (
+    <SectionCard
+      icon={Receipt}
+      title="Accounting"
+      description="Connect your books so a git-backed invoice can be pushed straight to Xero or QuickBooks."
+      delay={delay}
+      accent="var(--chart-3)"
+    >
+      {loading && !xero && !quickbooks ? (
+        <div className="flex items-center gap-2 py-4 text-xs text-[var(--text-faint)]">
+          <Loader2 size={14} className="animate-spin" /> Loading…
+        </div>
+      ) : !anyConfigured ? (
+        <div className="py-2 text-xs text-[var(--text-faint)] space-y-1.5">
+          <p>No accounting provider is configured on this server. To enable pushing invoices to Xero / QuickBooks, set OAuth credentials in the server environment and restart:</p>
+          <ul className="space-y-1 font-mono text-[11px] text-[var(--text-muted)]">
+            <li>· <span className="text-[#13B5EA]">XERO_CLIENT_ID</span> / <span className="text-[#13B5EA]">XERO_CLIENT_SECRET</span></li>
+            <li>· <span className="text-[#2CA01C]">QUICKBOOKS_CLIENT_ID</span> / <span className="text-[#2CA01C]">QUICKBOOKS_CLIENT_SECRET</span></li>
+          </ul>
+          <p>Manual and generate-from-git invoices keep working without these — this only adds one-click sync to your books.</p>
+        </div>
+      ) : (
+        <>
+          <AccountingRow
+            status={xero ?? { provider: 'xero', configured: false }}
+            onChanged={refetch} brand={<XeroMark />} label="Xero"
+            blurb="Push invoices to your Xero organisation" border={false}
+          />
+          <AccountingRow
+            status={quickbooks ?? { provider: 'quickbooks', configured: false }}
+            onChanged={refetch} brand={<QuickBooksMark />} label="QuickBooks"
+            blurb="Push invoices to your QuickBooks company" border
+          />
+        </>
+      )}
+      {error && <p className="text-xs text-[var(--bad)] mt-2">{error}</p>}
+    </SectionCard>
+  )
+}
+
 // ── Webhooks & CI/CD ─────────────────────────────────────────────────────────
 
 function CopyField({ label, value }) {
@@ -768,6 +902,8 @@ export default function Settings() {
       </SectionCard>
 
       <CalendarSection delay={0.22} />
+
+      <AccountingSection delay={0.23} />
 
       <SectionCard
         icon={Bell}

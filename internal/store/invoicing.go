@@ -62,6 +62,11 @@ type ClientInvoice struct {
 	IssuedAt      *time.Time `json:"issuedAt"`
 	CreatedAt     time.Time  `json:"createdAt"`
 
+	// External accounting-system linkage (set after a push to Xero/QuickBooks).
+	ExternalProvider string `json:"externalProvider,omitempty"`
+	ExternalID       string `json:"externalId,omitempty"`
+	ExternalURL      string `json:"externalUrl,omitempty"`
+
 	// Joined display fields (best-effort; empty when not joined).
 	ClientName  string `json:"clientName,omitempty"`
 	ProjectName string `json:"projectName,omitempty"`
@@ -195,6 +200,7 @@ const invoiceSelect = `
 	SELECT i.id, i.org_id, i.client_id::text, i.project_id::text, i.number, i.status,
 	       i.period_start, i.period_end, i.currency, i.subtotal_cents, i.total_cents,
 	       i.share_token, COALESCE(i.notes,''), i.issued_at, i.created_at,
+	       COALESCE(i.external_provider,''), COALESCE(i.external_id,''), COALESCE(i.external_url,''),
 	       COALESCE(c.name,''), COALESCE(p.name,'')
 	FROM client_invoices i
 	LEFT JOIN clients  c ON c.id = i.client_id
@@ -490,6 +496,7 @@ func scanClientInvoice(row invoiceScanner, inv *ClientInvoice) error {
 		&inv.ID, &inv.OrgID, &inv.ClientID, &inv.ProjectID, &inv.Number, &inv.Status,
 		&inv.PeriodStart, &inv.PeriodEnd, &inv.Currency, &inv.SubtotalCents, &inv.TotalCents,
 		&inv.ShareToken, &inv.Notes, &inv.IssuedAt, &inv.CreatedAt,
+		&inv.ExternalProvider, &inv.ExternalID, &inv.ExternalURL,
 		&inv.ClientName, &inv.ProjectName,
 	); err != nil {
 		if err == pgx.ErrNoRows {

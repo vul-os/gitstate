@@ -333,6 +333,38 @@ export function disconnectCalendar(provider) {
   return del(`/api/calendar/${provider}`)
 }
 
+// ── Accounting connection (Xero / QuickBooks) helpers ───────────────────────────
+
+/**
+ * Build the top-level navigation URL that starts the Xero/QuickBooks OAuth
+ * connect flow. The /start endpoint self-authenticates from these query params
+ * because a browser navigation can't send Bearer/X-Org-ID headers.
+ * @param {string} provider 'xero' | 'quickbooks'
+ * @returns {string|null} the URL, or null if not authenticated / no active org
+ */
+export function accountingStartUrl(provider) {
+  const token = getToken()
+  const orgId = getActiveOrgId()
+  if (!token || !orgId) return null
+  const qs = new URLSearchParams({ token, org: orgId })
+  return `${BASE}/api/accounting/${provider}/start?${qs.toString()}`
+}
+
+/** Fetch the org's accounting status: [{provider, configured, connected, externalName}]. */
+export function fetchAccountingStatus() {
+  return get('/api/accounting/status')
+}
+
+/** Disconnect an accounting provider (deletes the stored encrypted tokens). */
+export function disconnectAccounting(provider) {
+  return del(`/api/accounting/${provider}`)
+}
+
+/** Push an invoice to a connected accounting provider; returns {provider, externalId, externalUrl}. */
+export function pushInvoice(invoiceId, provider) {
+  return post(`/api/invoices/${invoiceId}/push`, { provider })
+}
+
 /** Pull busy windows from connected calendars into availability for a period. */
 export function syncCalendar(body) {
   return post('/api/calendar/sync', body ?? {})
