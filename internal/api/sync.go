@@ -259,6 +259,10 @@ func (h *syncHandlers) connectRepo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Auto-sync the freshly imported repo so its issues/PRs/commits pull right away
+	// instead of waiting for a manual /sync. Best-effort, in the background.
+	h.startBackgroundSync(orgID, *repo, token, baseURL)
+
 	writeJSON(w, http.StatusCreated, repoToResponse(*repo))
 }
 
@@ -314,16 +318,23 @@ func (h *syncHandlers) triggerSync(w http.ResponseWriter, r *http.Request) {
 		"repoId": repoID,
 	})
 
-	// Run sync in background with a detached context.
+	h.startBackgroundSync(orgID, *repo, token, baseURL)
+}
+
+// startBackgroundSync runs a repo sync in a detached goroutine. Shared by the
+// import path (so a freshly connected repo pulls issues/PRs/commits immediately)
+// and the manual /sync trigger. Best-effort: it logs failures and never blocks
+// the HTTP response.
+func (h *syncHandlers) startBackgroundSync(orgID string, repo store.Repo, token, baseURL string) {
 	bgCtx := context.Background()
 	go func() {
 		provider, err := gitSync.NewProvider(bgCtx, repo.Platform, token, baseURL)
 		if err != nil {
-			slog.Error("sync: build provider", "repo_id", repoID, "err", err)
+			slog.Error("sync: build provider", "repo_id", repo.ID, "err", err)
 			return
 		}
-		if err := gitSync.SyncRepo(bgCtx, h.db, provider, orgID, *repo); err != nil {
-			slog.Error("sync: sync repo", "repo_id", repoID, "err", err)
+		if err := gitSync.SyncRepo(bgCtx, h.db, provider, orgID, repo); err != nil {
+			slog.Error("sync: sync repo", "repo_id", repo.ID, "err", err)
 		}
 	}()
 }
