@@ -317,12 +317,21 @@ func similarIssues(ctx context.Context, tx pgx.Tx, orgID string, iss *Issue) []S
 	rows.Close()
 
 	// Attach a resolving merged PR (most-recently-merged in the same repo) as the
-	// "how it was resolved" hint. Best-effort; absence is fine.
+	// "how it was resolved" hint. Best-effort; absence is fine. We fetch the latest
+	// merged PR for every candidate repo in a SINGLE query (was one query per
+	// candidate — an N+1 over up to maxSimilarIssues repos).
+	repoIDs := make([]string, 0, len(cands))
+	seenRepo := make(map[string]bool, len(cands))
 	for i := range cands {
-		if cands[i].repoID == "" {
+		if cands[i].repoID == "" || seenRepo[cands[i].repoID] {
 			continue
 		}
-		if pr := latestMergedPR(ctx, tx, orgID, cands[i].repoID); pr != nil {
+		seenRepo[cands[i].repoID] = true
+		repoIDs = append(repoIDs, cands[i].repoID)
+	}
+	byRepo := latestMergedPRsByRepo(ctx, tx, orgID, repoIDs)
+	for i := range cands {
+		if pr, ok := byRepo[cands[i].repoID]; ok {
 			cands[i].si.ResolvedByPR = pr
 		}
 	}
@@ -344,9 +353,20 @@ func briefsFromCands(cands []similarCand) []SimilarIssue {
 	return out
 }
 
-func latestMergedPR(ctx context.Context, tx pgx.Tx, orgID, repoID string) *PRBrief {
+// latestMergedPRsByRepo returns, for each requested repo, the most-recently-merged
+// PR (with its latest lead time if any) — the set-based form of latestMergedPR.
+// It replaces a per-repo N+1: one round-trip resolves every candidate repo via
+// DISTINCT ON. Best-effort: a query error yields an empty map (callers treat a
+// missing repo as "no resolving PR"). Org scope is enforced by RLS + the bound
+// org_id; the repo set is constrained with = ANY($2).
+func latestMergedPRsByRepo(ctx context.Context, tx pgx.Tx, orgID string, repoIDs []string) map[string]*PRBrief {
+	out := make(map[string]*PRBrief, len(repoIDs))
+	if len(repoIDs) == 0 {
+		return out
+	}
 	const q = `
-		SELECT p.id, COALESCE(p.number,0), COALESCE(p.title,''), COALESCE(p.state,''),
+		SELECT DISTINCT ON (p.repo_id)
+		       p.repo_id, p.id, COALESCE(p.number,0), COALESCE(p.title,''), COALESCE(p.state,''),
 		       ct.lead_time_secs
 		FROM pull_requests p
 		LEFT JOIN LATERAL (
@@ -354,20 +374,27 @@ func latestMergedPR(ctx context.Context, tx pgx.Tx, orgID, repoID string) *PRBri
 		    WHERE c.pr_id = p.id AND c.lead_time_secs IS NOT NULL
 		    ORDER BY computed_at DESC LIMIT 1
 		) ct ON true
-		WHERE p.org_id = $1 AND p.repo_id = $2 AND p.merged_at IS NOT NULL
-		ORDER BY p.merged_at DESC
-		LIMIT 1`
-	var pb PRBrief
-	var lead *int64
-	if err := tx.QueryRow(ctx, q, orgID, repoID).Scan(
-		&pb.ID, &pb.Number, &pb.Title, &pb.State, &lead,
-	); err != nil {
-		return nil
+		WHERE p.org_id = $1 AND p.repo_id = ANY($2) AND p.merged_at IS NOT NULL
+		ORDER BY p.repo_id, p.merged_at DESC`
+	rows, err := tx.Query(ctx, q, orgID, repoIDs)
+	if err != nil {
+		return out
 	}
-	pb.Title = trim(pb.Title, commitSubjectMax)
-	pb.Merged = true
-	pb.LeadTimeSecs = lead
-	return &pb
+	defer rows.Close()
+	for rows.Next() {
+		var repoID string
+		var pb PRBrief
+		var lead *int64
+		if err := rows.Scan(&repoID, &pb.ID, &pb.Number, &pb.Title, &pb.State, &lead); err != nil {
+			return out
+		}
+		pb.Title = trim(pb.Title, commitSubjectMax)
+		pb.Merged = true
+		pb.LeadTimeSecs = lead
+		pbCopy := pb
+		out[repoID] = &pbCopy
+	}
+	return out
 }
 
 func intersect(a, b []string) []string {
