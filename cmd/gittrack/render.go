@@ -137,24 +137,21 @@ func renderPRContext(w io.Writer, c *prContext) {
 	if pr.AuthorLogin != "" {
 		fmt.Fprintf(w, "   author: %s", pr.AuthorLogin)
 	}
-	fmt.Fprintf(w, "   +%d/-%d across %d files\n", pr.Additions, pr.Deletions, pr.ChangedFiles)
+	d := c.DiffSummary
+	fmt.Fprintf(w, "   +%d/-%d across %d files\n", d.Additions, d.Deletions, d.ChangedFiles)
 
-	fmt.Fprintf(w, "cycle time: %s", fmtDuration(c.CycleTimeSecs))
-	if c.PredictedSecs > 0 {
-		fmt.Fprintf(w, "   estimated effort: %s", fmtDuration(c.PredictedSecs))
+	if c.CycleTimeSecs != nil {
+		fmt.Fprintf(w, "cycle time: %s", fmtDuration(*c.CycleTimeSecs))
+	} else {
+		fmt.Fprint(w, "cycle time: —")
 	}
-	fmt.Fprintln(w)
-
-	if s := strings.TrimSpace(c.DiffSummary); s != "" {
-		fmt.Fprintf(w, "\n%s\n", truncate(s, 400))
-	}
-
-	if len(c.ChangedPaths) > 0 {
-		fmt.Fprintf(w, "\nChanged paths (%d):\n", len(c.ChangedPaths))
-		for _, p := range c.ChangedPaths {
-			fmt.Fprintf(w, "  %s\n", p)
+	if c.Estimate != nil && c.Estimate.PredictedSecs != nil {
+		fmt.Fprintf(w, "   estimated effort: %s", fmtDuration(int64(*c.Estimate.PredictedSecs)))
+		if c.Estimate.SizeBucket != "" {
+			fmt.Fprintf(w, " (%s)", c.Estimate.SizeBucket)
 		}
 	}
+	fmt.Fprintln(w)
 }
 
 // renderRunList writes a compact table of logged agent runs.

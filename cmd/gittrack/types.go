@@ -74,21 +74,27 @@ type agentRun struct {
 	CreatedAt string `json:"createdAt"`
 }
 
-// prContext is the bundle returned by GET /api/context/pr/{id}.
+// prContext is the bundle returned by GET /api/context/pr/{id}. It must mirror
+// store.PRContextBundle: the diff shape is a nested object (not a string), the
+// effort estimate lives under "estimate", and cycleTimeSecs is omitted when nil.
 type prContext struct {
 	PR struct {
-		ID           string `json:"id"`
-		Number       int    `json:"number"`
-		Title        string `json:"title"`
-		State        string `json:"state"`
-		Merged       bool   `json:"merged"`
-		AuthorLogin  string `json:"authorLogin"`
-		Additions    int    `json:"additions"`
-		Deletions    int    `json:"deletions"`
-		ChangedFiles int    `json:"changedFiles"`
+		ID          string `json:"id"`
+		Number      int    `json:"number"`
+		Title       string `json:"title"`
+		State       string `json:"state"`
+		Merged      bool   `json:"merged"`
+		AuthorLogin string `json:"authorLogin"`
 	} `json:"pr"`
-	DiffSummary   string   `json:"diffSummary"`
-	ChangedPaths  []string `json:"changedPaths"`
-	CycleTimeSecs int64    `json:"cycleTimeSecs"`
-	PredictedSecs int64    `json:"predicted_secs"`
+	DiffSummary struct {
+		Additions    int `json:"additions"`
+		Deletions    int `json:"deletions"`
+		ChangedFiles int `json:"changedFiles"`
+	} `json:"diffSummary"`
+	CycleTimeSecs *int64 `json:"cycleTimeSecs"`
+	Estimate      *struct {
+		PredictedSecs *float64 `json:"predictedSecs"`
+		SizeBucket    string   `json:"sizeBucket"`
+		ChangeType    string   `json:"changeType"`
+	} `json:"estimate"`
 }

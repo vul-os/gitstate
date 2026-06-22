@@ -257,6 +257,46 @@ func TestCmdWhoami(t *testing.T) {
 	}
 }
 
+// TestCmdPRSummaryDecodesServerShape drives cmdPR against the EXACT wire shape
+// store.PRContextBundle emits: diffSummary is a nested object (not a string) and
+// the effort estimate lives under "estimate". A regression to the old type
+// (DiffSummary string / PredictedSecs int64) makes json.Unmarshal fail with
+// "cannot unmarshal object into Go struct field prContext.diffSummary of type
+// string", which this test guards against.
+func TestCmdPRSummaryDecodesServerShape(t *testing.T) {
+	const body = `{
+	  "pr": {"id":"pr-1","number":1001,"title":"chore(ci): cache build","state":"merged","merged":true,"authorLogin":"mlee"},
+	  "diffSummary": {"additions":492,"deletions":101,"changedFiles":8},
+	  "cycleTimeSecs": 30780,
+	  "estimate": {"predictedSecs":22903.3,"sizeBucket":"m","changeType":"fix"}
+	}`
+	var gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		w.Write([]byte(body))
+	}))
+	defer srv.Close()
+
+	out := captureStdout(t, func() int {
+		if code := cmdPR([]string{"pr-1", "--url", srv.URL, "--token", "gsk_t"}); code != 0 {
+			t.Errorf("cmdPR exit = %d, want 0 (decode must not fail)", code)
+		}
+		return 0
+	})
+
+	if gotPath != "/api/context/pr/pr-1" {
+		t.Errorf("path = %q", gotPath)
+	}
+	for _, want := range []string{"#1001", "merged", "+492/-101 across 8 files", "estimated effort"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("summary missing %q in:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "cannot unmarshal") {
+		t.Errorf("summary shows a decode error:\n%s", out)
+	}
+}
+
 // TestCmdLogRunRequestBuilding verifies cmdLogRun POSTs to /api/agent-runs with
 // the auth header and folds flags into the JSON body — including diffSummary —
 // while leaving un-set optional fields out so server defaults apply.
