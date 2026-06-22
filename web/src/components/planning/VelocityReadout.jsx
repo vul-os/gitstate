@@ -40,8 +40,8 @@ function Sparkline({ points = [], width = 240, height = 56 }) {
 }
 
 const TREND = {
-  accelerating: { Icon: TrendingUp, color: '#22c55e', label: 'accelerating' },
-  slowing: { Icon: TrendingDown, color: '#f59e0b', label: 'slowing' },
+  accelerating: { Icon: TrendingUp, color: 'var(--ok)', label: 'accelerating' },
+  slowing: { Icon: TrendingDown, color: 'var(--warn)', label: 'slowing' },
   steady: { Icon: Minus, color: 'var(--text-muted)', label: 'steady' },
 }
 

@@ -790,8 +790,8 @@ function InvoiceDetailPanel({ id, onBack }) {
           </svg>
           <div>
             <p className="font-semibold text-[#fbbf24] mb-0.5">Some lines need confirmation</p>
-            <p className="text-[#92400e] leading-relaxed" style={{ color: '#b45309' }}>
-              Lines marked <strong style={{ color: '#f59e0b' }}>needs confirmation</strong> are estimated — no git activity was found to back them.
+            <p className="leading-relaxed text-[var(--text-dim)]">
+              Lines marked <strong style={{ color: 'var(--warn)' }}>needs confirmation</strong> are estimated — no git activity was found to back them.
               Review these before sending the invoice to your client. gitstate will only count what git can prove.
             </p>
           </div>

@@ -140,7 +140,7 @@ function NLQueryBox() {
         <div className="space-y-4">
           {result.answer && (
             <div className="rounded-[var(--radius-card)] px-5 py-4 bg-[var(--brand-indigo)]/[0.06] border border-[var(--brand-indigo)]/15">
-              <p className="text-sm text-[#c7d2fe] leading-relaxed">{result.answer}</p>
+              <p className="text-sm text-[var(--text-dim)] leading-relaxed">{result.answer}</p>
             </div>
           )}
 

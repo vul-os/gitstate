@@ -991,8 +991,8 @@ function ProjectTable({ filters }) {
                   </td>
                   <td className="px-2 py-2.5 text-right font-mono tabular-nums text-[var(--text-dim)]">{fmtNum(p.commits)}</td>
                   <td className="px-2 py-2.5 text-right font-mono tabular-nums text-[var(--text-muted)] hidden sm:table-cell">{fmtNum(p.contributors)}</td>
-                  <td className="px-2 py-2.5 text-right font-mono tabular-nums text-[#eab308]">{fmtNum(p.openIssues)}</td>
-                  <td className="px-2 py-2.5 text-right font-mono tabular-nums text-[#22c55e]">{fmtNum(p.doneIssues)}</td>
+                  <td className="px-2 py-2.5 text-right font-mono tabular-nums text-[var(--warn)]">{fmtNum(p.openIssues)}</td>
+                  <td className="px-2 py-2.5 text-right font-mono tabular-nums text-[var(--ok)]">{fmtNum(p.doneIssues)}</td>
                   <td className="px-2 py-2.5 text-right font-mono tabular-nums whitespace-nowrap hidden md:table-cell">
                     <span className="text-green-400">+{fmtNum(p.additions)}</span>{' '}
                     <span className="text-red-400">−{fmtNum(p.deletions)}</span>

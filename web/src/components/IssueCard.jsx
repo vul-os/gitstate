@@ -26,7 +26,7 @@ export function IssueCard({ issue, onClick }) {
         {issue.manualStateOverride && (
           <span
             className="text-[10px] font-mono ml-auto px-1.5 py-0.5 rounded"
-            style={{ color: '#f59e0b', background: 'rgba(245,158,11,0.10)' }}
+            style={{ color: 'var(--warn)', background: 'color-mix(in srgb, var(--warn) 12%, transparent)' }}
           >
             overridden
           </span>

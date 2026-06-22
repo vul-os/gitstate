@@ -271,7 +271,7 @@ function InvoiceDetail({ id, onBack, onChanged }) {
   }
 
   return (
-    <div className="space-y-6 max-w-3xl">
+    <div className="space-y-6 max-w-3xl mx-auto">
       <button onClick={onBack} className="flex items-center gap-1.5 text-xs text-[var(--text-muted)] hover:text-[var(--text)] transition-colors">
         <ArrowLeft size={14} /> Back to invoices
       </button>
