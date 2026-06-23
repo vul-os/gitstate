@@ -80,7 +80,6 @@ func TestNormalizeBucket(t *testing.T) {
 
 func TestParseFilterDefaulting(t *testing.T) {
 	now := time.Date(2026, 6, 18, 12, 0, 0, 0, time.UTC)
-	nineMoEarlier := now.AddDate(0, -DefaultRangeMonths, 0)
 
 	tests := []struct {
 		name      string
@@ -92,9 +91,9 @@ func TestParseFilterDefaulting(t *testing.T) {
 		wantError bool
 	}{
 		{
-			name:     "no bounds → last 9 months",
+			name:     "no bounds → all time (floor), not the 9-month default",
 			in:       FilterInput{},
-			wantFrom: nineMoEarlier, wantTo: now,
+			wantFrom: allTimeFloor, wantTo: now,
 		},
 		{
 			name:     "only from → to defaults to now",
@@ -128,7 +127,7 @@ func TestParseFilterDefaulting(t *testing.T) {
 		{
 			name:     "repo + author trimmed and passed through",
 			in:       FilterInput{RepoID: "  repo-123 ", Author: " jane@work "},
-			wantFrom: nineMoEarlier, wantTo: now,
+			wantFrom: allTimeFloor, wantTo: now,
 			wantRepo: "repo-123", wantAuth: "jane@work",
 		},
 		{

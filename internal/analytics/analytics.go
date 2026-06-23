@@ -89,12 +89,21 @@ func ParseFilter(in FilterInput, now time.Time) (Filter, error) {
 	return f, nil
 }
 
-// applyDefaults fills missing bounds with the default 9-month window.
+// allTimeFloor is the lower bound for an unbounded ("All time") query — old enough
+// to cover any real git history (git dates from ~2005) without admitting year-0001
+// stray rows.
+var allTimeFloor = time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC)
+
+// applyDefaults fills missing bounds. No bounds at all = "All time"; only one bound
+// given falls back to the default 9-month window relative to it.
 func applyDefaults(f Filter, now time.Time) Filter {
 	switch {
 	case f.From.IsZero() && f.To.IsZero():
+		// The frontend's "All" preset sends empty dates (its other presets send
+		// explicit windows). Treat that as all-time, NOT the last 9 months —
+		// otherwise "All time" silently hides everything older (e.g. repos to 2020).
 		f.To = now
-		f.From = now.AddDate(0, -DefaultRangeMonths, 0)
+		f.From = allTimeFloor
 	case f.From.IsZero():
 		f.From = f.To.AddDate(0, -DefaultRangeMonths, 0)
 	case f.To.IsZero():
