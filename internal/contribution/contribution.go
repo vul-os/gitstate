@@ -111,11 +111,14 @@ func nz(v float64) float64 {
 // "effort" counts already exclude unmerged work (the gate). The pure scoring
 // layer takes these as given and only normalizes + weights.
 type RawMember struct {
-	UserID     string
-	Name       string
-	Email      string
-	Login      string // primary git login for this identity (for evidence lookup)
-	IsAgentBot bool   // a bot/agent identity — shown separately, never inflates a human
+	UserID string
+	// ContributorID is the canonical contributor (the PERSON) — the STABLE key the
+	// API/frontend group by. Empty for a raw git identity not yet mapped.
+	ContributorID string
+	Name          string
+	Email         string
+	Login         string // primary git login for this identity (for evidence lookup)
+	IsAgentBot    bool   // a bot/agent identity — shown separately, never inflates a human
 
 	// shipped (ACCEPTED work only)
 	MergedPRs       int
@@ -468,13 +471,14 @@ type SZZQuality interface {
 
 // Member is a fully scored member profile (the API shape mirrors this).
 type Member struct {
-	UserID     string
-	Name       string
-	Email      string
-	IsAgentBot bool
-	Composite  float64
-	Dimensions DimensionScores
-	Raw        RawMember
+	UserID        string
+	ContributorID string
+	Name          string
+	Email         string
+	IsAgentBot    bool
+	Composite     float64
+	Dimensions    DimensionScores
+	Raw           RawMember
 }
 
 // Profiles is the pure core: given the merge-gated raw members, the normalization
@@ -556,13 +560,14 @@ func Profiles(raw []RawMember, method NormMethod, w Weights) []Member {
 		// (they were excluded from the cohort, so they hold no rank among humans).
 		dims := dimsByIdx[i]
 		members[i] = Member{
-			UserID:     m.UserID,
-			Name:       m.Name,
-			Email:      m.Email,
-			IsAgentBot: m.IsAgentBot,
-			Composite:  Composite(dims, w),
-			Dimensions: dims,
-			Raw:        m,
+			UserID:        m.UserID,
+			ContributorID: m.ContributorID,
+			Name:          m.Name,
+			Email:         m.Email,
+			IsAgentBot:    m.IsAgentBot,
+			Composite:     Composite(dims, w),
+			Dimensions:    dims,
+			Raw:           m,
 		}
 	}
 
@@ -707,6 +712,7 @@ func toRawMembers(rows []store.ContribAggregate) []RawMember {
 	for i, r := range rows {
 		out[i] = RawMember{
 			UserID:           r.UserID,
+			ContributorID:    r.ContributorID,
 			Name:             r.Name,
 			Email:            r.Email,
 			Login:            r.Login,
@@ -752,19 +758,31 @@ type MemberDetail struct {
 	Evidence Evidence `json:"evidence"`
 }
 
-// ComputeMember returns the scored profile for one user (scored within the SAME
-// cohort as the full report, so the numbers match) plus the evidence rows.
-// Returns ok=false when the user has no contribution rows in the period.
-func (s *Service) ComputeMember(ctx context.Context, orgID, userID string, p Period) (MemberDetail, bool, error) {
+// ComputeMember returns the scored profile for one PERSON (scored within the SAME
+// cohort as the full report, so the numbers match) plus the evidence rows. `id`
+// may be either a contributor id (the stable per-person key — used when a grouped
+// person is clicked) or a linked user id (back-compat for member drill-down).
+// Returns ok=false when the person has no contribution rows in the period.
+func (s *Service) ComputeMember(ctx context.Context, orgID, id string, p Period) (MemberDetail, bool, error) {
 	rep, err := s.Compute(ctx, orgID, p)
 	if err != nil {
 		return MemberDetail{}, false, err
 	}
+	// Prefer a contributor-id match (the stable key the roster sends), then fall
+	// back to a user-id match so linked-member drill-downs keep working.
 	var found *Member
 	for i := range rep.Members {
-		if rep.Members[i].UserID == userID {
+		if rep.Members[i].ContributorID != "" && rep.Members[i].ContributorID == id {
 			found = &rep.Members[i]
 			break
+		}
+	}
+	if found == nil {
+		for i := range rep.Members {
+			if rep.Members[i].UserID != "" && rep.Members[i].UserID == id {
+				found = &rep.Members[i]
+				break
+			}
 		}
 	}
 	if found == nil {

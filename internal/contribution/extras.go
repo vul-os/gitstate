@@ -13,6 +13,7 @@ package contribution
 import (
 	"context"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/exo/gitstate/internal/store"
@@ -37,13 +38,16 @@ type TrendPoint struct {
 	Dimensions  map[string]float64 `json:"dimensions"`
 }
 
-// TrendSeries is one member's composite over the last N periods (oldest first).
+// TrendSeries is one PERSON's composite over the last N periods (oldest first),
+// keyed by the canonical contributor so a grouped person (usually with no userId)
+// still gets a real series. UserID is carried for linked members.
 type TrendSeries struct {
-	UserID     string       `json:"userId"`
-	Name       string       `json:"name"`
-	Email      string       `json:"email"`
-	IsAgentBot bool         `json:"isAgentBot"`
-	Points     []TrendPoint `json:"points"`
+	ContributorID string       `json:"contributorId"`
+	UserID        string       `json:"userId"`
+	Name          string       `json:"name"`
+	Email         string       `json:"email"`
+	IsAgentBot    bool         `json:"isAgentBot"`
+	Points        []TrendPoint `json:"points"`
 }
 
 // windowBounds returns the [start,end) for the i-th window back from `now`
@@ -99,8 +103,26 @@ func (s *Service) ComputeTrends(ctx context.Context, orgID string, periods int, 
 		interval = IntervalMonth
 	}
 
-	// userID → series (kept insertion-stable, sorted at the end).
-	byUser := map[string]*TrendSeries{}
+	// person-key → series (kept insertion-stable, sorted at the end). The person key
+	// is the canonical contributor id when known, else the linked user id, else a
+	// raw-identity fallback — so EVERY person gets one series even before detection
+	// links them to a user (the bug we're fixing: snapshots existed only for the 1
+	// linked user, so every grouped person had an empty/fake trend).
+	bySeries := map[string]*TrendSeries{}
+	personKey := func(m Member) string {
+		if m.ContributorID != "" {
+			return "c:" + m.ContributorID
+		}
+		if m.UserID != "" {
+			return "u:" + m.UserID
+		}
+		// Raw identity (no contributor, no user): key by email|name so it stays stable
+		// across periods and never collapses distinct people together.
+		if m.Email != "" {
+			return "e:" + strings.ToLower(m.Email)
+		}
+		return "n:" + strings.ToLower(m.Name)
+	}
 
 	// Walk oldest → newest so each series reads left→right.
 	for i := periods - 1; i >= 0; i-- {
@@ -110,14 +132,16 @@ func (s *Service) ComputeTrends(ctx context.Context, orgID string, periods int, 
 			return nil, err
 		}
 
-		// Persist this window's snapshots (only members with a real user row;
-		// snapshots FK to users). Best-effort upsert inside one tx.
+		// Persist this window's snapshots per PERSON: keyed by contributor_id when
+		// known, else the linked user_id. A row with neither (a raw unmapped identity)
+		// can't be persisted (no stable FK id) so it is skipped — it still renders in
+		// the live series, it just isn't cached. Best-effort upsert inside one tx.
 		err = s.db.WithOrg(ctx, orgID, func(tx pgx.Tx) error {
 			for _, m := range rep.Members {
-				if m.UserID == "" {
+				if m.ContributorID == "" && m.UserID == "" {
 					continue
 				}
-				if err := store.UpsertContributionSnapshot(ctx, tx, orgID, m.UserID, start, end, m.Composite, m.Dimensions.asMap()); err != nil {
+				if err := store.UpsertPersonSnapshot(ctx, tx, orgID, m.ContributorID, m.UserID, start, end, m.Composite, m.Dimensions.asMap()); err != nil {
 					return err
 				}
 			}
@@ -128,10 +152,21 @@ func (s *Service) ComputeTrends(ctx context.Context, orgID string, periods int, 
 		}
 
 		for _, m := range rep.Members {
-			ser := byUser[m.UserID]
+			key := personKey(m)
+			ser := bySeries[key]
 			if ser == nil {
-				ser = &TrendSeries{UserID: m.UserID, Name: m.Name, Email: m.Email, IsAgentBot: m.IsAgentBot}
-				byUser[m.UserID] = ser
+				ser = &TrendSeries{ContributorID: m.ContributorID, UserID: m.UserID, Name: m.Name, Email: m.Email, IsAgentBot: m.IsAgentBot}
+				bySeries[key] = ser
+			}
+			// Backfill identity fields a later period may resolve (e.g. a user link).
+			if ser.ContributorID == "" {
+				ser.ContributorID = m.ContributorID
+			}
+			if ser.UserID == "" {
+				ser.UserID = m.UserID
+			}
+			if ser.Name == "" {
+				ser.Name = m.Name
 			}
 			ser.Points = append(ser.Points, TrendPoint{
 				PeriodStart: start, PeriodEnd: end,
@@ -140,8 +175,8 @@ func (s *Service) ComputeTrends(ctx context.Context, orgID string, periods int, 
 		}
 	}
 
-	out := make([]TrendSeries, 0, len(byUser))
-	for _, ser := range byUser {
+	out := make([]TrendSeries, 0, len(bySeries))
+	for _, ser := range bySeries {
 		out = append(out, *ser)
 	}
 	// Sort by latest composite desc (last point), tie-break by name.
