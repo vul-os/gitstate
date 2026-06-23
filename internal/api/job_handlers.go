@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 
 	"github.com/exo/gitstate/internal/config"
+	"github.com/exo/gitstate/internal/contributors"
 	"github.com/exo/gitstate/internal/db"
 	"github.com/exo/gitstate/internal/jobs"
 	"github.com/exo/gitstate/internal/store"
@@ -24,7 +26,16 @@ const (
 	// JobDeepAnalyze: deep contribution analysis (blame-survival / SZZ / coupling)
 	// for one repo. Payload: {repoId}. Skips when HEAD is unchanged.
 	JobDeepAnalyze = "deep_analyze"
+	// JobDetectContributors: re-cluster the org's git identities into canonical
+	// contributors so the leaderboard/analytics show GROUPED people. Enqueued
+	// (deduped per org) after every sync, so newly-synced identities are grouped
+	// automatically instead of appearing as individual git authors.
+	JobDetectContributors = "detect_contributors"
 )
+
+// DetectJobDedupeKey coalesces a whole import/sync batch into ONE pending detect
+// per org (idempotent re-clustering; manual edits like exclusions are preserved).
+func DetectJobDedupeKey(orgID string) string { return "detect:" + orgID }
 
 // repoJobPayload is the JSON payload shape for both repo job kinds.
 type repoJobPayload struct {
@@ -46,6 +57,24 @@ func DeepAnalyzeJobDedupeKey(repoID string) string { return "deep:" + repoID }
 func RegisterSyncJobHandlers(q *jobs.Queue, database *db.DB, cfg *config.Config) {
 	q.Register(JobSyncRepo, makeSyncRepoHandler(q, cfg))
 	q.Register(JobDeepAnalyze, makeDeepAnalyzeHandler(cfg))
+	q.Register(JobDetectContributors, makeDetectContributorsHandler())
+}
+
+// makeDetectContributorsHandler re-runs the LLM-free identity clustering so every
+// git identity maps to a canonical contributor. Idempotent and manual-edit-
+// preserving (exclusions/links survive). Org-scoped under RLS.
+func makeDetectContributorsHandler() jobs.Handler {
+	return func(ctx context.Context, database *db.DB, orgID string, _ json.RawMessage) error {
+		return database.WithOrg(ctx, orgID, func(tx pgx.Tx) error {
+			res, err := contributors.DetectAndUpsert(ctx, tx, orgID)
+			if err != nil {
+				return fmt.Errorf("detect_contributors: %w", err)
+			}
+			slog.Info("jobs: contributors detected", "org_id", orgID,
+				"contributors", res.Contributors, "identities", res.Identities)
+			return nil
+		})
+	}
 }
 
 // makeSyncRepoHandler builds the sync_repo handler. It loads the repo under RLS,
@@ -86,6 +115,18 @@ func makeSyncRepoHandler(q *jobs.Queue, cfg *config.Config) jobs.Handler {
 			Priority:  -1, // lower than fast syncs so they drain first
 		}); err != nil {
 			slog.Warn("sync_repo: enqueue deep_analyze failed", "repo_id", repoID, "org_id", orgID, "err", err)
+		}
+
+		// Re-group contributors after the sync so newly-seen identities are clustered
+		// into canonical people (the leaderboard shows GROUPED contributors, not raw
+		// git authors). Deduped per org + delayed, so a batch of repo syncs coalesces
+		// into ONE detect that runs once the wave settles. Best-effort.
+		if err := q.Enqueue(ctx, orgID, JobDetectContributors, struct{}{}, jobs.EnqueueOpts{
+			DedupeKey: DetectJobDedupeKey(orgID),
+			Delay:     45 * time.Second,
+			Priority:  -2, // after fast syncs and deep analysis
+		}); err != nil {
+			slog.Warn("sync_repo: enqueue detect_contributors failed", "org_id", orgID, "err", err)
 		}
 		return nil
 	}
