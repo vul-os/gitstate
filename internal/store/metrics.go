@@ -88,6 +88,13 @@ type CycleTimeFilter struct {
 	RepoID string    // optional — filter to a specific repo's PRs
 	From   time.Time // optional — computed_at >= From
 	To     time.Time // optional — computed_at <= To
+
+	// AuthorIdentities, when non-empty, restricts to PRs whose author_login is ANY
+	// of the given lowercased identities — the full set of a grouped contributor's
+	// git identities. PRs carry only a login, so email identities simply never
+	// match (harmless). Populated by the service layer when an author filter is a
+	// `contributor:<uuid>` token expanded via ContributorIdentityValues.
+	AuthorIdentities []string
 }
 
 // Querier is satisfied by both *pgxpool.Pool and pgx.Tx, so these reads can run
@@ -130,6 +137,11 @@ func ListCycleTimes(ctx context.Context, qr Querier, orgID string, f CycleTimeFi
 	if !f.To.IsZero() {
 		where += fmt.Sprintf(" AND pr.merged_at <= $%d", idx)
 		args = append(args, f.To)
+		idx++
+	}
+	if len(f.AuthorIdentities) > 0 {
+		where += fmt.Sprintf(" AND lower(COALESCE(pr.author_login,'')) = ANY($%d)", idx)
+		args = append(args, f.AuthorIdentities)
 		idx++ //nolint:ineffassign // idx kept for future extension
 	}
 

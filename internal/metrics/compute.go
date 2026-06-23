@@ -200,22 +200,40 @@ func (s *Service) ComputeInvolvement(ctx context.Context, orgID string, periodSt
 		// (PRs carry no email; commits carry both). GATE: merged only, humans and
 		// agents alike (agents are flagged via is_agent, never silently dropped, so
 		// the texture stays honest — the UI separates them).
+		//
+		// Contributor grouping: when a login maps to a contributor that is linked to
+		// a user (contributors.user_id), ALL of that contributor's identities collapse
+		// onto the same user — so a grouped person's involvement is unified even when
+		// an identity's email differs from the user's email. Identities belonging to
+		// an excluded/bot contributor are dropped (consistent with the leaderboard).
+		// The direct email→users bridge is preserved as a fallback for identities not
+		// yet mapped to any contributor, so existing linkage never breaks.
 		const prQ = `
 			WITH ident AS (
 				SELECT DISTINCT lower(author_login) AS login,
 				       lower(author_email::text)    AS email
 				FROM commits
 				WHERE org_id = $1 AND author_login IS NOT NULL AND author_login <> ''
+			),
+			cmap AS (
+				SELECT lower(ci.value) AS value, c.user_id::text AS user_id,
+				       c.excluded OR c.is_bot AS drop
+				FROM contributor_identities ci
+				JOIN contributors c ON c.id = ci.contributor_id
+				WHERE ci.org_id = $1
 			)
-			SELECT u.id::text AS user_id, COUNT(*) AS cnt
+			SELECT COALESCE(cl.user_id, u.id::text) AS user_id, COUNT(*) AS cnt
 			FROM pull_requests p
 			JOIN ident i ON i.login = lower(p.author_login)
 			JOIN users  u ON lower(u.email::text) = i.email
+			LEFT JOIN cmap cl ON cl.value = lower(p.author_login)
 			WHERE p.org_id = $1
 			  AND p.state = 'merged'
 			  AND p.merged_at >= $2 AND p.merged_at <= $3
 			  AND p.author_login IS NOT NULL AND p.author_login <> ''
-			GROUP BY u.id`
+			  AND NOT COALESCE(cl.drop, false)
+			  AND COALESCE(cl.user_id, u.id::text) IS NOT NULL
+			GROUP BY 1`
 
 		prRows, err := tx.Query(ctx, prQ, orgID, start, end)
 		if err != nil {
@@ -248,16 +266,26 @@ func (s *Service) ComputeInvolvement(ctx context.Context, orgID string, periodSt
 				       lower(author_email::text)    AS email
 				FROM commits
 				WHERE org_id = $1 AND author_login IS NOT NULL AND author_login <> ''
+			),
+			cmap AS (
+				SELECT lower(ci.value) AS value, c.user_id::text AS user_id,
+				       c.excluded OR c.is_bot AS drop
+				FROM contributor_identities ci
+				JOIN contributors c ON c.id = ci.contributor_id
+				WHERE ci.org_id = $1
 			)
-			SELECT u.id::text AS user_id, COUNT(DISTINCT r.pr_id) AS cnt
+			SELECT COALESCE(cl.user_id, u.id::text) AS user_id, COUNT(DISTINCT r.pr_id) AS cnt
 			FROM pr_reviews r
 			JOIN pull_requests p ON p.id = r.pr_id
 			JOIN ident i ON i.login = lower(r.reviewer_login)
 			JOIN users u ON lower(u.email::text) = i.email
+			LEFT JOIN cmap cl ON cl.value = lower(r.reviewer_login)
 			WHERE r.org_id = $1
 			  AND r.submitted_at >= $2 AND r.submitted_at <= $3
 			  AND lower(r.reviewer_login) <> lower(COALESCE(p.author_login,''))
-			GROUP BY u.id`
+			  AND NOT COALESCE(cl.drop, false)
+			  AND COALESCE(cl.user_id, u.id::text) IS NOT NULL
+			GROUP BY 1`
 
 		reviewRows, err := tx.Query(ctx, reviewQ, orgID, start, end)
 		if err != nil {
@@ -282,7 +310,14 @@ func (s *Service) ComputeInvolvement(ctx context.Context, orgID string, periodSt
 		// areas_owned = distinct repos a user committed to in the period.
 		// is_agent    = the identity's commits are entirely agent-authored.
 		const commitQ = `
-			SELECT u.id::text AS user_id,
+			WITH cmap AS (
+				SELECT lower(ci.value) AS value, c.user_id::text AS user_id,
+				       c.excluded OR c.is_bot AS drop
+				FROM contributor_identities ci
+				JOIN contributors c ON c.id = ci.contributor_id
+				WHERE ci.org_id = $1
+			)
+			SELECT COALESCE(ce.user_id, cl.user_id, u.id::text) AS user_id,
 			       COUNT(DISTINCT c.repo_id)              AS areas,
 			       COUNT(*)                               AS commits,
 			       COALESCE(SUM(c.additions),0)           AS adds,
@@ -290,9 +325,13 @@ func (s *Service) ComputeInvolvement(ctx context.Context, orgID string, periodSt
 			       bool_and(c.is_agent)                   AS all_agent
 			FROM commits c
 			JOIN users u ON lower(u.email::text) = lower(c.author_email::text)
+			LEFT JOIN cmap ce ON ce.value = lower(c.author_email::text)
+			LEFT JOIN cmap cl ON cl.value = lower(c.author_login)
 			WHERE c.org_id = $1
 			  AND c.committed_at >= $2 AND c.committed_at <= $3
-			GROUP BY u.id`
+			  AND NOT COALESCE(ce.drop, cl.drop, false)
+			  AND COALESCE(ce.user_id, cl.user_id, u.id::text) IS NOT NULL
+			GROUP BY 1`
 
 		commitRows, err := tx.Query(ctx, commitQ, orgID, start, end)
 		if err != nil {

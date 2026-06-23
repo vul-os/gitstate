@@ -196,6 +196,70 @@ func TestListCycleTimesChronologicalAndDeduped(t *testing.T) {
 	}
 }
 
+// TestListCycleTimesAuthorIdentities proves the cycle-time author filter matches
+// PR author_login against the supplied identity set (a grouped contributor's full
+// set), so filtering by a person returns ALL their PRs and none of another's.
+func TestListCycleTimesAuthorIdentities(t *testing.T) {
+	ctx, tx, orgID := metricsTestTx(t)
+	ns := time.Now().UnixNano()
+
+	var repoID string
+	if err := tx.QueryRow(ctx,
+		`INSERT INTO repos (org_id, platform, external_id, full_name) VALUES ($1,'github',$2,'acme/ct') RETURNING id`,
+		orgID, fmt.Sprintf("met-ctauth-%d", ns)).Scan(&repoID); err != nil {
+		t.Fatalf("create repo: %v", err)
+	}
+
+	// Two PRs by cameron under different logins, one by dana.
+	specs := []struct {
+		login  string
+		merged time.Time
+	}{
+		{"cam", time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)},
+		{"cameron", time.Date(2026, 5, 10, 0, 0, 0, 0, time.UTC)},
+		{"dana", time.Date(2026, 5, 15, 0, 0, 0, 0, time.UTC)},
+	}
+	for i, s := range specs {
+		var prID string
+		if err := tx.QueryRow(ctx,
+			`INSERT INTO pull_requests (org_id, repo_id, platform, external_id, number, title, state, author_login, first_commit_at, merged_at, created_at)
+			 VALUES ($1,$2,'github',$3,$4,$5,'merged',$6,$7,$8,$7) RETURNING id`,
+			orgID, repoID, fmt.Sprintf("met-ctauth-pr-%d-%d", i, ns), i+1,
+			fmt.Sprintf("pr-%s", s.login), s.login, s.merged.Add(-24*time.Hour), s.merged).Scan(&prID); err != nil {
+			t.Fatalf("insert pr %d: %v", i, err)
+		}
+		if _, err := tx.Exec(ctx,
+			`INSERT INTO cycle_times (org_id, pr_id, lead_time_secs, computed_at) VALUES ($1,$2,$3, now())`,
+			orgID, prID, int64(86400)); err != nil {
+			t.Fatalf("insert ct %d: %v", i, err)
+		}
+	}
+
+	// Filter by cameron's identity set (both logins): 2 PRs, not dana's.
+	rows, err := ListCycleTimes(ctx, tx, orgID, CycleTimeFilter{
+		RepoID:           repoID,
+		AuthorIdentities: []string{"cam", "cameron", "cam@a.com"},
+	})
+	if err != nil {
+		t.Fatalf("ListCycleTimes: %v", err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("grouped author rows = %d, want 2 (cameron's two PRs)", len(rows))
+	}
+
+	// A single-identity set returns only that one PR.
+	one, err := ListCycleTimes(ctx, tx, orgID, CycleTimeFilter{
+		RepoID:           repoID,
+		AuthorIdentities: []string{"cam"},
+	})
+	if err != nil {
+		t.Fatalf("ListCycleTimes single: %v", err)
+	}
+	if len(one) != 1 {
+		t.Errorf("single-identity rows = %d, want 1", len(one))
+	}
+}
+
 // TestListInvolvementMembersAggregates seeds two monthly involvement rows for one
 // user plus one orphan (null user_id) row, and asserts the aggregation collapses
 // to a single member card, summed across periods, with the orphan excluded.

@@ -11,14 +11,17 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 
+	"github.com/exo/gitstate/internal/analytics"
 	"github.com/exo/gitstate/internal/config"
 	"github.com/exo/gitstate/internal/db"
 	"github.com/exo/gitstate/internal/llm"
@@ -120,6 +123,7 @@ type estimateResponse struct {
 func (h *metricsHandlers) cycleTime(w http.ResponseWriter, r *http.Request) {
 	orgID := middleware.OrgFromContext(r.Context())
 	repoID := r.URL.Query().Get("repo")
+	author := r.URL.Query().Get("author")
 
 	var from, to time.Time
 	if s := r.URL.Query().Get("from"); s != "" {
@@ -146,12 +150,22 @@ func (h *metricsHandlers) cycleTime(w http.ResponseWriter, r *http.Request) {
 	// a bare pool (no org context) returns ZERO rows under the non-superuser role.
 	var cts []*store.CycleTime
 	if err := h.db.WithOrg(r.Context(), orgID, func(tx pgx.Tx) error {
-		var e error
-		cts, e = store.ListCycleTimes(r.Context(), tx, orgID, store.CycleTimeFilter{
+		filter := store.CycleTimeFilter{
 			RepoID: repoID,
 			From:   from,
 			To:     to,
-		})
+		}
+		// Author grouping: a `contributor:<uuid>` token expands to the contributor's
+		// full identity set so cycle time filters by ALL their identities (a single
+		// login is matched as-is via the same ANY() path). A plain login that maps to
+		// a contributor is also expanded so grouping is consistent with the leaderboard.
+		if idents, err := expandCycleTimeAuthor(r.Context(), tx, orgID, author); err != nil {
+			return err
+		} else {
+			filter.AuthorIdentities = idents
+		}
+		var e error
+		cts, e = store.ListCycleTimes(r.Context(), tx, orgID, filter)
 		return e
 	}); err != nil {
 		writeMetricsError(w, "list cycle times", err)
@@ -177,6 +191,49 @@ func (h *metricsHandlers) cycleTime(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, out)
+}
+
+// expandCycleTimeAuthor resolves the ?author= filter for cycle time into the set
+// of lowercased git identities to match PR author_login against. Rules:
+//   - "" → nil (no author filter).
+//   - "contributor:<uuid>" → the contributor's full identity set (emails+logins).
+//   - a plain login/email → if it maps to a contributor, that contributor's full
+//     set (so grouping matches the leaderboard); otherwise just the value itself.
+//
+// Returns nil when a contributor token yields no identities, which would
+// otherwise match nothing; callers treat nil as "no filter" only when author was
+// empty — here a non-empty author with an empty set still yields an empty result
+// because the ANY() match needs at least one value. To keep the chosen-person
+// semantics honest we fall back to the literal value so an unmapped login still
+// filters to itself.
+func expandCycleTimeAuthor(ctx context.Context, tx pgx.Tx, orgID, author string) ([]string, error) {
+	author = strings.TrimSpace(author)
+	if author == "" {
+		return nil, nil
+	}
+	if cid, ok := analytics.ContributorIDFromAuthor(author); ok {
+		idents, err := store.ContributorIdentityValues(ctx, tx, orgID, cid)
+		if err != nil {
+			return nil, err
+		}
+		return idents, nil
+	}
+	// Plain identity: expand to its contributor's full set when mapped.
+	lower := strings.ToLower(author)
+	cid, err := store.ContributorIDForIdentity(ctx, tx, orgID, lower)
+	if err != nil {
+		return nil, err
+	}
+	if cid != "" {
+		idents, err := store.ContributorIdentityValues(ctx, tx, orgID, cid)
+		if err != nil {
+			return nil, err
+		}
+		if len(idents) > 0 {
+			return idents, nil
+		}
+	}
+	return []string{lower}, nil
 }
 
 // ── GET /api/metrics/involvement ─────────────────────────────────────────────
