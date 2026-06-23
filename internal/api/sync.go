@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/exo/gitstate/internal/config"
@@ -458,12 +459,13 @@ func (h *syncHandlers) importRepos(w http.ResponseWriter, r *http.Request) {
 			byName[strings.ToLower(rr.FullName)] = rr
 		}
 
-		imported, failed := 0, 0
+		// PHASE 1 — connect ALL repos first (fast: just DB rows, no sync). This makes
+		// every repo appear in the UI immediately instead of trickling in one-per-sync.
+		var repos []store.Repo
 		for _, fn := range fullNames {
 			rr, ok := byName[strings.ToLower(strings.TrimSpace(fn))]
 			if !ok {
 				slog.Warn("import: repo not accessible to token", "full_name", fn)
-				failed++
 				continue
 			}
 			var repo *store.Repo
@@ -473,23 +475,52 @@ func (h *syncHandlers) importRepos(w http.ResponseWriter, r *http.Request) {
 				return ce
 			}); e != nil {
 				slog.Error("import: connect repo", "full_name", fn, "err", e)
-				failed++
 				continue
 			}
-			imported++
-			// Auto-register the platform webhook for ongoing real-time sync after the
-			// backfill. Gated on a publicly-reachable PublicURL (skipped+logged on
-			// localhost). Best-effort.
+			repos = append(repos, *repo)
+			// Real-time webhook (best-effort; skipped on localhost).
 			_ = autoRegisterRepoWebhook(bgCtx, h.db, h.cfg, orgID, platform, rr.FullName, rr.ExternalID, token, baseURL)
-			// Sync inline (sequential within this batch goroutine) so we don't spawn
-			// one goroutine per repo for a 100-repo import.
-			if e := gitSync.SyncRepo(bgCtx, h.db, provider, orgID, *repo, token); e != nil {
-				slog.Error("import: sync repo", "full_name", fn, "err", e)
-			}
 		}
-		slog.Info("import: batch complete", "org", orgID, "platform", platform,
-			"imported", imported, "failed", failed, "total", len(fullNames))
+		slog.Info("import: connected, starting parallel sync", "org", orgID, "platform", platform,
+			"connected", len(repos), "requested", len(fullNames))
+
+		// PHASE 2 — sync them with a bounded worker pool (parallel, not one-at-a-time).
+		// The App installation token has its own rate budget and GraphQL batches PRs,
+		// so several repos at once is safe and far faster than sequential.
+		syncReposConcurrently(bgCtx, h.db, provider, orgID, token, repos, importSyncWorkers)
+		slog.Info("import: batch complete", "org", orgID, "platform", platform, "synced", len(repos))
 	}()
+}
+
+// importSyncWorkers bounds how many repos sync concurrently during a bulk import.
+const importSyncWorkers = 5
+
+// syncReposConcurrently runs SyncRepo over repos with a fixed worker pool, so a
+// large import finishes in roughly total/workers time instead of the sum of every
+// repo's sync. Each SyncRepo is independent (its own temp clone), and the provider
+// (go-github / gitlab client) is safe for concurrent use.
+func syncReposConcurrently(ctx context.Context, database *db.DB, provider gitSync.Provider, orgID, token string, repos []store.Repo, workers int) {
+	if workers < 1 {
+		workers = 1
+	}
+	jobs := make(chan store.Repo)
+	var wg sync.WaitGroup
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for repo := range jobs {
+				if e := gitSync.SyncRepo(ctx, database, provider, orgID, repo, token); e != nil {
+					slog.Error("import: sync repo", "full_name", repo.FullName, "err", e)
+				}
+			}
+		}()
+	}
+	for _, repo := range repos {
+		jobs <- repo
+	}
+	close(jobs)
+	wg.Wait()
 }
 
 // startBackgroundSync runs a repo sync in a detached goroutine. Shared by the
