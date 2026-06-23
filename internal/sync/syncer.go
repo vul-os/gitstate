@@ -14,6 +14,7 @@ import (
 
 	"github.com/exo/gitstate/internal/db"
 	"github.com/exo/gitstate/internal/embed"
+	"github.com/exo/gitstate/internal/git"
 	"github.com/exo/gitstate/internal/gitanalysis"
 	"github.com/exo/gitstate/internal/metrics"
 	"github.com/exo/gitstate/internal/store"
@@ -27,25 +28,31 @@ import (
 // Capture group 1 is the issue number string.
 var issueRefRe = regexp.MustCompile(`(?i)(?:closes?|fixes?|resolves?)?\s*#(\d+)`)
 
-// analyzeBlame runs the deep git analysis (commit_files / blame-survival / SZZ /
-// test-coupling) that needs real git objects. Commits themselves are NOT ingested
-// here — they come from the platform commits API (see provider.ListCommits) — so
-// this is the ONLY clone left in a sync, and it is deliberately minimal:
+// analyzeBlame clones the repo once (blobless) and does TWO things in that single
+// clone: (1) ingests EVERY commit on ALL branches into the commits table — the
+// PRIMARY commit source, zero API calls — and (2) runs the deep git analysis
+// (commit_files / blame-survival / SZZ / test-coupling) that needs real git
+// objects. The clone is deliberately minimal:
 //
 //   - --filter=blob:none → a BLOBLESS partial clone: it fetches commits + trees
 //     for the full history but pulls file blobs lazily, on demand, only when blame
 //     actually touches a file. That is far less data than a full working-tree clone.
-//   - --no-tags --single-branch → only the default branch's ref, no tag refs.
+//   - --no-single-branch → fetch ALL branch refs (so the commit walk sees every
+//     branch, fixing the "default-branch only" gap the commits API had). Blobs are
+//     still lazy, so the extra refs cost almost nothing.
+//   - --no-tags → no tag refs.
 //   - NO --depth: blame-survival needs the FULL history, so the graph stays intact.
 //
-// The clone lands in a temp dir and is deleted on return — the repo is NEVER
-// cached or persisted. Best-effort: a clone or blame failure logs and returns, so
-// it never fails the overall sync.
-func analyzeBlame(ctx context.Context, database *db.DB, orgID string, repo store.Repo, token string, log *slog.Logger) {
+// It returns true when commits were successfully walked+upserted from the clone
+// (so the caller can skip the commits-API fallback entirely → a normal sync makes
+// ZERO commit-API calls). The clone lands in a temp dir and is deleted on return —
+// the repo is NEVER cached or persisted. Best-effort: a clone or blame failure logs
+// and returns false, so it never fails the overall sync.
+func analyzeBlame(ctx context.Context, database *db.DB, orgID string, repo store.Repo, token string, log *slog.Logger) (commitsIngested bool) {
 	tmp, err := os.MkdirTemp("", "gitstate-sync-*")
 	if err != nil {
 		log.Error("sync: temp dir", "err", err)
-		return
+		return false
 	}
 	defer func() { _ = os.RemoveAll(tmp) }()
 
@@ -53,15 +60,22 @@ func analyzeBlame(ctx context.Context, database *db.DB, orgID string, repo store
 	defer cancel()
 	var stderr bytes.Buffer
 	cmd := exec.CommandContext(cloneCtx, "git", "clone",
-		"--filter=blob:none", "--no-tags", "--single-branch",
+		"--filter=blob:none", "--no-tags", "--no-single-branch",
 		injectCloneToken(repo.CloneURL, token), tmp)
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
 		log.Error("sync: clone repo (blobless)", "err", err, "stderr", strings.TrimSpace(stderr.String()))
-		return
+		return false
 	}
 
-	// Deep analysis → commit_files / blame-survival / SZZ (Contribution dashboards).
+	// (1) Ingest commits from the clone (ALL branches, zero API calls). INCREMENTAL:
+	// since = repo.LastSyncedAt, so a re-sync only walks commits added since the last
+	// run (a zero LastSyncedAt walks full history). UpsertCommit is idempotent on
+	// (org_id, repo_id, sha). This is the PRIMARY commit path; the API path is only a
+	// fallback when the repo has no clone URL or the clone fails (handled by caller).
+	commitsIngested = ingestCommitsFromClone(ctx, database, orgID, repo, tmp, log)
+
+	// (2) Deep analysis → commit_files / blame-survival / SZZ (Contribution dashboards).
 	// AnalyzeRepo runs `git log` + `git blame`; the blobless clone fetches the blobs
 	// blame touches on demand, so this works without a full checkout.
 	if res, err := gitanalysis.AnalyzeRepo(ctx, tmp); err != nil {
@@ -69,6 +83,54 @@ func analyzeBlame(ctx context.Context, database *db.DB, orgID string, repo store
 	} else if err := store.StoreResult(ctx, database, orgID, repo.ID, res); err != nil {
 		log.Error("sync: store git analysis", "err", err)
 	}
+	return commitsIngested
+}
+
+// ingestCommitsFromClone walks ALL branches of the local clone and upserts each
+// commit into the commits table — the PRIMARY commit source (zero API calls). The
+// walk carries per-commit churn (additions/deletions) and the is_agent flag, which
+// the commits API path cannot supply. Returns true on a successful walk+store so
+// the caller knows the API fallback is unnecessary; a walk failure returns false.
+func ingestCommitsFromClone(ctx context.Context, database *db.DB, orgID string, repo store.Repo, dir string, log *slog.Logger) bool {
+	var since time.Time
+	if repo.LastSyncedAt != nil {
+		since = *repo.LastSyncedAt
+	}
+	records, err := git.WalkAllCommits(ctx, dir, since)
+	if err != nil {
+		log.Error("sync: walk commits from clone", "err", err)
+		return false
+	}
+	if len(records) == 0 {
+		return true // nothing new since last sync — the clone IS the source of truth
+	}
+	if err := database.WithOrg(ctx, orgID, func(tx pgx.Tx) error {
+		for _, c := range records {
+			if c.SHA == "" {
+				continue
+			}
+			if err := store.UpsertCommit(ctx, tx, &store.Commit{
+				OrgID:       orgID,
+				RepoID:      repo.ID,
+				SHA:         c.SHA,
+				AuthorLogin: c.AuthorName,
+				AuthorEmail: c.AuthorEmail,
+				IsAgent:     c.IsAgent,
+				Message:     c.Message,
+				Additions:   c.Additions,
+				Deletions:   c.Deletions,
+				CommittedAt: c.CommittedAt,
+			}); err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		log.Error("sync: store commits from clone tx", "err", err)
+		return false
+	}
+	log.Info("sync: commits stored (clone, all branches)", "count", len(records), "incremental", !since.IsZero())
+	return true
 }
 
 // injectCloneToken adds x-access-token auth to an https clone URL so private repos
@@ -141,12 +203,39 @@ func SyncRepo(ctx context.Context, database *db.DB, provider Provider, orgID str
 		}
 	}
 
-	// ── 2. Fetch remote PRs ───────────────────────────────────────────────────
-	remotePRs, err := provider.ListPullRequests(ctx, repo.FullName)
-	if err != nil {
-		return fmt.Errorf("sync: list prs: %w", err)
+	// ── 2. Fetch remote PRs (+ reviews + first-commit in ONE batched GraphQL pass) ─
+	// If the provider implements the optional prReviewLister capability (GitHub /
+	// GitLab via GraphQL), one query per 50 PRs returns the PRs, each PR's reviews,
+	// AND each PR's first-commit date — replacing the REST fan-out (1 list call + a
+	// per-merged-PR first-commit call + a per-merged-PR reviews call). The provider
+	// itself falls back to REST on any GraphQL error, signalling that with
+	// graphQLReviews==nil so the syncer reverts to the per-PR REST review path.
+	var (
+		remotePRs      []RemotePR
+		graphQLReviews map[int][]RemoteReview
+	)
+	if lister, ok := provider.(prReviewLister); ok {
+		prs, reviews, usedGraphQL, lerr := lister.ListPullRequestsWithReviews(ctx, repo.FullName)
+		if lerr != nil {
+			return fmt.Errorf("sync: list prs (graphql): %w", lerr)
+		}
+		remotePRs = prs
+		if usedGraphQL {
+			// reviews may legitimately be empty (no PR had a review); a non-nil map
+			// signals "GraphQL supplied reviews → skip the per-PR REST review calls".
+			if reviews == nil {
+				reviews = map[int][]RemoteReview{}
+			}
+			graphQLReviews = reviews
+		}
+	} else {
+		prs, err := provider.ListPullRequests(ctx, repo.FullName)
+		if err != nil {
+			return fmt.Errorf("sync: list prs: %w", err)
+		}
+		remotePRs = prs
 	}
-	log.Info("sync: fetched remote prs", "count", len(remotePRs))
+	log.Info("sync: fetched remote prs", "count", len(remotePRs), "via_graphql", graphQLReviews != nil)
 
 	// issueProgress maps issue number → derived state.
 	// "done" takes precedence over "in_progress" (merged PR beats open PR).
@@ -187,14 +276,15 @@ func SyncRepo(ctx context.Context, database *db.DB, provider Provider, orgID str
 	// early on error above, so reaching here they succeeded.
 	fetchComplete := true
 
-	// ── 2.5. Fetch + store PR reviews (Involvement: reviews_done) ─────────────
-	// Only MERGED PRs are queried for reviews: "reviews done" is the completed-
-	// work signal, and gating on merged removes a per-PR API call for every
-	// open/closed-unmerged PR (cuts the request multiplier). Self-reviews
-	// (reviewer == PR author) are skipped. A reviews FETCH error after retries
-	// marks the sync incomplete (so last_synced_at is not advanced); store errors
-	// stay best-effort.
-	if !syncPRReviews(ctx, database, provider, orgID, repo, remotePRs, log) {
+	// ── 2.5. Store PR reviews (Involvement: reviews_done) ─────────────────────
+	// When the GraphQL pass supplied reviews (graphQLReviews != nil) they are stored
+	// WITHOUT any further API calls — the reviews already came WITH the PRs. Only when
+	// GraphQL was unavailable/failed does syncPRReviews fall back to the REST per-PR
+	// review path (and there it queries only MERGED PRs to cut the multiplier).
+	// Self-reviews (reviewer == PR author) are skipped. A REST reviews FETCH error
+	// after retries marks the sync incomplete (so last_synced_at is not advanced);
+	// store errors stay best-effort.
+	if !syncPRReviews(ctx, database, provider, orgID, repo, remotePRs, graphQLReviews, log) {
 		fetchComplete = false
 	}
 
@@ -230,16 +320,28 @@ func SyncRepo(ctx context.Context, database *db.DB, provider Provider, orgID str
 		}
 	}
 
-	// ── 4a. Fetch commits via the platform API (NO clone) ─────────────────────
-	// Commit-level data now comes from the platform commits API, not a clone. The
-	// pull is INCREMENTAL: since = repo.LastSyncedAt, so a re-sync fetches only
-	// commits added since the last run (a zero/first-sync pulls full history).
-	// UpsertCommit is idempotent on (org_id, repo_id, sha). Best-effort: a fetch
-	// failure logs and continues. Runs BEFORE ComputeCycleTimes so the commits feed
-	// is current. (The list endpoint omits churn → additions/deletions stay 0; the
-	// blame pass below supplies per-file churn via commit_files.)
-	if !syncCommitsFromAPI(ctx, database, provider, orgID, repo, log) {
-		fetchComplete = false
+	// ── 4a. Commits from the blame clone (PRIMARY, zero API calls, ALL branches) ─
+	// The single blobless clone we already do for blame now ALSO ingests every
+	// commit on every branch (git WalkAllCommits → UpsertCommit) — zero commit-API
+	// calls and no "default-branch only" gap. analyzeBlame also runs the deep blame /
+	// SZZ / coupling analysis in the same clone. Best-effort: a clone failure (no
+	// token, network) must not fail the sync. Runs BEFORE ComputeCycleTimes so the
+	// commits feed is current.
+	commitsFromClone := false
+	if repo.CloneURL == "" {
+		log.Warn("sync: no clone URL — skipping blame/contribution analysis; commits fall back to API")
+	} else {
+		commitsFromClone = analyzeBlame(ctx, database, orgID, repo, cloneToken, log)
+	}
+
+	// ── 4b. Commit-API FALLBACK — only when the clone did not supply commits ──────
+	// A normal sync makes ZERO commit-API calls (the clone is the source). This path
+	// runs ONLY when there is no clone URL or the clone/walk failed, so commit data is
+	// never lost. INCREMENTAL: since = repo.LastSyncedAt. UpsertCommit is idempotent.
+	if !commitsFromClone {
+		if !syncCommitsFromAPI(ctx, database, provider, orgID, repo, log) {
+			fetchComplete = false
+		}
 	}
 
 	// ── 4. Update last_synced_at on the repo — ONLY on a COMPLETE sync ─────────
@@ -255,18 +357,6 @@ func SyncRepo(ctx context.Context, database *db.DB, provider Provider, orgID str
 		}
 	} else {
 		log.Warn("sync: incomplete — not advancing last_synced_at; will re-fetch next run")
-	}
-
-	// ── 4b. Blobless clone + deep blame analysis (blame-survival, SZZ, coupling) ─
-	// The platform API supplies commits (step 4a) but NOT blame/file-level data, so
-	// the deep Contribution metrics still need git objects. This is the ONLY clone
-	// in a sync, and it is a temp blobless partial clone that is deleted on return
-	// (the repo is never stored). Best-effort: a clone failure (private repo without
-	// a token, network) must not fail the sync. Runs BEFORE ComputeCycleTimes.
-	if repo.CloneURL == "" {
-		log.Warn("sync: no clone URL — skipping blame/contribution analysis")
-	} else {
-		analyzeBlame(ctx, database, orgID, repo, cloneToken, log)
 	}
 
 	// ── 5. Post-sync metrics: cycle times + self-calibrating effort curves ─────
@@ -346,26 +436,35 @@ func parseIssueRefs(text string) []int {
 	return out
 }
 
-// syncPRReviews fetches reviews for each MERGED PR and stores them mapped to the
-// PR's internal id. Reviews authored by the PR author (self-reviews) are skipped.
-// Returns false if any review FETCH failed after retries (so the caller can hold
-// last_synced_at); store failures stay best-effort and do NOT flip the result.
-//
-// Only merged PRs are queried: "reviews done" is the completed-work signal, so
-// skipping open/closed-unmerged PRs here removes a per-PR API call without losing
-// any metric, cutting the request multiplier on busy repos.
-func syncPRReviews(ctx context.Context, database *db.DB, provider Provider, orgID string, repo store.Repo, remotePRs []RemotePR, log *slog.Logger) bool {
+// syncPRReviews stores PR reviews mapped to each PR's internal id. When
+// graphQLReviews is non-nil the reviews already came WITH the PRs (one batched
+// GraphQL pass) and NO per-PR API call is made — it stores straight from the map
+// (for every PR that has reviews, regardless of state). When graphQLReviews is nil
+// (GraphQL unavailable/failed) it falls back to the REST per-PR path, querying only
+// MERGED PRs ("reviews done" is the completed-work signal, and gating on merged
+// cuts the request multiplier). Reviews authored by the PR author (self-reviews)
+// are skipped. Returns false only if a REST review FETCH failed after retries (so
+// the caller can hold last_synced_at); store failures stay best-effort.
+func syncPRReviews(ctx context.Context, database *db.DB, provider Provider, orgID string, repo store.Repo, remotePRs []RemotePR, graphQLReviews map[int][]RemoteReview, log *slog.Logger) bool {
 	stored := 0
 	complete := true
 	for _, rpr := range remotePRs {
-		if rpr.State != "merged" {
-			continue
-		}
-		reviews, err := provider.ListReviews(ctx, repo.FullName, rpr.Number)
-		if err != nil {
-			log.Error("sync: list reviews", "pr_number", rpr.Number, "err", err)
-			complete = false
-			continue
+		var reviews []RemoteReview
+		if graphQLReviews != nil {
+			// Reviews supplied by the GraphQL pass — no API call.
+			reviews = graphQLReviews[rpr.Number]
+		} else {
+			// REST fallback: only merged PRs carry the completed-work review signal.
+			if rpr.State != "merged" {
+				continue
+			}
+			revs, err := provider.ListReviews(ctx, repo.FullName, rpr.Number)
+			if err != nil {
+				log.Error("sync: list reviews", "pr_number", rpr.Number, "err", err)
+				complete = false
+				continue
+			}
+			reviews = revs
 		}
 		if len(reviews) == 0 {
 			continue

@@ -11,10 +11,14 @@
 package sync
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
+	"net/http"
 	"strconv"
 	"strings"
 	"time"
@@ -311,19 +315,202 @@ type Provider interface {
 	UpdateIssueState(ctx context.Context, fullName string, number int, state string) error
 }
 
+// prReviewLister is an OPTIONAL capability some providers implement to fetch PRs,
+// their reviews, AND each PR's first-commit date in ONE batched GraphQL request
+// per page (50 PRs) instead of the REST fan-out (1 list call + 1 first-commit call
+// per merged PR + 1 reviews call per merged PR). The syncer type-asserts for it:
+// when present and it succeeds, the syncer uses the returned reviews directly and
+// skips the per-PR REST review calls; on any GraphQL error the provider itself
+// falls back to the REST ListPullRequests path so a query bug never breaks a sync.
+//
+// The returned map is keyed by PR number → that PR's reviews (may be nil/empty).
+// usedGraphQL reports whether the GraphQL path actually produced the data (true)
+// or the REST fallback did (false); the syncer uses it to decide whether reviews
+// were supplied with the PRs (true → don't re-fetch reviews per PR).
+type prReviewLister interface {
+	ListPullRequestsWithReviews(ctx context.Context, fullName string) (prs []RemotePR, reviews map[int][]RemoteReview, usedGraphQL bool, err error)
+}
+
+// ── GraphQL transport ─────────────────────────────────────────────────────────
+//
+// We do NOT pull in a GraphQL client library (no go.mod churn): a GraphQL request
+// is just an HTTP POST of {"query":...,"variables":...} with a JSON response. The
+// helper below performs that POST, honours HTTP 403/429 rate-limit waits the same
+// way ghDo does, decodes into the caller's typed value, and surfaces top-level
+// GraphQL `errors` so the caller can fall back to REST.
+
+// graphQLError is a single entry in a GraphQL response's top-level "errors" array.
+type graphQLError struct {
+	Message string `json:"message"`
+	Type    string `json:"type"`
+}
+
+func (e graphQLError) Error() string { return e.Message }
+
+// graphQLErrors aggregates the top-level errors of a GraphQL response.
+type graphQLErrors []graphQLError
+
+func (es graphQLErrors) Error() string {
+	parts := make([]string, 0, len(es))
+	for _, e := range es {
+		parts = append(parts, e.Message)
+	}
+	return "graphql: " + strings.Join(parts, "; ")
+}
+
+// graphQLDo POSTs a GraphQL query+variables to endpoint with the given auth header
+// value and decodes the response "data" into out. It waits+retries on HTTP 403/429
+// (rate limits) and transient 5xx, mirroring ghDo's policy, and returns a
+// graphQLErrors when the response carries top-level GraphQL errors so the caller
+// can fall back to REST. token is the raw token; authPrefix is "bearer" (GitHub)
+// or "Bearer" (GitLab).
+func graphQLDo(ctx context.Context, client *http.Client, endpoint, authPrefix, token, query string, variables map[string]any, out any) error {
+	if client == nil {
+		client = http.DefaultClient
+	}
+	type reqBody struct {
+		Query     string         `json:"query"`
+		Variables map[string]any `json:"variables,omitempty"`
+	}
+	payload, err := json.Marshal(reqBody{Query: query, Variables: variables})
+	if err != nil {
+		return fmt.Errorf("graphql: marshal request: %w", err)
+	}
+
+	transient := 0
+	for {
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(payload))
+		if err != nil {
+			return fmt.Errorf("graphql: new request: %w", err)
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Accept", "application/json")
+		if token != "" {
+			req.Header.Set("Authorization", authPrefix+" "+token)
+		}
+
+		resp, err := client.Do(req)
+		if err != nil {
+			if cerr := ctx.Err(); cerr != nil {
+				return cerr
+			}
+			// Network/timeout: short capped backoff, finite retries.
+			if transient < retryAttempts {
+				transient++
+				back := time.Duration(transient) * 500 * time.Millisecond
+				slog.Info("graphql: transient error, retrying", "attempt", transient, "backoff", back, "err", err)
+				if serr := sleepCtx(ctx, back); serr != nil {
+					return serr
+				}
+				continue
+			}
+			return fmt.Errorf("graphql: do request: %w", err)
+		}
+
+		// Rate-limited (primary 403 with a reset header, or 429): wait + retry.
+		if resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode == http.StatusForbidden {
+			wait := graphQLWait(resp.Header)
+			_ = resp.Body.Close()
+			if wait <= 0 {
+				wait = time.Minute
+			}
+			if wait > maxRateWait {
+				wait = maxRateWait
+			}
+			slog.Info("graphql: rate limited, waiting", "dur", wait.Round(time.Second), "status", resp.StatusCode)
+			if serr := sleepCtx(ctx, wait); serr != nil {
+				return serr
+			}
+			continue
+		}
+
+		if resp.StatusCode >= 500 && transient < retryAttempts {
+			_ = resp.Body.Close()
+			transient++
+			back := time.Duration(transient) * 500 * time.Millisecond
+			slog.Info("graphql: transient 5xx, retrying", "attempt", transient, "backoff", back, "status", resp.StatusCode)
+			if serr := sleepCtx(ctx, back); serr != nil {
+				return serr
+			}
+			continue
+		}
+
+		body, rerr := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		if rerr != nil {
+			return fmt.Errorf("graphql: read body: %w", rerr)
+		}
+		if resp.StatusCode != http.StatusOK {
+			return fmt.Errorf("graphql: http %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+		}
+		return decodeGraphQL(body, out)
+	}
+}
+
+// decodeGraphQL unmarshals a GraphQL HTTP body into out, surfacing top-level
+// GraphQL errors as a graphQLErrors so the caller can fall back to REST. It is
+// split out so parsing can be unit-tested without an HTTP round-trip.
+func decodeGraphQL(body []byte, out any) error {
+	var envelope struct {
+		Data   json.RawMessage `json:"data"`
+		Errors graphQLErrors   `json:"errors"`
+	}
+	if err := json.Unmarshal(body, &envelope); err != nil {
+		return fmt.Errorf("graphql: decode envelope: %w", err)
+	}
+	if len(envelope.Errors) > 0 {
+		return envelope.Errors
+	}
+	if len(envelope.Data) == 0 {
+		return errors.New("graphql: empty data")
+	}
+	if err := json.Unmarshal(envelope.Data, out); err != nil {
+		return fmt.Errorf("graphql: decode data: %w", err)
+	}
+	return nil
+}
+
+// graphQLWait derives a rate-limit wait from response headers. It honours
+// Retry-After (seconds), then GitHub's x-ratelimit-reset (unix seconds).
+func graphQLWait(h http.Header) time.Duration {
+	if d := retryAfter(h.Get("Retry-After")); d > 0 {
+		return d + time.Second
+	}
+	if v := h.Get("x-ratelimit-reset"); v != "" {
+		if secs, err := strconv.ParseInt(strings.TrimSpace(v), 10, 64); err == nil {
+			wait := time.Until(time.Unix(secs, 0)) + time.Second
+			if wait > 0 {
+				return wait
+			}
+		}
+	}
+	return 0
+}
+
 // ── GitHub implementation ─────────────────────────────────────────────────────
 
-// githubProvider implements Provider using go-github.
+// githubProvider implements Provider using go-github, plus the optional
+// prReviewLister capability via the GitHub GraphQL API (one batched query per 50
+// PRs for PRs + reviews + first-commit, killing the REST per-PR fan-out).
 type githubProvider struct {
 	client *gogithub.Client
+	token  string       // raw token, reused for the GraphQL POST Authorization header
+	http   *http.Client // plain client for GraphQL (no oauth transport needed)
 }
+
+// githubGraphQLEndpoint is the GitHub GraphQL v4 endpoint.
+const githubGraphQLEndpoint = "https://api.github.com/graphql"
 
 // NewGitHubProvider returns a Provider backed by the GitHub REST API.
 // token is a personal access token or OAuth token with repo scope.
 func NewGitHubProvider(ctx context.Context, token string) Provider {
 	ts := oauth2.StaticTokenSource(&oauth2.Token{AccessToken: token})
 	tc := oauth2.NewClient(ctx, ts)
-	return &githubProvider{client: gogithub.NewClient(tc)}
+	return &githubProvider{
+		client: gogithub.NewClient(tc),
+		token:  token,
+		http:   &http.Client{Timeout: 60 * time.Second},
+	}
 }
 
 func (g *githubProvider) Platform() string { return "github" }
@@ -510,6 +697,210 @@ func (g *githubProvider) ListPullRequests(ctx context.Context, fullName string) 
 		opts.Page = resp.NextPage
 	}
 	return out, nil
+}
+
+// githubPRsQuery pages PRs (50/page) with their reviews and first commit in ONE
+// request. cost/remaining come back via rateLimit so we can throttle politely.
+const githubPRsQuery = `query($owner:String!,$name:String!,$cur:String){
+  rateLimit { cost remaining resetAt }
+  repository(owner:$owner, name:$name) {
+    pullRequests(first:50, after:$cur, states:[OPEN,CLOSED,MERGED], orderBy:{field:CREATED_AT, direction:ASC}) {
+      pageInfo { hasNextPage endCursor }
+      nodes {
+        number title body state databaseId
+        author { login }
+        additions deletions changedFiles
+        mergedAt createdAt
+        commits(first:1) { nodes { commit { authoredDate committedDate } } }
+        reviews(first:50) { nodes { databaseId state submittedAt author { login } } }
+      }
+    }
+  }
+}`
+
+// githubPRsResponse mirrors githubPRsQuery's "data".
+type githubPRsResponse struct {
+	RateLimit struct {
+		Cost      int    `json:"cost"`
+		Remaining int    `json:"remaining"`
+		ResetAt   string `json:"resetAt"`
+	} `json:"rateLimit"`
+	Repository struct {
+		PullRequests struct {
+			PageInfo struct {
+				HasNextPage bool   `json:"hasNextPage"`
+				EndCursor   string `json:"endCursor"`
+			} `json:"pageInfo"`
+			Nodes []githubPRNode `json:"nodes"`
+		} `json:"pullRequests"`
+	} `json:"repository"`
+}
+
+type githubPRNode struct {
+	Number     int    `json:"number"`
+	Title      string `json:"title"`
+	Body       string `json:"body"`
+	State      string `json:"state"` // OPEN | CLOSED | MERGED
+	DatabaseID int64  `json:"databaseId"`
+	Author     *struct {
+		Login string `json:"login"`
+	} `json:"author"`
+	Additions    int        `json:"additions"`
+	Deletions    int        `json:"deletions"`
+	ChangedFiles int        `json:"changedFiles"`
+	MergedAt     *time.Time `json:"mergedAt"`
+	CreatedAt    time.Time  `json:"createdAt"`
+	Commits      struct {
+		Nodes []struct {
+			Commit struct {
+				AuthoredDate  *time.Time `json:"authoredDate"`
+				CommittedDate *time.Time `json:"committedDate"`
+			} `json:"commit"`
+		} `json:"nodes"`
+	} `json:"commits"`
+	Reviews struct {
+		Nodes []struct {
+			DatabaseID  int64      `json:"databaseId"`
+			State       string     `json:"state"`
+			SubmittedAt *time.Time `json:"submittedAt"`
+			Author      *struct {
+				Login string `json:"login"`
+			} `json:"author"`
+		} `json:"nodes"`
+	} `json:"reviews"`
+}
+
+// ListPullRequestsWithReviews fetches all PRs + their reviews + each PR's first
+// commit date via GraphQL (50 PRs/request). On ANY GraphQL error it logs a WARN
+// and falls back to the REST ListPullRequests path (usedGraphQL=false), so a query
+// bug can never break the sync.
+func (g *githubProvider) ListPullRequestsWithReviews(ctx context.Context, fullName string) ([]RemotePR, map[int][]RemoteReview, bool, error) {
+	owner, name, err := splitFullName(fullName)
+	if err != nil {
+		return nil, nil, false, err
+	}
+
+	prs, reviews, err := g.graphQLPRs(ctx, owner, name)
+	if err != nil {
+		// GraphQL failed (query bug, schema drift, auth) → fall back to REST so the
+		// sync still completes. The reviews map is nil so the syncer reverts to the
+		// per-PR REST review path.
+		slog.Warn("github: graphql PR fetch failed, falling back to REST", "repo", fullName, "err", err)
+		restPRs, rerr := g.ListPullRequests(ctx, fullName)
+		if rerr != nil {
+			return nil, nil, false, rerr
+		}
+		return restPRs, nil, false, nil
+	}
+	return prs, reviews, true, nil
+}
+
+// graphQLPRs runs the paged GraphQL PR query and maps the result to RemotePR plus
+// a per-PR review map. Returns an error on any GraphQL/transport failure so the
+// caller can fall back to REST.
+func (g *githubProvider) graphQLPRs(ctx context.Context, owner, name string) ([]RemotePR, map[int][]RemoteReview, error) {
+	var (
+		prs     []RemotePR
+		reviews = map[int][]RemoteReview{}
+		cursor  string
+	)
+	for {
+		vars := map[string]any{"owner": owner, "name": name}
+		if cursor != "" {
+			vars["cur"] = cursor
+		} else {
+			vars["cur"] = nil
+		}
+		var data githubPRsResponse
+		if err := graphQLDo(ctx, g.http, githubGraphQLEndpoint, "bearer", g.token, githubPRsQuery, vars, &data); err != nil {
+			return nil, nil, err
+		}
+		for _, n := range data.Repository.PullRequests.Nodes {
+			pr, revs := mapGitHubPRNode(n)
+			prs = append(prs, pr)
+			if len(revs) > 0 {
+				reviews[pr.Number] = revs
+			}
+		}
+		// Polite throttle: if the GraphQL budget is nearly spent, wait for resetAt.
+		if data.RateLimit.Remaining > 0 && data.RateLimit.Remaining <= data.RateLimit.Cost {
+			if reset, perr := time.Parse(time.RFC3339, data.RateLimit.ResetAt); perr == nil {
+				wait := time.Until(reset) + time.Second
+				if wait > 0 {
+					if wait > maxRateWait {
+						wait = maxRateWait
+					}
+					slog.Info("github: graphql budget low, waiting for reset", "dur", wait.Round(time.Second))
+					if serr := sleepCtx(ctx, wait); serr != nil {
+						return nil, nil, serr
+					}
+				}
+			}
+		}
+		if !data.Repository.PullRequests.PageInfo.HasNextPage {
+			break
+		}
+		cursor = data.Repository.PullRequests.PageInfo.EndCursor
+	}
+	return prs, reviews, nil
+}
+
+// mapGitHubPRNode maps one GraphQL PR node to a RemotePR (with FirstCommitAt from
+// its first commit) and the PR's []RemoteReview.
+func mapGitHubPRNode(n githubPRNode) (RemotePR, []RemoteReview) {
+	pr := RemotePR{
+		ExternalID:   fmt.Sprintf("%d", n.DatabaseID),
+		Number:       n.Number,
+		Title:        n.Title,
+		Body:         n.Body,
+		Additions:    n.Additions,
+		Deletions:    n.Deletions,
+		ChangedFiles: n.ChangedFiles,
+		CreatedAt:    n.CreatedAt,
+	}
+	if n.Author != nil {
+		pr.AuthorLogin = n.Author.Login
+	}
+	switch strings.ToUpper(n.State) {
+	case "MERGED":
+		pr.State = "merged"
+		if n.MergedAt != nil {
+			t := *n.MergedAt
+			pr.MergedAt = &t
+		}
+	case "CLOSED":
+		pr.State = "closed"
+	default:
+		pr.State = "open"
+	}
+	// FirstCommitAt: the commits(first:1) node, ordered oldest-first by GitHub.
+	if len(n.Commits.Nodes) > 0 {
+		c := n.Commits.Nodes[0].Commit
+		switch {
+		case c.AuthoredDate != nil:
+			pr.FirstCommitAt = *c.AuthoredDate
+		case c.CommittedDate != nil:
+			pr.FirstCommitAt = *c.CommittedDate
+		}
+	}
+	var revs []RemoteReview
+	for _, rv := range n.Reviews.Nodes {
+		if rv.Author == nil || rv.Author.Login == "" {
+			continue
+		}
+		r := RemoteReview{
+			ReviewerLogin: rv.Author.Login,
+			State:         normaliseReviewState(rv.State),
+		}
+		if rv.SubmittedAt != nil {
+			r.SubmittedAt = *rv.SubmittedAt
+		}
+		if rv.DatabaseID != 0 {
+			r.ExternalID = fmt.Sprintf("%d", rv.DatabaseID)
+		}
+		revs = append(revs, r)
+	}
+	return pr, revs
 }
 
 // firstCommitAt returns the earliest author/commit date among a PR's commits.
@@ -705,10 +1096,18 @@ func (g *githubProvider) UpdateIssueState(ctx context.Context, fullName string, 
 
 // ── GitLab implementation ─────────────────────────────────────────────────────
 
-// gitlabProvider implements Provider using the gitlab client.
+// gitlabProvider implements Provider using the gitlab client, plus the optional
+// prReviewLister capability via the GitLab GraphQL API (one batched query per 50
+// MRs for MRs + approvals + first-commit, killing the REST per-MR fan-out).
 type gitlabProvider struct {
-	client *gogitlab.Client
+	client          *gogitlab.Client
+	token           string
+	http            *http.Client
+	graphQLEndpoint string // derived from baseURL; defaults to gitlab.com
 }
+
+// gitlabDefaultGraphQLEndpoint is the gitlab.com GraphQL endpoint.
+const gitlabDefaultGraphQLEndpoint = "https://gitlab.com/api/graphql"
 
 // NewGitLabProvider returns a Provider backed by the GitLab REST API.
 // token is a personal access token or OAuth token with api scope.
@@ -722,7 +1121,25 @@ func NewGitLabProvider(token string, baseURL string) (Provider, error) {
 	if err != nil {
 		return nil, fmt.Errorf("gitlab: create client: %w", err)
 	}
-	return &gitlabProvider{client: client}, nil
+	gqlEndpoint := gitlabDefaultGraphQLEndpoint
+	if baseURL != "" {
+		gqlEndpoint = gitlabGraphQLEndpointFor(baseURL)
+	}
+	return &gitlabProvider{
+		client:          client,
+		token:           token,
+		http:            &http.Client{Timeout: 60 * time.Second},
+		graphQLEndpoint: gqlEndpoint,
+	}, nil
+}
+
+// gitlabGraphQLEndpointFor derives the GraphQL endpoint for a self-hosted base URL.
+// GitLab's REST base is ".../api/v4"; GraphQL lives at ".../api/graphql".
+func gitlabGraphQLEndpointFor(baseURL string) string {
+	b := strings.TrimRight(baseURL, "/")
+	b = strings.TrimSuffix(b, "/api/v4")
+	b = strings.TrimRight(b, "/")
+	return b + "/api/graphql"
 }
 
 func (gl *gitlabProvider) Platform() string { return "gitlab" }
@@ -847,6 +1264,190 @@ func (gl *gitlabProvider) ListPullRequests(ctx context.Context, fullName string)
 		opts.Page = resp.NextPage
 	}
 	return out, nil
+}
+
+// gitlabMRsQuery pages MRs (50/page) with their approvers and first commit in ONE
+// request. iid/state come back as strings on the GitLab GraphQL schema.
+const gitlabMRsQuery = `query($path:ID!,$cur:String){
+  project(fullPath:$path) {
+    mergeRequests(first:50, after:$cur, sort:CREATED_ASC) {
+      pageInfo { hasNextPage endCursor }
+      nodes {
+        iid title description state createdAt mergedAt
+        author { username }
+        diffStatsSummary { additions deletions fileCount }
+        commitsWithoutMergeCommits(first:1) { nodes { authoredDate committedDate } }
+        approvedBy { nodes { username } }
+      }
+    }
+  }
+}`
+
+// gitlabMRsResponse mirrors gitlabMRsQuery's "data".
+type gitlabMRsResponse struct {
+	Project struct {
+		MergeRequests struct {
+			PageInfo struct {
+				HasNextPage bool   `json:"hasNextPage"`
+				EndCursor   string `json:"endCursor"`
+			} `json:"pageInfo"`
+			Nodes []gitlabMRNode `json:"nodes"`
+		} `json:"mergeRequests"`
+	} `json:"project"`
+}
+
+type gitlabMRNode struct {
+	IID         string     `json:"iid"`
+	Title       string     `json:"title"`
+	Description string     `json:"description"`
+	State       string     `json:"state"` // opened | closed | merged | locked
+	CreatedAt   *time.Time `json:"createdAt"`
+	MergedAt    *time.Time `json:"mergedAt"`
+	Author      *struct {
+		Username string `json:"username"`
+	} `json:"author"`
+	DiffStatsSummary *struct {
+		Additions int `json:"additions"`
+		Deletions int `json:"deletions"`
+		FileCount int `json:"fileCount"`
+	} `json:"diffStatsSummary"`
+	CommitsWithoutMergeCommits struct {
+		Nodes []struct {
+			AuthoredDate  *time.Time `json:"authoredDate"`
+			CommittedDate *time.Time `json:"committedDate"`
+		} `json:"nodes"`
+	} `json:"commitsWithoutMergeCommits"`
+	ApprovedBy struct {
+		Nodes []struct {
+			Username string `json:"username"`
+		} `json:"nodes"`
+	} `json:"approvedBy"`
+}
+
+// ListPullRequestsWithReviews fetches all MRs + their approvals (→ reviews) + each
+// MR's first commit via GraphQL (50 MRs/request). On ANY GraphQL error it logs a
+// WARN and falls back to the REST ListPullRequests path (usedGraphQL=false).
+func (gl *gitlabProvider) ListPullRequestsWithReviews(ctx context.Context, fullName string) ([]RemotePR, map[int][]RemoteReview, bool, error) {
+	prs, reviews, err := gl.graphQLMRs(ctx, fullName)
+	if err != nil {
+		slog.Warn("gitlab: graphql MR fetch failed, falling back to REST", "repo", fullName, "err", err)
+		restPRs, rerr := gl.ListPullRequests(ctx, fullName)
+		if rerr != nil {
+			return nil, nil, false, rerr
+		}
+		return restPRs, nil, false, nil
+	}
+	return prs, reviews, true, nil
+}
+
+// graphQLMRs runs the paged GraphQL MR query and maps the result to RemotePR plus
+// a per-MR review map derived from approvals.
+func (gl *gitlabProvider) graphQLMRs(ctx context.Context, fullName string) ([]RemotePR, map[int][]RemoteReview, error) {
+	var (
+		prs     []RemotePR
+		reviews = map[int][]RemoteReview{}
+		cursor  string
+	)
+	for {
+		vars := map[string]any{"path": fullName}
+		if cursor != "" {
+			vars["cur"] = cursor
+		} else {
+			vars["cur"] = nil
+		}
+		var data gitlabMRsResponse
+		if err := graphQLDo(ctx, gl.http, gl.graphQLEndpoint, "Bearer", gl.token, gitlabMRsQuery, vars, &data); err != nil {
+			return nil, nil, err
+		}
+		for _, n := range data.Project.MergeRequests.Nodes {
+			pr, revs := mapGitLabMRNode(n)
+			prs = append(prs, pr)
+			if len(revs) > 0 {
+				reviews[pr.Number] = revs
+			}
+		}
+		if !data.Project.MergeRequests.PageInfo.HasNextPage {
+			break
+		}
+		cursor = data.Project.MergeRequests.PageInfo.EndCursor
+	}
+	return prs, reviews, nil
+}
+
+// mapGitLabMRNode maps one GraphQL MR node to a RemotePR (with FirstCommitAt) and
+// the MR's []RemoteReview derived from approvals (→ "approved").
+func mapGitLabMRNode(n gitlabMRNode) (RemotePR, []RemoteReview) {
+	pr := RemotePR{
+		ExternalID: n.IID, // GraphQL has no global DB id here; iid is the stable per-project ref
+		Number:     atoiSafe(n.IID),
+		Title:      n.Title,
+		Body:       n.Description,
+	}
+	if n.Author != nil {
+		pr.AuthorLogin = n.Author.Username
+	}
+	if n.CreatedAt != nil {
+		pr.CreatedAt = *n.CreatedAt
+	}
+	if n.DiffStatsSummary != nil {
+		pr.Additions = n.DiffStatsSummary.Additions
+		pr.Deletions = n.DiffStatsSummary.Deletions
+		pr.ChangedFiles = n.DiffStatsSummary.FileCount
+	}
+	switch strings.ToLower(n.State) {
+	case "merged":
+		pr.State = "merged"
+		if n.MergedAt != nil {
+			t := *n.MergedAt
+			pr.MergedAt = &t
+		}
+	case "closed", "locked":
+		pr.State = "closed"
+	default:
+		pr.State = "open"
+	}
+	if len(n.CommitsWithoutMergeCommits.Nodes) > 0 {
+		c := n.CommitsWithoutMergeCommits.Nodes[0]
+		switch {
+		case c.AuthoredDate != nil:
+			pr.FirstCommitAt = *c.AuthoredDate
+		case c.CommittedDate != nil:
+			pr.FirstCommitAt = *c.CommittedDate
+		}
+	}
+	// Reviews from approvals → "approved". Submission time is unavailable on the
+	// approvedBy node, so fall back to mergedAt/createdAt (best-effort, matches the
+	// REST approximation's timestamp behaviour).
+	when := time.Now().UTC()
+	switch {
+	case n.MergedAt != nil:
+		when = *n.MergedAt
+	case n.CreatedAt != nil:
+		when = *n.CreatedAt
+	}
+	var revs []RemoteReview
+	seen := map[string]bool{}
+	for _, a := range n.ApprovedBy.Nodes {
+		if a.Username == "" || seen[a.Username] {
+			continue
+		}
+		seen[a.Username] = true
+		revs = append(revs, RemoteReview{
+			ReviewerLogin: a.Username,
+			State:         "approved",
+			SubmittedAt:   when,
+		})
+	}
+	return pr, revs
+}
+
+// atoiSafe parses an integer string, returning 0 on error (GitLab iid).
+func atoiSafe(s string) int {
+	n, err := strconv.Atoi(strings.TrimSpace(s))
+	if err != nil {
+		return 0
+	}
+	return n
 }
 
 // firstCommitAt returns the earliest authored/committed date among an MR's commits.

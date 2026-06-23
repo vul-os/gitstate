@@ -117,6 +117,19 @@ type CommitRecord struct {
 // those whose commit timestamp is after since (zero = all history).
 // Commits are returned newest-first (git log default).
 func WalkCommits(ctx context.Context, dir string, since time.Time) ([]CommitRecord, error) {
+	return walkCommits(ctx, dir, since, false)
+}
+
+// WalkAllCommits is like WalkCommits but walks commits reachable from ALL refs
+// (--all), not just HEAD. This is what the sync uses to ingest commits from the
+// blame clone: it captures every branch's history in ONE pass (zero API calls)
+// and fixes the "default-branch only" gap the commits API had.
+func WalkAllCommits(ctx context.Context, dir string, since time.Time) ([]CommitRecord, error) {
+	return walkCommits(ctx, dir, since, true)
+}
+
+// walkCommits is the shared implementation behind WalkCommits / WalkAllCommits.
+func walkCommits(ctx context.Context, dir string, since time.Time, allRefs bool) ([]CommitRecord, error) {
 	walkCtx, cancel := context.WithTimeout(ctx, defaultTimeout)
 	defer cancel()
 
@@ -129,6 +142,9 @@ func WalkCommits(ctx context.Context, dir string, since time.Time) ([]CommitReco
 		"--format=" + format,
 		"--numstat",
 		"--no-merges",
+	}
+	if allRefs {
+		args = append(args, "--all")
 	}
 	if !since.IsZero() {
 		args = append(args, "--after="+since.UTC().Format(time.RFC3339))
