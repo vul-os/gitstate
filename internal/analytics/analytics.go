@@ -339,7 +339,7 @@ func (s *Service) CommitsByContributor(ctx context.Context, orgID string, f Filt
 	var out []store.ContributorSeries
 	if err := s.db.WithOrg(ctx, orgID, func(tx pgx.Tx) error {
 		var err error
-		out, err = sf.CommitsByContributor(ctx, tx, b, topN, includeOther)
+		out, err = sf.CommitsByContributor(ctx, tx, orgID, b, topN, includeOther)
 		return err
 	}); err != nil {
 		return nil, fmt.Errorf("analytics.CommitsByContributor: %w", err)
@@ -353,7 +353,7 @@ func (s *Service) Contributors(ctx context.Context, orgID string, f Filter) ([]s
 	var out []store.Contributor
 	if err := s.db.WithOrg(ctx, orgID, func(tx pgx.Tx) error {
 		var err error
-		out, err = sf.Contributors(ctx, tx)
+		out, err = sf.Contributors(ctx, tx, orgID)
 		return err
 	}); err != nil {
 		return nil, fmt.Errorf("analytics.Contributors: %w", err)

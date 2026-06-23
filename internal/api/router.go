@@ -53,6 +53,7 @@ func NewRouter(cfg *config.Config, database *db.DB) http.Handler {
 		RegisterMetricsRoutes(mux, database, cfg)
 		RegisterAnalyticsRoutes(mux, database, cfg)
 		RegisterContributionRoutes(mux, database, cfg)
+		RegisterContributorRoutes(mux, database, cfg)
 		RegisterEngHealthRoutes(mux, database, cfg)
 		RegisterPlanningRoutes(mux, database, cfg)
 		RegisterInvoiceRoutes(mux, database, cfg)

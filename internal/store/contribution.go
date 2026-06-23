@@ -22,6 +22,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -449,6 +450,16 @@ func LoadContributionAggregates(ctx context.Context, tx pgx.Tx, orgID string, fr
 		return nil, err
 	}
 
+	// 7) Canonicalize to contributors: collapse every accumulator whose git
+	//    identity (email and/or login) resolves to the same contributor into ONE
+	//    aggregate, and DROP contributors flagged `excluded` (and is_bot). This is
+	//    the payoff — a person's many emails/logins COUNT AS ONE. Identities with
+	//    no contributor row yet fall back to themselves, so nothing disappears
+	//    before detection runs.
+	if err := collapseByContributor(ctx, tx, orgID, byIdent); err != nil {
+		return nil, err
+	}
+
 	out := make([]ContribAggregate, 0, len(byIdent))
 	for _, a := range byIdent {
 		if !a.seen {
@@ -465,6 +476,123 @@ func LoadContributionAggregates(ctx context.Context, tx pgx.Tx, orgID string, fr
 		out = append(out, a.ContribAggregate)
 	}
 	return out, nil
+}
+
+// collapseByContributor remaps each per-identity accumulator onto its canonical
+// contributor (via contributor_identities) and merges accumulators that share a
+// contributor into one, summing their facts. Contributors flagged `excluded` (or
+// is_bot) are dropped entirely (their accumulators are removed). Identities with
+// no contributor row yet keep their own bucket unchanged.
+//
+// The byIdent map is keyed by a normalized git identity string (lower(email) or
+// login). We resolve each accumulator by trying its email value first, then its
+// login value, against the resolver map.
+func collapseByContributor(ctx context.Context, tx pgx.Tx, orgID string, byIdent map[string]*contribAcc) error {
+	resolver, err := IdentityToContributor(ctx, tx, orgID)
+	if err != nil {
+		return err
+	}
+	if len(resolver) == 0 {
+		return nil // detection not run yet — nothing to collapse, show raw idents.
+	}
+	excluded, bots, err := ExcludedContributors(ctx, tx, orgID)
+	if err != nil {
+		return err
+	}
+
+	// resolve returns the contributor_id for an accumulator, or "" when none.
+	resolve := func(a *contribAcc) string {
+		if a.Email != "" {
+			if cid, ok := resolver[lowerASCII(a.Email)]; ok {
+				return cid
+			}
+		}
+		if a.Login != "" {
+			if cid, ok := resolver[lowerASCII(a.Login)]; ok {
+				return cid
+			}
+		}
+		return ""
+	}
+
+	// First pass: drop excluded/bot contributors' accumulators outright.
+	for key, a := range byIdent {
+		cid := resolve(a)
+		if cid != "" && (excluded[cid] || bots[cid]) {
+			delete(byIdent, key)
+		}
+	}
+
+	// Second pass: merge survivors that share a contributor into the first-seen
+	// accumulator for that contributor. We iterate in a deterministic order so the
+	// chosen survivor (and its display fields) is stable.
+	keys := make([]string, 0, len(byIdent))
+	for k := range byIdent {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	primary := map[string]string{} // contributor_id -> surviving byIdent key
+	for _, k := range keys {
+		a := byIdent[k]
+		if !a.seen {
+			continue
+		}
+		cid := resolve(a)
+		if cid == "" {
+			continue // unmapped identity keeps its own bucket
+		}
+		if pk, ok := primary[cid]; !ok {
+			primary[cid] = k
+		} else {
+			mergeAcc(byIdent[pk], a)
+			delete(byIdent, k)
+		}
+	}
+	return nil
+}
+
+// mergeAcc folds src's facts into dst (used when several git identities resolve to
+// the same contributor). Counts are summed; display fields prefer the first
+// non-empty (dst wins, as it was seen first in deterministic order).
+func mergeAcc(dst, src *contribAcc) {
+	dst.seen = dst.seen || src.seen
+	dst.MergedPRs += src.MergedPRs
+	dst.IssuesClosed += src.IssuesClosed
+	dst.FeaturesShipped += src.FeaturesShipped
+	dst.ReviewsDone += src.ReviewsDone
+	dst.EffortPoints += src.EffortPoints
+	dst.Reverts += src.Reverts
+	dst.AreasOwned += src.AreasOwned
+	dst.HumanCommits += src.HumanCommits
+	dst.AgentCommits += src.AgentCommits
+	dst.SurvivingLines += src.SurvivingLines
+	dst.AuthoredLines += src.AuthoredLines
+	dst.BugsIntroduced += src.BugsIntroduced
+	dst.BugLines += src.BugLines
+	dst.TestFileTouches += src.TestFileTouches
+	dst.TotalFileTouches += src.TotalFileTouches
+	// AvgCycleHours: keep dst's value when set, else take src's (averaging two
+	// pre-averaged means is misleading; the dominant identity's value is fine).
+	if dst.AvgCycleHours == 0 {
+		dst.AvgCycleHours = src.AvgCycleHours
+	}
+	// Display fields: fill gaps from src.
+	if dst.UserID == "" {
+		dst.UserID = src.UserID
+	}
+	if dst.Name == "" {
+		dst.Name = src.Name
+	}
+	if dst.Email == "" {
+		dst.Email = src.Email
+	}
+	if dst.Login == "" {
+		dst.Login = src.Login
+	}
+	if src.IsAgentBot {
+		dst.IsAgentBot = true
+	}
 }
 
 // contribAcc accumulates one identity's facts as the per-source queries merge in.

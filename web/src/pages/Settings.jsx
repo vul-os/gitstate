@@ -880,6 +880,10 @@ function AccountBody({ user, onSignOut }) {
             placeholder={placeholder ? 'you@example.com' : (shownEmail || 'you@example.com')}
           />
           <p className="text-[11px] text-[var(--text-faint)] mt-1">Used for auth, notifications, and receipts.</p>
+          <p className="text-[11px] text-[var(--text-faint)] mt-1">
+            Changing your email keeps your linked git contributor — the link is by account, not by email,
+            so your commit history stays attributed to you.
+          </p>
         </div>
         <div className="flex items-center gap-3 pt-1">
           <Button type="submit" variant="primary" size="sm" disabled={saving}

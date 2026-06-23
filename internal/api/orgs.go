@@ -409,5 +409,12 @@ func (h *orgHandlers) acceptInvite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// If this invite was sent to link a contributor (contributors system), recover
+	// the link by matching the accepted user's email to a contributor identity /
+	// primary_email. org_invites has no contributor_id column, so we match on the
+	// invite email (which IS the contributor's email when invited via the
+	// contributors UI). Best-effort: a no-match is silently ignored.
+	linkContributorOnAccept(r, h.db, inv.OrgID, user.ID, inv.Email)
+
 	writeJSON(w, http.StatusOK, acceptInviteResponse{OrgID: inv.OrgID})
 }

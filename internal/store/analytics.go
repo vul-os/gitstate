@@ -212,9 +212,21 @@ type ContributorSeries struct {
 // omitted entirely when there are no other contributors.
 //
 // bucket must be "day", "week", or "month"; any other value defaults to "day".
-func (f AnalyticsFilter) CommitsByContributor(ctx context.Context, tx pgx.Tx, bucket string, topN int, includeOther bool) ([]ContributorSeries, error) {
+func (f AnalyticsFilter) CommitsByContributor(ctx context.Context, tx pgx.Tx, orgID, bucket string, topN int, includeOther bool) ([]ContributorSeries, error) {
 	if topN <= 0 {
 		topN = 5
+	}
+	// Resolver for canonicalizing raw idents → contributors (empty pre-detection).
+	resolver, err := IdentityToContributor(ctx, tx, orgID)
+	if err != nil {
+		return nil, err
+	}
+	var excluded, bots map[string]bool
+	if len(resolver) > 0 {
+		excluded, bots, err = ExcludedContributors(ctx, tx, orgID)
+		if err != nil {
+			return nil, err
+		}
 	}
 	trunc := "day"
 	switch bucket {
@@ -225,16 +237,18 @@ func (f AnalyticsFilter) CommitsByContributor(ctx context.Context, tx pgx.Tx, bu
 	}
 	where, args, _ := f.whereClause(1)
 
-	// One pass: per identity per bucket commit counts, plus a representative
-	// login/email/name and the is_agent flag from the latest commit. The CTE
-	// mirrors Contributors' identity-merge (lowercased email, else lowercased
-	// login). We rank identities by total commits and keep the top-N; the rest
-	// optionally collapse into an "everyone else" bucket.
+	// Per identity per bucket commit counts for ALL identities (no SQL LIMIT): we
+	// collapse identities onto their canonical contributor in Go FIRST, THEN rank
+	// the top-N, so a person's many emails/logins count as one before ranking. We
+	// surface the lowercased email + login per identity so the resolver can match
+	// by either.
 	q := fmt.Sprintf(`
 		WITH scoped AS (
 			SELECT
 				COALESCE(NULLIF(lower(c.author_email::text),''),
 				         NULLIF(lower(c.author_login),'')) AS identity,
+				lower(COALESCE(c.author_email::text,'')) AS lemail,
+				lower(COALESCE(c.author_login,''))       AS llogin,
 				c.author_login,
 				c.author_email,
 				c.is_agent,
@@ -243,14 +257,6 @@ func (f AnalyticsFilter) CommitsByContributor(ctx context.Context, tx pgx.Tx, bu
 			FROM commits c
 			WHERE true%s
 		),
-		ranked AS (
-			SELECT identity, COUNT(*) AS total
-			FROM scoped
-			WHERE identity IS NOT NULL
-			GROUP BY identity
-			ORDER BY total DESC, identity ASC
-			LIMIT $%d
-		),
 		latest AS (
 			SELECT DISTINCT ON (identity)
 				identity,
@@ -258,117 +264,130 @@ func (f AnalyticsFilter) CommitsByContributor(ctx context.Context, tx pgx.Tx, bu
 				COALESCE(author_email::text,'')  AS email,
 				is_agent
 			FROM scoped
-			WHERE identity IN (SELECT identity FROM ranked)
+			WHERE identity IS NOT NULL
 			ORDER BY identity, committed_at DESC
 		),
 		per_bucket AS (
-			SELECT identity, bucket, COUNT(*) AS n
+			SELECT identity, MAX(lemail) AS lemail, MAX(llogin) AS llogin, bucket, COUNT(*) AS n
 			FROM scoped
-			WHERE identity IN (SELECT identity FROM ranked)
+			WHERE identity IS NOT NULL
 			GROUP BY identity, bucket
 		)
 		SELECT
-			l.identity, l.login, l.email, l.is_agent, pb.bucket, pb.n,
-			r.total
+			pb.identity, l.login, l.email, pb.lemail, pb.llogin, l.is_agent, pb.bucket, pb.n
 		FROM per_bucket pb
 		JOIN latest l USING (identity)
-		JOIN ranked r USING (identity)
-		ORDER BY r.total DESC, l.identity ASC, pb.bucket ASC`, trunc, where, len(args)+1)
+		ORDER BY pb.identity ASC, pb.bucket ASC`, trunc, where)
 
-	rankArgs := append(append([]any{}, args...), topN)
-	rows, err := tx.Query(ctx, q, rankArgs...)
+	rows, err := tx.Query(ctx, q, args...)
 	if err != nil {
 		return nil, fmt.Errorf("store: analytics commits-by-contributor: %w", err)
 	}
 	defer rows.Close()
 
-	// Accumulate per identity (preserving first-seen order, which is rank order
-	// because the query is ordered by total DESC). Also collect the global set of
-	// buckets so every series can be 0-filled to a shared x-axis.
 	type acc struct {
 		series ContributorSeries
 		total  int
 		counts map[time.Time]int
 	}
-	order := make([]string, 0, topN)
-	byID := make(map[string]*acc)
+	// Accumulate per CANONICAL key: contributor_id when resolvable, else the raw
+	// identity string. Excluded/bot contributors are dropped on sight.
+	byKey := make(map[string]*acc)
+	order := make([]string, 0)
 	bucketSet := make(map[time.Time]struct{})
+
+	resolve := func(lemail, llogin string) string {
+		if lemail != "" {
+			if cid, ok := resolver[lemail]; ok {
+				return cid
+			}
+		}
+		if llogin != "" {
+			if cid, ok := resolver[llogin]; ok {
+				return cid
+			}
+		}
+		return ""
+	}
 
 	for rows.Next() {
 		var (
-			identity, login, email string
-			isAgent                bool
-			bkt                    time.Time
-			n, total               int
+			identity, login, email, lemail, llogin string
+			isAgent                                bool
+			bkt                                    time.Time
+			n                                      int
 		)
-		if err := rows.Scan(&identity, &login, &email, &isAgent, &bkt, &n, &total); err != nil {
+		if err := rows.Scan(&identity, &login, &email, &lemail, &llogin, &isAgent, &bkt, &n); err != nil {
 			return nil, fmt.Errorf("store: scan commits-by-contributor row: %w", err)
 		}
-		a := byID[identity]
+		cid := resolve(lemail, llogin)
+		if cid != "" && (excluded[cid] || bots[cid]) {
+			continue
+		}
+		key := cid
+		if key == "" {
+			key = identity
+		}
+		a := byKey[key]
 		if a == nil {
+			name := login
+			if cid != "" {
+				if d, ok := contribDisplayName(ctx, tx, orgID, cid); ok && d != "" {
+					name = d
+				}
+			}
 			a = &acc{
-				series: ContributorSeries{Login: login, Email: email, Name: login, IsAgent: isAgent},
-				total:  total,
+				series: ContributorSeries{Login: login, Email: email, Name: name, IsAgent: isAgent},
 				counts: map[time.Time]int{},
 			}
-			byID[identity] = a
-			order = append(order, identity)
+			byKey[key] = a
+			order = append(order, key)
 		}
-		a.counts[bkt] = n
+		a.counts[bkt] += n
+		a.total += n
 		bucketSet[bkt] = struct{}{}
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("store: analytics commits-by-contributor rows: %w", err)
 	}
 
-	// Optionally collect the "everyone else" aggregate (all identities NOT in the
-	// top-N) so the chart can show a single residual line.
-	var other *acc
-	if includeOther {
-		oq := fmt.Sprintf(`
-			WITH scoped AS (
-				SELECT
-					COALESCE(NULLIF(lower(c.author_email::text),''),
-					         NULLIF(lower(c.author_login),'')) AS identity,
-					date_trunc('%s', c.committed_at)::date AS bucket
-				FROM commits c
-				WHERE true%s
-			),
-			ranked AS (
-				SELECT identity, COUNT(*) AS total
-				FROM scoped
-				WHERE identity IS NOT NULL
-				GROUP BY identity
-				ORDER BY total DESC, identity ASC
-				LIMIT $%d
-			)
-			SELECT bucket, COUNT(*) AS n
-			FROM scoped
-			WHERE identity IS NOT NULL
-			  AND identity NOT IN (SELECT identity FROM ranked)
-			GROUP BY bucket
-			ORDER BY bucket`, trunc, where, len(args)+1)
-		orows, err := tx.Query(ctx, oq, rankArgs...)
-		if err != nil {
-			return nil, fmt.Errorf("store: analytics commits-by-contributor (other): %w", err)
+	// Rank the canonical accumulators by total commits and keep the top-N; the
+	// rest optionally collapse into "Everyone else".
+	type ranked struct {
+		key string
+		a   *acc
+	}
+	all := make([]ranked, 0, len(order))
+	for _, k := range order {
+		all = append(all, ranked{k, byKey[k]})
+	}
+	sort.Slice(all, func(i, j int) bool {
+		if all[i].a.total != all[j].a.total {
+			return all[i].a.total > all[j].a.total
 		}
-		defer orows.Close()
+		return all[i].key < all[j].key
+	})
+
+	var top []ranked
+	var rest []ranked
+	if len(all) > topN {
+		top = all[:topN]
+		rest = all[topN:]
+	} else {
+		top = all
+	}
+
+	var other *acc
+	if includeOther && len(rest) > 0 {
 		o := &acc{
 			series: ContributorSeries{Login: "Everyone else", Name: "Everyone else"},
 			counts: map[time.Time]int{},
 		}
-		for orows.Next() {
-			var bkt time.Time
-			var n int
-			if err := orows.Scan(&bkt, &n); err != nil {
-				return nil, fmt.Errorf("store: scan commits-by-contributor (other) row: %w", err)
+		for _, r := range rest {
+			for b, c := range r.a.counts {
+				o.counts[b] += c
+				o.total += c
 			}
-			o.counts[bkt] = n
-			o.total += n
-			bucketSet[bkt] = struct{}{}
-		}
-		if err := orows.Err(); err != nil {
-			return nil, fmt.Errorf("store: analytics commits-by-contributor (other) rows: %w", err)
 		}
 		if o.total > 0 {
 			other = o
@@ -391,14 +410,26 @@ func (f AnalyticsFilter) CommitsByContributor(ctx context.Context, tx pgx.Tx, bu
 		return s
 	}
 
-	out := make([]ContributorSeries, 0, len(order)+1)
-	for _, id := range order {
-		out = append(out, fill(byID[id]))
+	out := make([]ContributorSeries, 0, len(top)+1)
+	for _, r := range top {
+		out = append(out, fill(r.a))
 	}
 	if other != nil {
 		out = append(out, fill(other))
 	}
 	return out, nil
+}
+
+// contribDisplayName returns the contributor's display name for the given id
+// (best-effort; ("",false) when unknown). Cheap single-row lookup used to label
+// collapsed contributor series.
+func contribDisplayName(ctx context.Context, tx pgx.Tx, orgID, id string) (string, bool) {
+	var name string
+	err := tx.QueryRow(ctx, `SELECT display_name FROM contributors WHERE org_id=$1 AND id=$2`, orgID, id).Scan(&name)
+	if err != nil {
+		return "", false
+	}
+	return name, true
 }
 
 // ── Contributors leaderboard ──────────────────────────────────────────────────
@@ -426,15 +457,19 @@ type Contributor struct {
 // Projects counts distinct projects touched (via repo→project linkage through
 // commits.repo_id; with the current schema repos are the project proxy, so this
 // is the distinct repo count attributed to the contributor).
-func (f AnalyticsFilter) Contributors(ctx context.Context, tx pgx.Tx) ([]Contributor, error) {
+func (f AnalyticsFilter) Contributors(ctx context.Context, tx pgx.Tx, orgID string) ([]Contributor, error) {
 	where, args, _ := f.whereClause(1)
 	// identity = lowercased email when present, else lowercased login. We pick
 	// a representative login/name/is_agent via the latest commit per identity.
+	// We also surface the email AND login separately so the contributor resolver
+	// can canonicalize by either.
 	q := `
 		WITH scoped AS (
 			SELECT
 				COALESCE(NULLIF(lower(c.author_email::text),''),
 				         NULLIF(lower(c.author_login),'')) AS identity,
+				lower(COALESCE(c.author_email::text,'')) AS lemail,
+				lower(COALESCE(c.author_login,''))       AS llogin,
 				c.author_login,
 				c.author_email,
 				c.is_agent,
@@ -448,6 +483,8 @@ func (f AnalyticsFilter) Contributors(ctx context.Context, tx pgx.Tx) ([]Contrib
 		agg AS (
 			SELECT
 				identity,
+				MAX(lemail)                           AS lemail,
+				MAX(llogin)                           AS llogin,
 				COUNT(*)                              AS commits,
 				COALESCE(SUM(additions),0)            AS additions,
 				COALESCE(SUM(deletions),0)            AS deletions,
@@ -470,7 +507,7 @@ func (f AnalyticsFilter) Contributors(ctx context.Context, tx pgx.Tx) ([]Contrib
 			ORDER BY identity, committed_at DESC
 		)
 		SELECT
-			l.login, l.email, a.commits, a.additions, a.deletions,
+			l.login, l.email, a.lemail, a.llogin, a.commits, a.additions, a.deletions,
 			a.active_days, a.projects, a.first_at, a.last_at, l.is_agent
 		FROM agg a
 		JOIN latest l USING (identity)
@@ -482,23 +519,133 @@ func (f AnalyticsFilter) Contributors(ctx context.Context, tx pgx.Tx) ([]Contrib
 	}
 	defer rows.Close()
 
-	var out []Contributor
+	type rawContrib struct {
+		Contributor
+		lemail string
+		llogin string
+	}
+	var raw []rawContrib
 	for rows.Next() {
 		var c Contributor
+		var lemail, llogin string
 		if err := rows.Scan(
-			&c.Login, &c.Email, &c.Commits, &c.Additions, &c.Deletions,
+			&c.Login, &c.Email, &lemail, &llogin, &c.Commits, &c.Additions, &c.Deletions,
 			&c.ActiveDays, &c.Projects, &c.FirstAt, &c.LastAt, &c.IsAgent,
 		); err != nil {
 			return nil, fmt.Errorf("store: scan contributor: %w", err)
 		}
 		// Name falls back to login when no display name is recorded.
 		c.Name = c.Login
-		out = append(out, c)
+		raw = append(raw, rawContrib{Contributor: c, lemail: lemail, llogin: llogin})
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("store: analytics contributors rows: %w", err)
 	}
+
+	// Canonicalize to contributors: collapse identities that resolve to the same
+	// contributor and drop excluded/bot ones. When detection hasn't run the
+	// resolver is empty and every row passes through unchanged.
+	resolver, err := IdentityToContributor(ctx, tx, orgID)
+	if err != nil {
+		return nil, err
+	}
+	var excluded, bots map[string]bool
+	if len(resolver) > 0 {
+		excluded, bots, err = ExcludedContributors(ctx, tx, orgID)
+		if err != nil {
+			return nil, err
+		}
+	}
+	resolve := func(r rawContrib) string {
+		if r.lemail != "" {
+			if cid, ok := resolver[r.lemail]; ok {
+				return cid
+			}
+		}
+		if r.llogin != "" {
+			if cid, ok := resolver[r.llogin]; ok {
+				return cid
+			}
+		}
+		return ""
+	}
+
+	out := make([]Contributor, 0, len(raw))
+	byContrib := map[string]int{} // contributor_id -> index in out
+	contribDisplay, _ := contributorDisplay(ctx, tx, orgID) // id -> (name,email)
+	for _, r := range raw {
+		cid := resolve(r)
+		if cid != "" && (excluded[cid] || bots[cid]) {
+			continue
+		}
+		if cid == "" {
+			out = append(out, r.Contributor)
+			continue
+		}
+		if idx, ok := byContrib[cid]; ok {
+			m := &out[idx]
+			m.Commits += r.Commits
+			m.Additions += r.Additions
+			m.Deletions += r.Deletions
+			m.ActiveDays += r.ActiveDays
+			m.Projects += r.Projects
+			if r.FirstAt.Before(m.FirstAt) {
+				m.FirstAt = r.FirstAt
+			}
+			if r.LastAt.After(m.LastAt) {
+				m.LastAt = r.LastAt
+			}
+			if r.IsAgent {
+				m.IsAgent = true
+			}
+			continue
+		}
+		c := r.Contributor
+		if d, ok := contribDisplay[cid]; ok {
+			if d[0] != "" {
+				c.Name = d[0]
+			}
+			if d[1] != "" {
+				c.Email = d[1]
+			}
+		}
+		byContrib[cid] = len(out)
+		out = append(out, c)
+	}
+
+	// Re-sort by commits desc (the collapse can change ranking).
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].Commits != out[j].Commits {
+			return out[i].Commits > out[j].Commits
+		}
+		if out[i].Additions != out[j].Additions {
+			return out[i].Additions > out[j].Additions
+		}
+		return out[i].Login < out[j].Login
+	})
 	return out, nil
+}
+
+// contributorDisplay returns contributor_id -> [displayName, primaryEmail] so the
+// analytics leaderboard can show the canonical person's name/email after a
+// collapse. Best-effort: returns an empty map (no error surfaced to the caller)
+// when the table is empty.
+func contributorDisplay(ctx context.Context, tx pgx.Tx, orgID string) (map[string][2]string, error) {
+	const q = `SELECT id::text, display_name, COALESCE(primary_email,'') FROM contributors WHERE org_id = $1`
+	rows, err := tx.Query(ctx, q, orgID)
+	if err != nil {
+		return map[string][2]string{}, fmt.Errorf("store: contributor display: %w", err)
+	}
+	defer rows.Close()
+	m := map[string][2]string{}
+	for rows.Next() {
+		var id, name, email string
+		if err := rows.Scan(&id, &name, &email); err != nil {
+			return m, fmt.Errorf("store: scan contributor display: %w", err)
+		}
+		m[id] = [2]string{name, email}
+	}
+	return m, rows.Err()
 }
 
 // ── Per-repo table ────────────────────────────────────────────────────────────

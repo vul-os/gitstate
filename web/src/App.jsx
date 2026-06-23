@@ -18,6 +18,7 @@ const Dashboard = lazy(() => import('./pages/Dashboard.jsx'))
 const Projects = lazy(() => import('./pages/Projects.jsx'))
 const Settings = lazy(() => import('./pages/Settings.jsx'))
 const Members = lazy(() => import('./pages/Members.jsx'))
+const People = lazy(() => import('./pages/People.jsx'))
 const InviteAccept = lazy(() => import('./pages/InviteAccept.jsx'))
 const Repos = lazy(() => import('./pages/Repos.jsx'))
 const Board = lazy(() => import('./pages/Board.jsx'))
@@ -137,6 +138,7 @@ export default function App() {
                 <Route path="/capacity" element={<Capacity />} />
                 <Route path="/planning" element={<Planning />} />
                 <Route path="/invoices" element={<Invoices />} />
+                <Route path="/people" element={<People />} />
                 <Route path="/settings" element={<Settings />} />
                 <Route path="/settings/members" element={<Members />} />
                 <Route path="/settings/billing" element={<Billing />} />

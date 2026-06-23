@@ -189,7 +189,7 @@ func TestAnalyticsAggregates(t *testing.T) {
 	}
 
 	// ── Contributors ─────────────────────────────────────────────────────────
-	contribs, err := filter.Contributors(ctx, tx)
+	contribs, err := filter.Contributors(ctx, tx, orgID)
 	if err != nil {
 		t.Fatalf("Contributors: %v", err)
 	}
@@ -582,7 +582,7 @@ func TestCommitsByContributor(t *testing.T) {
 	}
 
 	// top-2, no "other": jane then bob, each 0-filled to the 3-week axis.
-	series, err := filter.CommitsByContributor(ctx, tx, "week", 2, false)
+	series, err := filter.CommitsByContributor(ctx, tx, orgID, "week", 2, false)
 	if err != nil {
 		t.Fatalf("CommitsByContributor: %v", err)
 	}
@@ -627,7 +627,7 @@ func TestCommitsByContributor(t *testing.T) {
 
 	// top-2 WITH "other": carol (the only non-top-2 contributor) collapses into
 	// a single "Everyone else" line with total 1, also 0-filled to 3 buckets.
-	withOther, err := filter.CommitsByContributor(ctx, tx, "week", 2, true)
+	withOther, err := filter.CommitsByContributor(ctx, tx, orgID, "week", 2, true)
 	if err != nil {
 		t.Fatalf("CommitsByContributor(other): %v", err)
 	}
@@ -650,7 +650,7 @@ func TestCommitsByContributor(t *testing.T) {
 	}
 
 	// top-5 (more than the 3 distinct authors) → exactly 3 series, no "other".
-	all, err := filter.CommitsByContributor(ctx, tx, "week", 5, true)
+	all, err := filter.CommitsByContributor(ctx, tx, orgID, "week", 5, true)
 	if err != nil {
 		t.Fatalf("CommitsByContributor(top5): %v", err)
 	}

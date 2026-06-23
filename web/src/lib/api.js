@@ -418,3 +418,53 @@ export function syncCalendar(body) {
 export function fetchConfig() {
   return get('/api/config')
 }
+
+// ── Contributors / identity management ──────────────────────────────────────────
+//
+// Git history names people by raw email + login, so one human shows up as many
+// "identities". gitstate auto-clusters those into canonical contributors, which
+// can then be linked to org members, invited, excluded, merged or split.
+//
+// Contributor shape:
+//   { id, displayName, primaryEmail, excluded, isBot, userId, memberName,
+//     memberEmail, invitedAt, status:'linked'|'invited'|'uninvited',
+//     identities:[{ kind:'email'|'login', value, nameSeen }],
+//     stats:{ commits, prs, reviews } }
+
+/** List the org's canonical contributors with their identities + stats. */
+export function fetchContributors() {
+  return get('/api/contributors')
+}
+
+/**
+ * Re-run auto-clustering over raw git identities.
+ * @returns {Promise<{contributors:number, identities:number, merged:number}>}
+ */
+export function detectContributors() {
+  return post('/api/contributors/detect', {})
+}
+
+/** Patch a contributor: { displayName?, primaryEmail?, excluded?, isBot? }. */
+export function patchContributor(id, body) {
+  return patch(`/api/contributors/${id}`, body)
+}
+
+/** Merge contributor `id` into `intoId` (its identities move to the survivor). */
+export function mergeContributors(id, intoId) {
+  return post(`/api/contributors/${id}/merge`, { intoId })
+}
+
+/** Split a single identity `value` out of a contributor into its own person. */
+export function splitIdentity(id, value) {
+  return post(`/api/contributors/${id}/split`, { value })
+}
+
+/** Link a contributor to an existing org member (by user id). */
+export function linkContributor(id, userId) {
+  return post(`/api/contributors/${id}/link`, { userId })
+}
+
+/** Invite a contributor as a member; optional email overrides the primary one. */
+export function inviteContributor(id, email) {
+  return post(`/api/contributors/${id}/invite`, email ? { email } : {})
+}
