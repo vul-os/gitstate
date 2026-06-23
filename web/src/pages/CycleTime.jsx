@@ -197,9 +197,9 @@ export default function CycleTime() {
             </div>
 
             <div className="flex flex-col gap-1.5">
-              <label className="text-[10px] font-medium text-[var(--text-faint)] uppercase tracking-widest font-mono">Author</label>
+              <label className="text-[10px] font-medium text-[var(--text-faint)] uppercase tracking-widest font-mono">People</label>
               <select className={filterInputCls} value={author} onChange={e => setAuthor(e.target.value)}>
-                <option value="">All authors</option>
+                <option value="">All people</option>
                 {(contributors || []).map(c => {
                   // Grouped person → `contributor:<id>` (filters all their identities);
                   // ungrouped → raw login/email.

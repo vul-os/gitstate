@@ -356,8 +356,7 @@ export default function Contribution() {
     <div className="w-full space-y-6">
       {/* Header */}
       <Reveal>
-        <div className="relative overflow-hidden rounded-[var(--radius-card)]">
-          <div className="absolute inset-0 ambient-brand pointer-events-none" aria-hidden />
+        <div className="relative rounded-[var(--radius-card)]">
           <div className="relative flex flex-col lg:flex-row lg:items-end lg:justify-between gap-4 py-1">
             <div>
               <div className="flex items-center gap-2 mb-1.5">

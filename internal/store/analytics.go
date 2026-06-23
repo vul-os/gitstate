@@ -626,9 +626,9 @@ func (f AnalyticsFilter) Contributors(ctx context.Context, tx pgx.Tx, orgID stri
 			if r.LastAt.After(m.LastAt) {
 				m.LastAt = r.LastAt
 			}
-			if r.IsAgent {
-				m.IsAgent = true
-			}
+			// NOTE: do NOT OR per-identity is_agent here. A person's agent status is
+			// the canonical contributor's is_bot — a human with an agent identity
+			// (e.g. a Claude co-author merged onto them) stays human.
 			continue
 		}
 		c := r.Contributor
@@ -642,6 +642,9 @@ func (f AnalyticsFilter) Contributors(ctx context.Context, tx pgx.Tx, orgID stri
 		}
 		c.ContributorID = cid
 		c.Identities = contribIdents[cid]
+		// A mapped (surviving) contributor is a human — bots are dropped above, so
+		// is_agent reflects the contributor's bot flag, not any one identity's.
+		c.IsAgent = bots[cid]
 		byContrib[cid] = len(out)
 		out = append(out, c)
 	}

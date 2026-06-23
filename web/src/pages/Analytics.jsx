@@ -167,9 +167,9 @@ function FiltersBar({ filters, setFilters, preset, setPreset, contributors, repo
           value={filters.author}
           onChange={e => setFilters(f => ({ ...f, author: e.target.value }))}
         >
-          <option value="">All authors</option>
+          <option value="">All people</option>
           {contributors.map(c => {
-            // A grouped person carries a canonical contributorId + their full
+            // A grouped PERSON carries a canonical contributorId + their full
             // identity set: send `contributor:<id>` so the backend expands it and
             // filters ALL of that person's identities at once. Ungrouped rows fall
             // back to the raw login/email.
