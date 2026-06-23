@@ -12,6 +12,7 @@ import (
 
 	"github.com/exo/gitstate/internal/config"
 	"github.com/exo/gitstate/internal/db"
+	"github.com/exo/gitstate/internal/metrics"
 	"github.com/exo/gitstate/internal/middleware"
 	"github.com/exo/gitstate/internal/store"
 	gitSync "github.com/exo/gitstate/internal/sync"
@@ -597,6 +598,17 @@ func analyzeReposConcurrently(ctx context.Context, database *db.DB, orgID, token
 	}
 	close(jobs)
 	wg.Wait()
+
+	// Make the CURRENT month's contribution texture live right after a sync, so a
+	// freshly-synced org doesn't show empty ownership/review/shipped until someone
+	// opens the Contribution page (the handler still backfills the full window on
+	// demand; this just keeps "now" fresh). Idempotent + best-effort; llm is nil
+	// because ComputeInvolvement never uses it.
+	now := time.Now().UTC()
+	monthStart := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
+	if err := metrics.New(database, nil).ComputeInvolvement(ctx, orgID, monthStart); err != nil {
+		slog.Warn("sync: compute current-month involvement failed", "org_id", orgID, "err", err)
+	}
 }
 
 // startBackgroundSync runs a repo sync in a detached goroutine. Shared by the
