@@ -532,6 +532,34 @@ func (g *githubProvider) ListRepos(ctx context.Context) ([]RemoteRepo, error) {
 		})
 	}
 
+	// 0. Installation token path: a GitHub App installation token can ONLY use the
+	//    installation endpoints — `/user/repos` returns 403 "Resource not accessible
+	//    by integration". `/installation/repositories` returns exactly the repos the
+	//    App was granted on this install (the scoped list we want). Try it first; if
+	//    this is an OAuth user token instead, it 403/404s and we fall through to the
+	//    user+orgs enumeration below.
+	iopts := &gogithub.ListOptions{PerPage: 100}
+	installOK := false
+	for {
+		page, resp, err := ghDo(ctx, func() (*gogithub.ListRepositories, *gogithub.Response, error) {
+			return g.client.Apps.ListRepos(ctx, iopts)
+		})
+		if err != nil {
+			break // not an installation token (OAuth) → use the user/orgs path
+		}
+		installOK = true
+		for _, r := range page.Repositories {
+			add(r)
+		}
+		if resp.NextPage == 0 {
+			break
+		}
+		iopts.Page = resp.NextPage
+	}
+	if installOK {
+		return out, nil
+	}
+
 	// 1. Repos the authenticated user owns / collaborates on. (/user/repos does NOT
 	//    reliably return all repos of an org the user belongs to — see step 2.)
 	uopts := &gogithub.RepositoryListByAuthenticatedUserOptions{ListOptions: gogithub.ListOptions{PerPage: 100}}
