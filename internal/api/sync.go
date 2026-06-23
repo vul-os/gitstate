@@ -261,6 +261,11 @@ func (h *syncHandlers) connectRepo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Auto-register the platform webhook so changes are PUSHED to us (ongoing
+	// real-time sync) after this backfill. Gated on a publicly-reachable
+	// PublicURL — skipped (logged, no error) on localhost. Best-effort.
+	_ = autoRegisterRepoWebhook(r.Context(), h.db, h.cfg, orgID, req.Platform, repo.FullName, externalID, token, baseURL)
+
 	// Auto-sync the freshly imported repo so its issues/PRs/commits pull right away
 	// instead of waiting for a manual /sync. Best-effort, in the background.
 	h.startBackgroundSync(orgID, *repo, token, baseURL)
@@ -472,6 +477,10 @@ func (h *syncHandlers) importRepos(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			imported++
+			// Auto-register the platform webhook for ongoing real-time sync after the
+			// backfill. Gated on a publicly-reachable PublicURL (skipped+logged on
+			// localhost). Best-effort.
+			_ = autoRegisterRepoWebhook(bgCtx, h.db, h.cfg, orgID, platform, rr.FullName, rr.ExternalID, token, baseURL)
 			// Sync inline (sequential within this batch goroutine) so we don't spawn
 			// one goroutine per repo for a 100-repo import.
 			if e := gitSync.SyncRepo(bgCtx, h.db, provider, orgID, *repo, token); e != nil {

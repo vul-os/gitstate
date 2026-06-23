@@ -122,11 +122,11 @@ func (h *webhookHandlers) receive(w http.ResponseWriter, r *http.Request) {
 	}
 	slog.Info("webhook processed",
 		"provider", provider, "event", event,
-		"commits", res.Commits, "prs", res.PRs, "issues", res.Issues,
+		"commits", res.Commits, "prs", res.PRs, "issues", res.Issues, "reviews", res.Reviews,
 		"deployments", res.Deployments, "incidents_opened", res.Incidents, "incidents_closed", res.Closed)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok": true, "event": event,
-		"commits": res.Commits, "prs": res.PRs, "issues": res.Issues,
+		"commits": res.Commits, "prs": res.PRs, "issues": res.Issues, "reviews": res.Reviews,
 		"deployments": res.Deployments,
 	})
 }

@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -28,6 +29,12 @@ import (
 	"github.com/exo/gitstate/internal/store"
 )
 
+// issueRefRe matches issue references in PR/MR text — both bare "#123" and the
+// closing-keyword forms ("Closes #123"). Mirrors the syncer's auto-progress
+// parser so a webhook-driven PR re-derives the same linked-issue states the
+// backfill would.
+var issueRefRe = regexp.MustCompile(`(?i)(?:closes?|fixes?|resolves?)?\s*#(\d+)`)
+
 // Result summarises what a delivery did (for the receiver's structured log — no
 // payload contents, just counts).
 type Result struct {
@@ -36,6 +43,7 @@ type Result struct {
 	Commits     int
 	PRs         int
 	Issues      int
+	Reviews     int
 	Deployments int
 	Incidents   int // opened(+) / resolved are reported via IncidentsClosed
 	Closed      int
@@ -91,6 +99,7 @@ type ghPRPayload struct {
 		ID           int64      `json:"id"`
 		Number       int        `json:"number"`
 		Title        string     `json:"title"`
+		Body         string     `json:"body"`
 		State        string     `json:"state"`
 		Merged       bool       `json:"merged"`
 		MergedAt     *time.Time `json:"merged_at"`
@@ -148,6 +157,29 @@ type ghWorkflowRunPayload struct {
 	} `json:"workflow_run"`
 }
 
+// ghPRReviewPayload is the pull_request_review event. The review's submitter is
+// review.user.login; the PR author (for self-review skipping) is
+// pull_request.user.login. external_id keys the review row idempotently.
+type ghPRReviewPayload struct {
+	Action      string `json:"action"` // submitted | edited | dismissed
+	Repository  ghRepo `json:"repository"`
+	Review      struct {
+		ID          int64      `json:"id"`
+		State       string     `json:"state"` // approved | changes_requested | commented | dismissed
+		SubmittedAt *time.Time `json:"submitted_at"`
+		User        struct {
+			Login string `json:"login"`
+		} `json:"user"`
+	} `json:"review"`
+	PullRequest struct {
+		ID     int64 `json:"id"`
+		Number int   `json:"number"`
+		User   struct {
+			Login string `json:"login"`
+		} `json:"user"`
+	} `json:"pull_request"`
+}
+
 func processGitHub(ctx context.Context, database *db.DB, orgID, event string, body []byte, res Result) (Result, error) {
 	switch event {
 	case "push":
@@ -184,7 +216,35 @@ func processGitHub(ctx context.Context, database *db.DB, orgID, event string, bo
 		if p.PullRequest.MergedAt != nil {
 			pr.MergedAt = *p.PullRequest.MergedAt
 		}
-		return ingestPR(ctx, database, orgID, "github", p.Repository.FullName, pr, res)
+		// Re-derive linked-issue auto-progress from the PR title+body (open PR →
+		// in_progress, merged PR → done), mirroring the backfill syncer.
+		return ingestPR(ctx, database, orgID, "github", p.Repository.FullName, pr,
+			p.PullRequest.Title+"\n"+p.PullRequest.Body, res)
+
+	case "pull_request_review":
+		var p ghPRReviewPayload
+		if err := json.Unmarshal(body, &p); err != nil {
+			return res, fmt.Errorf("webhooks: parse github pull_request_review: %w", err)
+		}
+		// Only a freshly submitted review is a new review event. edited/dismissed
+		// don't add review work (dismissal is reflected via state on re-submit).
+		if p.Action != "submitted" {
+			res.Ignored = true
+			return res, nil
+		}
+		var submitted time.Time
+		if p.Review.SubmittedAt != nil {
+			submitted = *p.Review.SubmittedAt
+		}
+		rv := reviewRecord{
+			PRExternalID:  strconv.FormatInt(p.PullRequest.ID, 10),
+			PRAuthorLogin: p.PullRequest.User.Login,
+			ReviewerLogin: p.Review.User.Login,
+			State:         normaliseReviewState(p.Review.State),
+			ExternalID:    strconv.FormatInt(p.Review.ID, 10),
+			SubmittedAt:   submitted,
+		}
+		return ingestReview(ctx, database, orgID, "github", p.Repository.FullName, rv, res)
 
 	case "issues":
 		var p ghIssuePayload
@@ -321,15 +381,48 @@ type glPushPayload struct {
 type glMRPayload struct {
 	Project          glProject `json:"project"`
 	ObjectAttributes struct {
-		IID       int     `json:"iid"`
-		ID        int64   `json:"id"`
-		Title     string  `json:"title"`
-		State     string  `json:"state"` // opened | merged | closed | locked
-		Action    string  `json:"action"`
-		CreatedAt string  `json:"created_at"`
-		MergedAt  *string `json:"merged_at"`
+		IID         int     `json:"iid"`
+		ID          int64   `json:"id"`
+		Title       string  `json:"title"`
+		Description string  `json:"description"`
+		State       string  `json:"state"` // opened | merged | closed | locked
+		Action      string  `json:"action"`
+		AuthorID    int64   `json:"author_id"`
+		CreatedAt   string  `json:"created_at"`
+		MergedAt    *string `json:"merged_at"`
 	} `json:"object_attributes"`
 	User struct {
+		Username string `json:"username"`
+	} `json:"user"`
+}
+
+// glNotePayload is the GitLab "Note Hook" (a comment). Only comments whose
+// noteable_type is "MergeRequest" are treated as PR review activity. The MR's
+// numeric id (object_attributes.noteable_id == merge_request.id) keys the review
+// to the stored MR. GitLab's note payload does not carry the MR author's
+// username, so AuthorLogin() returns "" and the self-review skip simply can't
+// match here (a commenter is virtually never auto-skipped — acceptable).
+type glNoteMergeRequest struct {
+	ID  int64 `json:"id"`
+	IID int   `json:"iid"`
+}
+
+// AuthorLogin returns the MR author's username if the note payload carries it.
+// GitLab's note payload does not include it, so this is "" and the self-review
+// skip simply can't match for note-driven reviews (acceptable — a commenter is
+// virtually never the MR author in practice, and the worst case is one extra
+// row, not a wrong one).
+func (glNoteMergeRequest) AuthorLogin() string { return "" }
+
+type glNotePayload struct {
+	Project          glProject `json:"project"`
+	ObjectAttributes struct {
+		ID           int64  `json:"id"`
+		NoteableType string `json:"noteable_type"` // MergeRequest | Issue | Commit | Snippet
+		CreatedAt    string `json:"created_at"`
+	} `json:"object_attributes"`
+	MergeRequest glNoteMergeRequest `json:"merge_request"`
+	User         struct {
 		Username string `json:"username"`
 	} `json:"user"`
 }
@@ -413,7 +506,48 @@ func processGitLab(ctx context.Context, database *db.DB, orgID, event string, bo
 		if p.ObjectAttributes.MergedAt != nil {
 			pr.MergedAt = parseGLTime(*p.ObjectAttributes.MergedAt)
 		}
-		return ingestPR(ctx, database, orgID, "gitlab", p.Project.PathWithNamespace, pr, res)
+		// An approval/unapproval action on an MR is a review event (GitLab folds
+		// approvals into the Merge Request Hook rather than a separate webhook).
+		if act := p.ObjectAttributes.Action; act == "approved" || act == "unapproved" {
+			rv := reviewRecord{
+				PRExternalID:  strconv.FormatInt(p.ObjectAttributes.ID, 10),
+				PRAuthorLogin: pr.AuthorLogin,
+				ReviewerLogin: p.User.Username,
+				State:         normaliseReviewState(act),
+				ExternalID:    fmt.Sprintf("glapproval-%d-%s", p.ObjectAttributes.ID, p.User.Username),
+				SubmittedAt:   time.Now().UTC(),
+			}
+			// Persist the PR state too (the MR may have changed), then the review.
+			if r2, err := ingestPR(ctx, database, orgID, "gitlab", p.Project.PathWithNamespace, pr,
+				p.ObjectAttributes.Title+"\n"+p.ObjectAttributes.Description, res); err == nil {
+				res = r2
+			}
+			res.Ignored = false
+			return ingestReview(ctx, database, orgID, "gitlab", p.Project.PathWithNamespace, rv, res)
+		}
+		return ingestPR(ctx, database, orgID, "gitlab", p.Project.PathWithNamespace, pr,
+			p.ObjectAttributes.Title+"\n"+p.ObjectAttributes.Description, res)
+
+	case "Note Hook":
+		var p glNotePayload
+		if err := json.Unmarshal(body, &p); err != nil {
+			return res, fmt.Errorf("webhooks: parse gitlab note: %w", err)
+		}
+		// Only comments ON a merge request count as review activity; issue/commit/
+		// snippet notes are not PR reviews.
+		if !strings.EqualFold(p.ObjectAttributes.NoteableType, "MergeRequest") || p.MergeRequest.ID == 0 {
+			res.Ignored = true
+			return res, nil
+		}
+		rv := reviewRecord{
+			PRExternalID:  strconv.FormatInt(p.MergeRequest.ID, 10),
+			PRAuthorLogin: p.MergeRequest.AuthorLogin(),
+			ReviewerLogin: p.User.Username,
+			State:         "commented",
+			ExternalID:    "glnote-" + strconv.FormatInt(p.ObjectAttributes.ID, 10),
+			SubmittedAt:   parseGLTime(p.ObjectAttributes.CreatedAt),
+		}
+		return ingestReview(ctx, database, orgID, "gitlab", p.Project.PathWithNamespace, rv, res)
 
 	case "Issue Hook":
 		var p glIssuePayload
@@ -549,12 +683,14 @@ func ingestPush(ctx context.Context, database *db.DB, orgID, platform, fullName 
 	return res, err
 }
 
-func ingestPR(ctx context.Context, database *db.DB, orgID, platform, fullName string, pr store.PullRequest, res Result) (Result, error) {
+func ingestPR(ctx context.Context, database *db.DB, orgID, platform, fullName string, pr store.PullRequest, progressText string, res Result) (Result, error) {
+	var repoID string
 	err := database.WithOrg(ctx, orgID, func(tx pgx.Tx) error {
-		repoID, e := store.RepoIDByExternal(ctx, tx, orgID, platform, fullName)
+		rid, e := store.RepoIDByExternal(ctx, tx, orgID, platform, fullName)
 		if e != nil {
 			return e
 		}
+		repoID = rid
 		pr.RepoID = repoID
 		if e := store.UpsertPR(ctx, tx, &pr); e != nil {
 			return e
@@ -565,7 +701,142 @@ func ingestPR(ctx context.Context, database *db.DB, orgID, platform, fullName st
 	if isRepoNotFound(err) {
 		return Result{Provider: res.Provider, Event: res.Event, Ignored: true}, nil
 	}
+	if err != nil {
+		return res, err
+	}
+	// Auto-progress: a PR linked to issue #N drives that issue's derived_state
+	// (open PR → in_progress, merged PR → done). Best-effort — a derivation miss
+	// must not fail the delivery (the PR itself is already persisted).
+	applyIssueAutoProgress(ctx, database, orgID, repoID, pr.State, progressText)
+	return res, nil
+}
+
+// applyIssueAutoProgress mirrors the backfill syncer: it parses issue references
+// out of a PR's title+body and sets the linked issues' derived_state. "merged"
+// wins over "open"; other PR states leave the issue untouched. Errors are
+// swallowed (best-effort) so a derivation hiccup can't fail the webhook.
+func applyIssueAutoProgress(ctx context.Context, database *db.DB, orgID, repoID, prState, text string) {
+	var derived string
+	switch prState {
+	case "merged":
+		derived = "done"
+	case "open":
+		derived = "in_progress"
+	default:
+		return
+	}
+	refs := parseIssueRefs(text)
+	if len(refs) == 0 {
+		return
+	}
+	wanted := map[int]bool{}
+	for _, n := range refs {
+		wanted[n] = true
+	}
+	issues, err := store.ListIssuesByRepo(ctx, database.Pool(), orgID, repoID)
+	if err != nil {
+		return
+	}
+	for _, iss := range issues {
+		if !wanted[iss.Number] {
+			continue
+		}
+		_ = store.SetDerivedState(ctx, database.Pool(), orgID, iss.ID, derived)
+	}
+}
+
+// reviewRecord is the minimal review shape both providers map into. PRExternalID
+// is the platform PR/MR id (UpsertPR keys on it); the receiver resolves it to the
+// internal pr_id before writing the review.
+type reviewRecord struct {
+	PRExternalID  string
+	PRAuthorLogin string
+	ReviewerLogin string
+	State         string
+	ExternalID    string
+	SubmittedAt   time.Time
+}
+
+// ingestReview resolves the PR's internal id and writes one review row. Self-
+// reviews (reviewer == PR author) and empty reviewers are skipped — they are not
+// the invisible review work Involvement credits. A PR not yet stored (review
+// arrived before the PR event) is treated as ignored rather than an error.
+func ingestReview(ctx context.Context, database *db.DB, orgID, platform, fullName string, rv reviewRecord, res Result) (Result, error) {
+	if rv.ReviewerLogin == "" || strings.EqualFold(rv.ReviewerLogin, rv.PRAuthorLogin) {
+		res.Ignored = true
+		return res, nil
+	}
+	err := database.WithOrg(ctx, orgID, func(tx pgx.Tx) error {
+		repoID, e := store.RepoIDByExternal(ctx, tx, orgID, platform, fullName)
+		if e != nil {
+			return e
+		}
+		// Resolve the PR's internal UUID (reviews FK to pr_id). UpsertPR keys on
+		// external_id, so a review for an as-yet-unsynced PR finds no row.
+		var prID string
+		e = tx.QueryRow(ctx,
+			`SELECT id FROM pull_requests WHERE org_id=$1 AND repo_id=$2 AND external_id=$3`,
+			orgID, repoID, rv.PRExternalID).Scan(&prID)
+		if e != nil {
+			if e == pgx.ErrNoRows {
+				return store.ErrNotFound
+			}
+			return e
+		}
+		if e := store.UpsertPRReview(ctx, tx, store.PRReviewInput{
+			OrgID:         orgID,
+			RepoID:        repoID,
+			PRID:          prID,
+			ReviewerLogin: rv.ReviewerLogin,
+			State:         rv.State,
+			ExternalID:    rv.ExternalID,
+			SubmittedAt:   rv.SubmittedAt,
+		}); e != nil {
+			return e
+		}
+		res.Reviews++
+		return store.TouchWebhookLastEvent(ctx, tx, orgID, platform)
+	})
+	if isRepoNotFound(err) {
+		return Result{Provider: res.Provider, Event: res.Event, Ignored: true}, nil
+	}
 	return res, err
+}
+
+// parseIssueRefs returns the unique issue numbers referenced in text (bare #N and
+// closing-keyword forms). Mirrors the syncer's parser.
+func parseIssueRefs(text string) []int {
+	matches := issueRefRe.FindAllStringSubmatch(text, -1)
+	seen := map[int]bool{}
+	var out []int
+	for _, m := range matches {
+		n, err := strconv.Atoi(strings.TrimSpace(m[1]))
+		if err != nil || n <= 0 || seen[n] {
+			continue
+		}
+		seen[n] = true
+		out = append(out, n)
+	}
+	return out
+}
+
+// normaliseReviewState maps a platform review state to the pr_reviews canonical
+// set (approved | changes_requested | commented | dismissed). GitHub emits
+// UPPER_CASE; GitLab approval actions map to approved/changes_requested. Unknown
+// values fall back to "commented" (a review still happened).
+func normaliseReviewState(s string) string {
+	switch strings.ToUpper(strings.TrimSpace(s)) {
+	case "APPROVED", "APPROVAL":
+		return "approved"
+	case "CHANGES_REQUESTED", "UNAPPROVED", "UNAPPROVAL":
+		return "changes_requested"
+	case "DISMISSED":
+		return "dismissed"
+	case "COMMENTED", "COMMENT":
+		return "commented"
+	default:
+		return "commented"
+	}
 }
 
 func ingestIssue(ctx context.Context, database *db.DB, orgID, platform, fullName string, iss store.IssueUpsert, res Result) (Result, error) {

@@ -7,9 +7,17 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
+	"net/url"
+	"strconv"
 	"strings"
 	"time"
+
+	gogithub "github.com/google/go-github/v66/github"
+	"github.com/jackc/pgx/v5"
+	gogitlab "gitlab.com/gitlab-org/api/client-go"
+	"golang.org/x/oauth2"
 
 	"github.com/exo/gitstate/internal/auth"
 	"github.com/exo/gitstate/internal/config"
@@ -19,7 +27,7 @@ import (
 	oauthpkg "github.com/exo/gitstate/internal/oauth"
 	"github.com/exo/gitstate/internal/store"
 	gitSync "github.com/exo/gitstate/internal/sync"
-	"github.com/jackc/pgx/v5"
+	"github.com/exo/gitstate/internal/webhooks"
 )
 
 // RegisterConnectRoutes wires the GitHub/GitLab OAuth-app connection endpoints.
@@ -374,4 +382,290 @@ func resolveStoredToken(ctx context.Context, database *db.DB, orgID, platform st
 		return "", "", fmt.Errorf("decrypt connection token: %w", e)
 	}
 	return string(pt), conn.BaseURL, nil
+}
+
+// ── Webhook auto-registration on connect ───────────────────────────────────────
+//
+// When a repo is connected we register a platform webhook pointing at our public
+// receiver so the platform PUSHES changes (push/PR/issue/review/deployment) — the
+// ongoing real-time sync layer — instead of us polling. It is:
+//
+//   - GATED on a publicly-reachable PublicURL. GitHub/GitLab cannot deliver to
+//     localhost/127.0.0.1/private hosts, so when PublicURL is empty or local we
+//     SKIP (log INFO) and do NOT error. Webhooks are a deploy-time feature; the
+//     initial backfill is what runs locally.
+//   - IDEMPOTENT: existing hooks are listed and one already pointing at our URL is
+//     left in place (its event set / secret are refreshed if drifted), never
+//     duplicated.
+//   - SECURED with the org's webhook secret (reused, or generated once via the
+//     existing webhooks.GenerateSecret + store.UpsertWebhookSecret mechanism).
+//
+// It builds a DIRECT platform client from the stored token (no dependency on
+// internal/sync's Provider). Best-effort: every failure logs and returns nil so a
+// webhook hiccup never blocks the connect/import.
+
+// ghWebhookEvents are the GitHub events we subscribe the auto-registered hook to.
+var ghWebhookEvents = []string{
+	"push", "pull_request", "pull_request_review", "issues",
+	"deployment", "deployment_status",
+}
+
+// publiclyReachable reports whether rawURL is an https(/http) URL on a host the
+// platforms can actually deliver to (not localhost / loopback / private / .local).
+func publiclyReachable(rawURL string) bool {
+	rawURL = strings.TrimSpace(rawURL)
+	if rawURL == "" {
+		return false
+	}
+	u, err := url.Parse(rawURL)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") {
+		return false
+	}
+	host := u.Hostname()
+	if host == "" {
+		return false
+	}
+	hl := strings.ToLower(host)
+	if hl == "localhost" || strings.HasSuffix(hl, ".localhost") || strings.HasSuffix(hl, ".local") || hl == "host.docker.internal" {
+		return false
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		if ip.IsLoopback() || ip.IsPrivate() || ip.IsUnspecified() || ip.IsLinkLocalUnicast() {
+			return false
+		}
+	}
+	return true
+}
+
+// receiverURL builds the public payload URL the platform delivers to (carrying
+// the org hint the receiver uses to find the secret pre-auth).
+func receiverURL(publicURL, platform, orgID string) string {
+	return strings.TrimRight(publicURL, "/") + "/api/webhooks/" + platform + "?org=" + orgID
+}
+
+// ensureWebhookSecret returns the org's stored webhook secret for the provider,
+// generating + persisting one (the existing reveal-once mechanism) if absent.
+func ensureWebhookSecret(ctx context.Context, database *db.DB, orgID, provider string) (string, error) {
+	var secret string
+	err := database.WithOrg(ctx, orgID, func(tx pgx.Tx) error {
+		c, e := store.GetWebhookConfig(ctx, tx, orgID, provider)
+		if e == nil && c.Secret != "" {
+			secret = c.Secret
+			return nil
+		}
+		if e != nil && !errors.Is(e, store.ErrNotFound) {
+			return e
+		}
+		gen, e := webhooks.GenerateSecret()
+		if e != nil {
+			return e
+		}
+		saved, e := store.UpsertWebhookSecret(ctx, tx, orgID, provider, gen)
+		if e != nil {
+			return e
+		}
+		secret = saved.Secret
+		return nil
+	})
+	return secret, err
+}
+
+// autoRegisterRepoWebhook idempotently registers (or updates) the platform repo
+// webhook pointing at our receiver. Gated on a publicly-reachable PublicURL.
+// Best-effort: it never returns an error that should block the connect — callers
+// may ignore the returned error (logged here too).
+func autoRegisterRepoWebhook(ctx context.Context, database *db.DB, cfg *config.Config, orgID, platform, fullName, externalID, token, baseURL string) error {
+	publicURL := ""
+	if cfg != nil {
+		publicURL = cfg.App.PublicURL
+	}
+	if !publiclyReachable(publicURL) {
+		slog.Info("webhook auto-register skipped: PublicURL is not publicly reachable (set PUBLIC_URL to a public https URL / tunnel)",
+			"platform", platform, "full_name", fullName)
+		return nil
+	}
+
+	secret, err := ensureWebhookSecret(ctx, database, orgID, platform)
+	if err != nil {
+		slog.Error("webhook auto-register: ensure secret", "platform", platform, "full_name", fullName, "err", err)
+		return nil
+	}
+
+	target := receiverURL(publicURL, platform, orgID)
+	switch platform {
+	case "github":
+		if err := registerGitHubWebhook(ctx, token, fullName, target, secret); err != nil {
+			slog.Error("webhook auto-register: github", "full_name", fullName, "err", err)
+		} else {
+			slog.Info("webhook auto-registered", "platform", "github", "full_name", fullName)
+		}
+	case "gitlab":
+		if err := registerGitLabWebhook(ctx, token, baseURL, externalID, fullName, target, secret); err != nil {
+			slog.Error("webhook auto-register: gitlab", "full_name", fullName, "err", err)
+		} else {
+			slog.Info("webhook auto-registered", "platform", "gitlab", "full_name", fullName)
+		}
+	}
+	return nil
+}
+
+// registerGitHubWebhook creates (or updates if drifted) the repo hook pointing at
+// target. Idempotent: an existing hook with the same config.url is reused.
+func registerGitHubWebhook(ctx context.Context, token, fullName, target, secret string) error {
+	owner, name, ok := splitOwnerName(fullName)
+	if !ok {
+		return fmt.Errorf("github: bad full name %q", fullName)
+	}
+	ts := oauth2.StaticTokenSource(&oauth2.Token{AccessToken: token})
+	client := gogithub.NewClient(oauth2.NewClient(ctx, ts))
+
+	desired := &gogithub.Hook{
+		Active: gogithub.Bool(true),
+		Events: ghWebhookEvents,
+		Config: &gogithub.HookConfig{
+			URL:         gogithub.String(target),
+			ContentType: gogithub.String("json"),
+			Secret:      gogithub.String(secret),
+		},
+	}
+
+	opts := &gogithub.ListOptions{PerPage: 100}
+	for {
+		hooks, resp, err := client.Repositories.ListHooks(ctx, owner, name, opts)
+		if err != nil {
+			return fmt.Errorf("github: list hooks: %w", err)
+		}
+		for _, hk := range hooks {
+			if hk.Config == nil || hk.Config.URL == nil {
+				continue
+			}
+			if sameWebhookURL(*hk.Config.URL, target) {
+				// Already registered — refresh events/secret in case they drifted.
+				if _, _, err := client.Repositories.EditHook(ctx, owner, name, hk.GetID(), desired); err != nil {
+					return fmt.Errorf("github: edit hook: %w", err)
+				}
+				return nil
+			}
+		}
+		if resp == nil || resp.NextPage == 0 {
+			break
+		}
+		opts.Page = resp.NextPage
+	}
+
+	if _, _, err := client.Repositories.CreateHook(ctx, owner, name, desired); err != nil {
+		return fmt.Errorf("github: create hook: %w", err)
+	}
+	return nil
+}
+
+// registerGitLabWebhook creates (or updates if drifted) the project hook pointing
+// at target. Idempotent on the hook URL. externalID is the numeric project id.
+func registerGitLabWebhook(ctx context.Context, token, baseURL, externalID, fullName, target, secret string) error {
+	pid := projectPID(externalID, fullName)
+
+	var opts []gogitlab.ClientOptionFunc
+	if baseURL != "" {
+		opts = append(opts, gogitlab.WithBaseURL(baseURL))
+	}
+	client, err := gogitlab.NewOAuthClient(token, opts...)
+	if err != nil {
+		return fmt.Errorf("gitlab: create client: %w", err)
+	}
+
+	t := true
+	addOpts := &gogitlab.AddProjectHookOptions{
+		URL:                 gogitlab.Ptr(target),
+		Token:               gogitlab.Ptr(secret),
+		PushEvents:          &t,
+		MergeRequestsEvents: &t,
+		IssuesEvents:        &t,
+		NoteEvents:          &t,
+		DeploymentEvents:    &t,
+		TagPushEvents:       &t,
+		PipelineEvents:      &t,
+	}
+
+	listOpts := &gogitlab.ListProjectHooksOptions{ListOptions: gogitlab.ListOptions{PerPage: 100}}
+	for {
+		hooks, resp, err := client.Projects.ListProjectHooks(pid, listOpts, gogitlab.WithContext(ctx))
+		if err != nil {
+			return fmt.Errorf("gitlab: list hooks: %w", err)
+		}
+		for _, hk := range hooks {
+			if sameWebhookURL(hk.URL, target) {
+				editOpts := &gogitlab.EditProjectHookOptions{
+					URL:                 gogitlab.Ptr(target),
+					Token:               gogitlab.Ptr(secret),
+					PushEvents:          &t,
+					MergeRequestsEvents: &t,
+					IssuesEvents:        &t,
+					NoteEvents:          &t,
+					DeploymentEvents:    &t,
+					TagPushEvents:       &t,
+					PipelineEvents:      &t,
+				}
+				if _, _, err := client.Projects.EditProjectHook(pid, hk.ID, editOpts, gogitlab.WithContext(ctx)); err != nil {
+					return fmt.Errorf("gitlab: edit hook: %w", err)
+				}
+				return nil
+			}
+		}
+		if resp == nil || resp.NextPage == 0 {
+			break
+		}
+		listOpts.Page = resp.NextPage
+	}
+
+	if _, _, err := client.Projects.AddProjectHook(pid, addOpts, gogitlab.WithContext(ctx)); err != nil {
+		return fmt.Errorf("gitlab: add hook: %w", err)
+	}
+	return nil
+}
+
+// projectPID prefers the numeric GitLab project id; falls back to the
+// owner/name path (which the GitLab client URL-encodes).
+func projectPID(externalID, fullName string) any {
+	if externalID != "" {
+		if n, err := strconv.Atoi(externalID); err == nil {
+			return n
+		}
+		return externalID
+	}
+	return fullName
+}
+
+// sameWebhookURL compares two payload URLs ignoring trailing-slash / case in the
+// scheme+host so a drift-free re-register is detected as a duplicate. The path +
+// org query must match.
+func sameWebhookURL(a, b string) bool {
+	na, errA := normalizeHookURL(a)
+	nb, errB := normalizeHookURL(b)
+	if errA != nil || errB != nil {
+		return strings.EqualFold(strings.TrimRight(a, "/"), strings.TrimRight(b, "/"))
+	}
+	return na == nb
+}
+
+func normalizeHookURL(raw string) (string, error) {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil {
+		return "", err
+	}
+	scheme := strings.ToLower(u.Scheme)
+	host := strings.ToLower(u.Host)
+	path := strings.TrimRight(u.Path, "/")
+	q := u.Query()
+	org := q.Get("org")
+	return fmt.Sprintf("%s://%s%s?org=%s", scheme, host, path, org), nil
+}
+
+// splitOwnerName splits "owner/name" → (owner, name). Returns ok=false if the
+// shape is wrong.
+func splitOwnerName(fullName string) (string, string, bool) {
+	parts := strings.SplitN(fullName, "/", 2)
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		return "", "", false
+	}
+	return parts[0], parts[1], true
 }
