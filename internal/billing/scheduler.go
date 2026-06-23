@@ -67,6 +67,10 @@ type ChargeResult struct {
 	PaystackRef string
 }
 
+// InvoiceEmailHook, when set (by main.go), is called best-effort after a NEW
+// invoice is issued so the PDF is emailed to org owners. nil ⇒ no email.
+var InvoiceEmailHook func(ctx context.Context, orgID, invoiceID string) error
+
 // Charger performs the actual ZAR charge for an outstanding invoice. The EE
 // Paystack service implements this; tests inject a fake. It MUST be idempotent
 // per invoice — a retried/replayed charge for an already-paid invoice should
@@ -227,6 +231,18 @@ func (s *Scheduler) billOrg(ctx context.Context, sub store.SubscriptionLifecycle
 			return fmt.Errorf("generate invoice: %w", err)
 		}
 		invoiceID, usdCents = inv.ID, inv.USDCents
+
+		// Email the freshly-issued invoice (PDF) to the org owners. Best-effort +
+		// async so delivery never blocks or fails the billing cycle. The hook is
+		// set from main.go (billing stays decoupled from invoicedelivery/email).
+		if InvoiceEmailHook != nil {
+			oid, iid := sub.OrgID, invoiceID
+			go func() {
+				if e := InvoiceEmailHook(context.WithoutCancel(ctx), oid, iid); e != nil {
+					slog.Warn("billing: email invoice to owners failed", "org_id", oid, "invoice_id", iid, "err", e)
+				}
+			}()
+		}
 	}
 
 	// $0 invoices (e.g. free tier, zero builders) need no charge: mark paid-equivalent
