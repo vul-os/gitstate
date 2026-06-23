@@ -719,6 +719,8 @@ func syncCommitsFromAPI(ctx context.Context, database *db.DB, provider Provider,
 				AuthorEmail: c.AuthorEmail,
 				Message:     c.Message,
 				CommittedAt: c.CommittedAt,
+				Additions:   c.Additions, // GraphQL history supplies per-commit churn
+				Deletions:   c.Deletions,
 			}); err != nil {
 				return err
 			}

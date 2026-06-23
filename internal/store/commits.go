@@ -44,8 +44,11 @@ func UpsertCommit(ctx context.Context, tx pgx.Tx, c *Commit) error {
 			author_email  = EXCLUDED.author_email,
 			is_agent      = EXCLUDED.is_agent,
 			message       = EXCLUDED.message,
-			additions     = EXCLUDED.additions,
-			deletions     = EXCLUDED.deletions,
+			-- Only overwrite churn when the new source actually has it, so a
+			-- zero-churn re-sync (e.g. a path that didn't compute numstat) never
+			-- wipes good additions/deletions a clone/GraphQL already supplied.
+			additions     = CASE WHEN EXCLUDED.additions <> 0 OR EXCLUDED.deletions <> 0 THEN EXCLUDED.additions ELSE commits.additions END,
+			deletions     = CASE WHEN EXCLUDED.additions <> 0 OR EXCLUDED.deletions <> 0 THEN EXCLUDED.deletions ELSE commits.deletions END,
 			committed_at  = EXCLUDED.committed_at`
 
 	_, err := tx.Exec(ctx, q,

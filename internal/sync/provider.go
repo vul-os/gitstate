@@ -258,16 +258,18 @@ type RemoteDeployment struct {
 }
 
 // RemoteCommit is a normalised commit fetched from a platform's commits API
-// (the list-commits endpoint, NOT a clone). It carries enough to populate the
-// commits table that feeds Analytics, the heatmap, and Contribution. The list
-// endpoint returns no additions/deletions, so churn is left zero here; the deep
-// blame pass (commit_files) supplies per-file churn separately.
+// (NOT a clone). It carries enough to populate the commits table that feeds
+// Analytics, the heatmap, and Contribution. GitHub is fetched via the GraphQL
+// history connection, which DOES return per-commit additions/deletions — so
+// churn is accurate immediately, without waiting for the deep clone pass.
 type RemoteCommit struct {
 	SHA         string
 	AuthorLogin string // platform login, falling back to the git author name
 	AuthorEmail string
 	Message     string
 	CommittedAt time.Time
+	Additions   int
+	Deletions   int
 }
 
 // RemoteRepo is a normalised repository record from a platform.
@@ -1109,56 +1111,130 @@ func commitTime(c *gogithub.RepositoryCommit) time.Time {
 	return time.Time{}
 }
 
+// githubCommitsQuery pages the default-branch history (100/commit) WITH per-commit
+// additions/deletions in ONE GraphQL request per page — so churn is accurate from
+// the fast sync, no clone needed. Default-branch only (matching the old REST path):
+// enumerating every branch would multiply cost for marginal data.
+const githubCommitsQuery = `query($owner:String!,$name:String!,$cur:String,$since:GitTimestamp){
+  rateLimit { cost remaining resetAt }
+  repository(owner:$owner, name:$name) {
+    defaultBranchRef {
+      target {
+        ... on Commit {
+          history(first:100, after:$cur, since:$since) {
+            pageInfo { hasNextPage endCursor }
+            nodes {
+              oid additions deletions committedDate message
+              author { name email user { login } }
+            }
+          }
+        }
+      }
+    }
+  }
+}`
+
+type githubCommitsResponse struct {
+	RateLimit struct {
+		Cost      int    `json:"cost"`
+		Remaining int    `json:"remaining"`
+		ResetAt   string `json:"resetAt"`
+	} `json:"rateLimit"`
+	Repository struct {
+		DefaultBranchRef struct {
+			Target struct {
+				History struct {
+					PageInfo struct {
+						HasNextPage bool   `json:"hasNextPage"`
+						EndCursor   string `json:"endCursor"`
+					} `json:"pageInfo"`
+					Nodes []struct {
+						OID           string    `json:"oid"`
+						Additions     int       `json:"additions"`
+						Deletions     int       `json:"deletions"`
+						CommittedDate time.Time `json:"committedDate"`
+						Message       string    `json:"message"`
+						Author        *struct {
+							Name  string `json:"name"`
+							Email string `json:"email"`
+							User  *struct {
+								Login string `json:"login"`
+							} `json:"user"`
+						} `json:"author"`
+					} `json:"nodes"`
+				} `json:"history"`
+			} `json:"target"`
+		} `json:"defaultBranchRef"`
+	} `json:"repository"`
+}
+
 func (g *githubProvider) ListCommits(ctx context.Context, fullName string, since time.Time) ([]RemoteCommit, error) {
 	owner, name, err := splitFullName(fullName)
 	if err != nil {
 		return nil, err
 	}
-	// HONESTY: GitHub's repository commits API lists the DEFAULT BRANCH only (no
-	// sha param → HEAD of the default branch). We deliberately do NOT enumerate
-	// every branch: that would multiply the call count by the branch count and
-	// blow the rate limit for marginal data. Default-branch history is what the
-	// analytics/heatmap/contribution surfaces need.
-	opts := &gogithub.CommitsListOptions{ListOptions: gogithub.ListOptions{PerPage: 100}}
-	if !since.IsZero() {
-		opts.Since = since
-	}
-	var out []RemoteCommit
+	var (
+		out    []RemoteCommit
+		cursor string
+	)
 	for {
-		commits, resp, err := ghDo(ctx, func() ([]*gogithub.RepositoryCommit, *gogithub.Response, error) {
-			return g.client.Repositories.ListCommits(ctx, owner, name, opts)
-		})
-		if err != nil {
+		vars := map[string]any{"owner": owner, "name": name}
+		if cursor != "" {
+			vars["cur"] = cursor
+		} else {
+			vars["cur"] = nil
+		}
+		if !since.IsZero() {
+			vars["since"] = since.UTC().Format(time.RFC3339)
+		} else {
+			vars["since"] = nil
+		}
+		var data githubCommitsResponse
+		if err := graphQLDo(ctx, g.http, githubGraphQLEndpoint, "bearer", g.token, githubCommitsQuery, vars, &data); err != nil {
 			return nil, fmt.Errorf("github: list commits %s: %w", fullName, err)
 		}
-		for _, c := range commits {
-			if c == nil {
+		hist := data.Repository.DefaultBranchRef.Target.History
+		for _, n := range hist.Nodes {
+			if n.OID == "" {
 				continue
 			}
 			rc := RemoteCommit{
-				SHA:         c.GetSHA(),
-				AuthorLogin: c.GetAuthor().GetLogin(),
-				CommittedAt: commitTime(c),
+				SHA:         n.OID,
+				Message:     n.Message,
+				CommittedAt: n.CommittedDate,
+				Additions:   n.Additions,
+				Deletions:   n.Deletions,
 			}
-			if cm := c.GetCommit(); cm != nil {
-				rc.Message = cm.GetMessage()
-				if a := cm.GetAuthor(); a != nil {
-					rc.AuthorEmail = a.GetEmail()
-					// Fall back to the git author name when there is no linked login.
-					if rc.AuthorLogin == "" {
-						rc.AuthorLogin = a.GetName()
-					}
+			if a := n.Author; a != nil {
+				rc.AuthorEmail = a.Email
+				if a.User != nil {
+					rc.AuthorLogin = a.User.Login
 				}
-			}
-			if rc.SHA == "" {
-				continue
+				if rc.AuthorLogin == "" {
+					rc.AuthorLogin = a.Name // fall back to git author name
+				}
 			}
 			out = append(out, rc)
 		}
-		if resp.NextPage == 0 {
+		// Polite throttle when the GraphQL budget is nearly spent.
+		if data.RateLimit.Remaining > 0 && data.RateLimit.Remaining <= data.RateLimit.Cost {
+			if reset, perr := time.Parse(time.RFC3339, data.RateLimit.ResetAt); perr == nil {
+				wait := time.Until(reset) + time.Second
+				if wait > maxRateWait {
+					wait = maxRateWait
+				}
+				if wait > 0 {
+					slog.Info("github: graphql budget low, waiting for reset", "dur", wait.Round(time.Second))
+					if serr := sleepCtx(ctx, wait); serr != nil {
+						return nil, serr
+					}
+				}
+			}
+		}
+		if !hist.PageInfo.HasNextPage {
 			break
 		}
-		opts.Page = resp.NextPage
+		cursor = hist.PageInfo.EndCursor
 	}
 	return out, nil
 }
