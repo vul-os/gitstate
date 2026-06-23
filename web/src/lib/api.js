@@ -287,6 +287,18 @@ export function connectStartUrl(platform) {
 }
 
 /**
+ * The GitHub App install URL — the production-grade data path. Used instead of the
+ * OAuth connect/start when the server advertises the App is enabled (status.appEnabled).
+ */
+export function githubAppInstallUrl() {
+  const token = getToken()
+  const orgId = getActiveOrgId()
+  if (!token || !orgId) return null
+  const qs = new URLSearchParams({ token, org: orgId })
+  return `${BASE}/api/connect/github/app/install?${qs.toString()}`
+}
+
+/**
  * The authenticated user's profile: {id, email, name, avatarUrl, emailIsPlaceholder}.
  * emailIsPlaceholder is true when login came from an OAuth account whose email was
  * hidden (a `@users.noreply.*` address) — Settings prompts for a real contact email.

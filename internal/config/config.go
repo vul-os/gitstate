@@ -101,6 +101,15 @@ type GitHubConfig struct {
 	OAuthClientID     string `yaml:"oauth_client_id"`
 	OAuthClientSecret string `yaml:"oauth_client_secret"`
 	LoginEnabled      bool   `yaml:"-"` // derived: true iff id+secret set
+
+	// GitHub App credentials — the production-grade data path. Repo data is
+	// fetched with per-installation tokens (org-owned, scoped to installed
+	// repos, per-org rate budget). The private key is a SERVER secret: it is
+	// never stored in the DB and never logged. AppEnabled is derived.
+	AppID         string `yaml:"app_id"`
+	AppPrivateKey string `yaml:"app_private_key"` // RSA PEM
+	AppSlug       string `yaml:"app_slug"`        // for https://github.com/apps/<slug>
+	AppEnabled    bool   `yaml:"-"`               // derived: true iff AppID + AppPrivateKey set
 }
 
 // GitLabConfig holds GitLab OAuth app credentials (login + connect, one app).
@@ -278,6 +287,9 @@ func Load() (*Config, error) {
 	// the heavier repo scopes later.
 	cfg.Git.GitHub.LoginEnabled =
 		cfg.Git.GitHub.OAuthClientID != "" && cfg.Git.GitHub.OAuthClientSecret != ""
+	// GitHub App is enabled when the server has both the App ID and its private key.
+	cfg.Git.GitHub.AppEnabled =
+		cfg.Git.GitHub.AppID != "" && cfg.Git.GitHub.AppPrivateKey != ""
 	cfg.Git.GitLab.LoginEnabled =
 		cfg.Git.GitLab.OAuthClientID != "" && cfg.Git.GitLab.OAuthClientSecret != ""
 
@@ -374,6 +386,17 @@ func overlayEnv(cfg *Config) {
 	// Git
 	setStr(&cfg.Git.GitHub.OAuthClientID, "GITHUB_OAUTH_CLIENT_ID")
 	setStr(&cfg.Git.GitHub.OAuthClientSecret, "GITHUB_OAUTH_CLIENT_SECRET")
+	// GitHub App (server-level secret). The PEM may arrive with literal "\n"
+	// escapes (common when set as a single-line env var / secret) — normalize
+	// those to real newlines so jwt.ParseRSAPrivateKeyFromPEM accepts it.
+	setStr(&cfg.Git.GitHub.AppID, "GITHUB_APP_ID")
+	setStr(&cfg.Git.GitHub.AppSlug, "GITHUB_APP_SLUG")
+	if v := os.Getenv("GITHUB_APP_PRIVATE_KEY"); v != "" {
+		cfg.Git.GitHub.AppPrivateKey = strings.ReplaceAll(v, `\n`, "\n")
+	} else if cfg.Git.GitHub.AppPrivateKey != "" {
+		// Also normalize a value that came from the config file.
+		cfg.Git.GitHub.AppPrivateKey = strings.ReplaceAll(cfg.Git.GitHub.AppPrivateKey, `\n`, "\n")
+	}
 	setStr(&cfg.Git.GitLab.OAuthClientID, "GITLAB_OAUTH_CLIENT_ID")
 	setStr(&cfg.Git.GitLab.OAuthClientSecret, "GITLAB_OAUTH_CLIENT_SECRET")
 

@@ -196,7 +196,7 @@ func (h *syncHandlers) connectRepo(w http.ResponseWriter, r *http.Request) {
 	token := req.Token
 	baseURL := req.BaseURL
 	if token == "" {
-		stored, storedBase, err := resolveStoredToken(r.Context(), h.db, orgID, req.Platform)
+		stored, storedBase, err := resolveStoredToken(r.Context(), h.db, h.cfg, orgID, req.Platform)
 		if err != nil {
 			if errors.Is(err, store.ErrNotFound) {
 				http.Error(w, `{"error":"no token: connect this platform first or supply a token"}`, http.StatusBadRequest)
@@ -307,7 +307,7 @@ func (h *syncHandlers) triggerSync(w http.ResponseWriter, r *http.Request) {
 	token := body.Token
 	baseURL := body.BaseURL
 	if token == "" {
-		stored, storedBase, err := resolveStoredToken(r.Context(), h.db, orgID, repo.Platform)
+		stored, storedBase, err := resolveStoredToken(r.Context(), h.db, h.cfg, orgID, repo.Platform)
 		if err != nil {
 			slog.Warn("sync trigger: no token in body and no stored connection; sync may fail",
 				"org_id", orgID, "repo_id", repoID, "platform", repo.Platform)
@@ -360,7 +360,7 @@ func (h *syncHandlers) syncAll(w http.ResponseWriter, r *http.Request) {
 		for _, repo := range repos {
 			tb, cached := tokenCache[repo.Platform]
 			if !cached {
-				tok, base, err := resolveStoredToken(bgCtx, h.db, orgID, repo.Platform)
+				tok, base, err := resolveStoredToken(bgCtx, h.db, h.cfg, orgID, repo.Platform)
 				if err != nil {
 					slog.Warn("sync-all: no stored token", "platform", repo.Platform, "err", err)
 					tokenCache[repo.Platform] = [2]string{} // cache the miss so we don't retry per repo
@@ -423,7 +423,7 @@ func (h *syncHandlers) importRepos(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Need a stored connection token (the picker only works once connected).
-	token, baseURL, err := resolveStoredToken(r.Context(), h.db, orgID, req.Platform)
+	token, baseURL, err := resolveStoredToken(r.Context(), h.db, h.cfg, orgID, req.Platform)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			http.Error(w, `{"error":"connect this platform first"}`, http.StatusBadRequest)
@@ -642,7 +642,7 @@ func (h *syncHandlers) patchIssue(w http.ResponseWriter, r *http.Request) {
 		writeBackToken := req.Token
 		writeBackBase := req.BaseURL
 		if err == nil && writeBackToken == "" {
-			if stored, storedBase, terr := resolveStoredToken(r.Context(), h.db, orgID, repo.Platform); terr == nil {
+			if stored, storedBase, terr := resolveStoredToken(r.Context(), h.db, h.cfg, orgID, repo.Platform); terr == nil {
 				writeBackToken = stored
 				if writeBackBase == "" {
 					writeBackBase = storedBase

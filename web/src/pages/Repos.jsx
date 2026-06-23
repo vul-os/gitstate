@@ -10,7 +10,7 @@ import {
 } from 'lucide-react'
 import { useRepos } from '../lib/useRepos.js'
 import {
-  connectStartUrl, fetchConnectStatus, fetchConnectRepos, disconnectPlatform, syncAllRepos, importRepos,
+  connectStartUrl, githubAppInstallUrl, fetchConnectStatus, fetchConnectRepos, disconnectPlatform, syncAllRepos, importRepos,
 } from '../lib/api.js'
 import { Card, Badge, Button, StatCard } from '../components/ui/index.js'
 import { Reveal, RevealList } from '../components/Reveal.jsx'
@@ -280,13 +280,18 @@ function ConnectSection({ onImport, onImportAll, onUsePat }) {
     return () => { cancelled = true }
   }, [])
 
-  const handleConnect = useCallback((platform) => {
-    const url = connectStartUrl(platform)
+  const handleConnect = useCallback((s) => {
+    const platform = typeof s === 'string' ? s : s.platform
+    const appEnabled = typeof s === 'object' && s.appEnabled
+    // GitHub App is the production-grade data path: when the server advertises it
+    // (status.appEnabled), "Connect" goes to the App install URL. Otherwise fall
+    // back to the OAuth connect/start flow.
+    const url = (platform === 'github' && appEnabled) ? githubAppInstallUrl() : connectStartUrl(platform)
     if (!url) {
       setError('Sign in and select an org before connecting.')
       return
     }
-    window.location.href = url // top-level nav → provider consent → callback → /repos
+    window.location.href = url // top-level nav → provider consent/install → callback → /repos
   }, [])
 
   const handleDisconnect = useCallback(async (platform) => {
@@ -417,7 +422,7 @@ function ConnectSection({ onImport, onImportAll, onUsePat }) {
                       </button>
                     </div>
                   ) : (
-                    <Button variant="outline" onClick={() => handleConnect(s.platform)} leftIcon={<Link2 size={13} />}>
+                    <Button variant="outline" onClick={() => handleConnect(s)} leftIcon={<Link2 size={13} />}>
                       Connect {meta.label}
                     </Button>
                   )}

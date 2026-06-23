@@ -33,8 +33,15 @@ type PlatformConnection struct {
 	Scopes           string
 	ExpiresAt        *time.Time
 	BaseURL          string
-	CreatedAt        time.Time
-	UpdatedAt        time.Time
+	// ConnectionType is how the token is sourced: "oauth" (the user's stored
+	// access token) or "github_app" (a per-installation token minted on demand
+	// from the App key + InstallationID). Defaults to "oauth".
+	ConnectionType string
+	// InstallationID is the GitHub App installation id (only set when
+	// ConnectionType == "github_app"); empty for oauth connections.
+	InstallationID string
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
 }
 
 // UpsertConnectionInput is the payload for UpsertConnection.
@@ -43,11 +50,16 @@ type UpsertConnectionInput struct {
 	Platform         string
 	ConnectedBy      string // user id; may be "" → stored NULL
 	ExternalLogin    string
-	TokenEncrypted   []byte // required, AES-GCM ciphertext
+	TokenEncrypted   []byte // AES-GCM ciphertext; required for oauth, may be empty for github_app
 	RefreshEncrypted []byte // optional
 	Scopes           string
 	ExpiresAt        *time.Time
 	BaseURL          string
+	// ConnectionType is "oauth" (default) or "github_app". When empty it is
+	// stored as "oauth" so existing callers are unchanged.
+	ConnectionType string
+	// InstallationID is the GitHub App installation id (github_app connections only).
+	InstallationID string
 }
 
 // GetConnection returns the org's connection for a platform, or ErrNotFound.
@@ -55,7 +67,8 @@ func GetConnection(ctx context.Context, tx pgx.Tx, orgID, platform string) (*Pla
 	const q = `
 		SELECT id, org_id, platform, COALESCE(connected_by::text,''), COALESCE(external_login,''),
 		       token_encrypted, refresh_encrypted, COALESCE(scopes,''), expires_at,
-		       COALESCE(base_url,''), created_at, updated_at
+		       COALESCE(base_url,''), COALESCE(connection_type,'oauth'), COALESCE(installation_id,''),
+		       created_at, updated_at
 		FROM platform_connections
 		WHERE org_id = $1 AND platform = $2`
 
@@ -63,7 +76,7 @@ func GetConnection(ctx context.Context, tx pgx.Tx, orgID, platform string) (*Pla
 	err := tx.QueryRow(ctx, q, orgID, platform).Scan(
 		&c.ID, &c.OrgID, &c.Platform, &c.ConnectedBy, &c.ExternalLogin,
 		&c.TokenEncrypted, &c.RefreshEncrypted, &c.Scopes, &c.ExpiresAt,
-		&c.BaseURL, &c.CreatedAt, &c.UpdatedAt,
+		&c.BaseURL, &c.ConnectionType, &c.InstallationID, &c.CreatedAt, &c.UpdatedAt,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
@@ -80,7 +93,8 @@ func ListConnections(ctx context.Context, tx pgx.Tx, orgID string) ([]PlatformCo
 	const q = `
 		SELECT id, org_id, platform, COALESCE(connected_by::text,''), COALESCE(external_login,''),
 		       token_encrypted, refresh_encrypted, COALESCE(scopes,''), expires_at,
-		       COALESCE(base_url,''), created_at, updated_at
+		       COALESCE(base_url,''), COALESCE(connection_type,'oauth'), COALESCE(installation_id,''),
+		       created_at, updated_at
 		FROM platform_connections
 		WHERE org_id = $1
 		ORDER BY platform`
@@ -97,7 +111,7 @@ func ListConnections(ctx context.Context, tx pgx.Tx, orgID string) ([]PlatformCo
 		if err := rows.Scan(
 			&c.ID, &c.OrgID, &c.Platform, &c.ConnectedBy, &c.ExternalLogin,
 			&c.TokenEncrypted, &c.RefreshEncrypted, &c.Scopes, &c.ExpiresAt,
-			&c.BaseURL, &c.CreatedAt, &c.UpdatedAt,
+			&c.BaseURL, &c.ConnectionType, &c.InstallationID, &c.CreatedAt, &c.UpdatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("store: scan connection: %w", err)
 		}
@@ -109,7 +123,14 @@ func ListConnections(ctx context.Context, tx pgx.Tx, orgID string) ([]PlatformCo
 // UpsertConnection inserts or updates the org's connection for a platform.
 // On conflict (org_id, platform) it refreshes the token + account metadata.
 func UpsertConnection(ctx context.Context, tx pgx.Tx, in UpsertConnectionInput) (*PlatformConnection, error) {
-	if len(in.TokenEncrypted) == 0 {
+	connType := in.ConnectionType
+	if connType == "" {
+		connType = "oauth"
+	}
+	// github_app connections legitimately store NO token at install time (the
+	// 1-hour installation token is minted on demand and cached back later), so the
+	// token-required guard applies only to oauth.
+	if connType != "github_app" && len(in.TokenEncrypted) == 0 {
 		return nil, fmt.Errorf("store: upsert connection: token required")
 	}
 
@@ -121,8 +142,9 @@ func UpsertConnection(ctx context.Context, tx pgx.Tx, in UpsertConnectionInput) 
 	const q = `
 		INSERT INTO platform_connections
 			(org_id, platform, connected_by, external_login, token_encrypted,
-			 refresh_encrypted, scopes, expires_at, base_url, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, now())
+			 refresh_encrypted, scopes, expires_at, base_url, connection_type,
+			 installation_id, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, now())
 		ON CONFLICT (org_id, platform) DO UPDATE SET
 			connected_by      = EXCLUDED.connected_by,
 			external_login    = EXCLUDED.external_login,
@@ -131,19 +153,27 @@ func UpsertConnection(ctx context.Context, tx pgx.Tx, in UpsertConnectionInput) 
 			scopes            = EXCLUDED.scopes,
 			expires_at        = EXCLUDED.expires_at,
 			base_url          = EXCLUDED.base_url,
+			connection_type   = EXCLUDED.connection_type,
+			installation_id   = EXCLUDED.installation_id,
 			updated_at        = now()
 		RETURNING id, org_id, platform, COALESCE(connected_by::text,''), COALESCE(external_login,''),
 		          token_encrypted, refresh_encrypted, COALESCE(scopes,''), expires_at,
-		          COALESCE(base_url,''), created_at, updated_at`
+		          COALESCE(base_url,''), COALESCE(connection_type,'oauth'), COALESCE(installation_id,''),
+		          created_at, updated_at`
+
+	var instID any
+	if in.InstallationID != "" {
+		instID = in.InstallationID
+	}
 
 	var c PlatformConnection
 	err := tx.QueryRow(ctx, q,
 		in.OrgID, in.Platform, connectedBy, in.ExternalLogin, in.TokenEncrypted,
-		in.RefreshEncrypted, in.Scopes, in.ExpiresAt, in.BaseURL,
+		in.RefreshEncrypted, in.Scopes, in.ExpiresAt, in.BaseURL, connType, instID,
 	).Scan(
 		&c.ID, &c.OrgID, &c.Platform, &c.ConnectedBy, &c.ExternalLogin,
 		&c.TokenEncrypted, &c.RefreshEncrypted, &c.Scopes, &c.ExpiresAt,
-		&c.BaseURL, &c.CreatedAt, &c.UpdatedAt,
+		&c.BaseURL, &c.ConnectionType, &c.InstallationID, &c.CreatedAt, &c.UpdatedAt,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("store: upsert connection: %w", err)
