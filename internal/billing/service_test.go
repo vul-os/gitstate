@@ -96,7 +96,7 @@ func TestGenerateInvoice_SeatsExcludeStakeholders(t *testing.T) {
 	orgID, cleanup := seedOrg(t, ctx, database)
 	defer cleanup()
 
-	plan := planFor(t, ctx, svc, "team")
+	plan := planFor(t, ctx, svc, "starter")
 
 	// 3 builders (owner/admin/member) + 2 stakeholders (free).
 	addMember(t, ctx, database, orgID, "owner", "Alice")
@@ -105,9 +105,9 @@ func TestGenerateInvoice_SeatsExcludeStakeholders(t *testing.T) {
 	addMember(t, ctx, database, orgID, "stakeholder", "Dora")
 	addMember(t, ctx, database, orgID, "stakeholder", "Eve")
 
-	// Subscribe to team.
+	// Subscribe to starter.
 	if err := database.WithOrg(ctx, orgID, func(tx pgx.Tx) error {
-		return store.UpsertSubscription(ctx, tx, orgID, "team", "active", nil, "")
+		return store.UpsertSubscription(ctx, tx, orgID, "starter", "active", nil, "")
 	}); err != nil {
 		t.Fatalf("upsert subscription: %v", err)
 	}
@@ -160,14 +160,14 @@ func TestGenerateInvoice_LLMAllowanceAndOverage(t *testing.T) {
 	orgID, cleanup := seedOrg(t, ctx, database)
 	defer cleanup()
 
-	plan := planFor(t, ctx, svc, "team")
+	plan := planFor(t, ctx, svc, "starter")
 
 	addMember(t, ctx, database, orgID, "owner", "Alice")
 	addMember(t, ctx, database, orgID, "member", "Bob")
 	numBuilders := 2
 
 	if err := database.WithOrg(ctx, orgID, func(tx pgx.Tx) error {
-		return store.UpsertSubscription(ctx, tx, orgID, "team", "active", nil, "")
+		return store.UpsertSubscription(ctx, tx, orgID, "starter", "active", nil, "")
 	}); err != nil {
 		t.Fatalf("upsert subscription: %v", err)
 	}
@@ -213,7 +213,7 @@ func TestGenerateInvoice_LLMAllowanceAndOverage(t *testing.T) {
 		t.Fatalf("no managed-LLM overage line found; lines=%d", len(lines))
 	}
 
-	// overage = usage − allowance; billed = overage × markup (1.00 for team).
+	// overage = usage − allowance; billed = overage × markup.
 	overageCents := int((usageUSD - allowanceUSD) * 100)
 	wantBilled := int(float64(overageCents) * plan.OverageMarkup)
 	if llmLine.USDCents != wantBilled {
@@ -238,12 +238,12 @@ func TestGenerateInvoice_LLMUnderAllowance_NoOverageLine(t *testing.T) {
 	orgID, cleanup := seedOrg(t, ctx, database)
 	defer cleanup()
 
-	plan := planFor(t, ctx, svc, "team")
+	plan := planFor(t, ctx, svc, "starter")
 	addMember(t, ctx, database, orgID, "owner", "Alice")
 	numBuilders := 1
 
 	if err := database.WithOrg(ctx, orgID, func(tx pgx.Tx) error {
-		return store.UpsertSubscription(ctx, tx, orgID, "team", "active", nil, "")
+		return store.UpsertSubscription(ctx, tx, orgID, "starter", "active", nil, "")
 	}); err != nil {
 		t.Fatalf("upsert subscription: %v", err)
 	}
@@ -298,11 +298,11 @@ func TestGenerateInvoice_SubCentUsageRounds(t *testing.T) {
 	orgID, cleanup := seedOrg(t, ctx, database)
 	defer cleanup()
 
-	planFor(t, ctx, svc, "team")
+	planFor(t, ctx, svc, "starter")
 	addMember(t, ctx, database, orgID, "owner", "Alice")
 
 	if err := database.WithOrg(ctx, orgID, func(tx pgx.Tx) error {
-		return store.UpsertSubscription(ctx, tx, orgID, "team", "active", nil, "")
+		return store.UpsertSubscription(ctx, tx, orgID, "starter", "active", nil, "")
 	}); err != nil {
 		t.Fatalf("upsert subscription: %v", err)
 	}
@@ -355,7 +355,7 @@ func TestGenerateInvoice_EstimatedVsProven(t *testing.T) {
 	orgID, cleanup := seedOrg(t, ctx, database)
 	defer cleanup()
 
-	planFor(t, ctx, svc, "team")
+	planFor(t, ctx, svc, "starter")
 
 	// Builder with git activity. ListMembers keys evidence lookup by member NAME,
 	// and commitsByAuthor is keyed by commit author_login — so to get a "proven"
@@ -366,7 +366,7 @@ func TestGenerateInvoice_EstimatedVsProven(t *testing.T) {
 	addMember(t, ctx, database, orgID, "member", "Idle Two")
 
 	if err := database.WithOrg(ctx, orgID, func(tx pgx.Tx) error {
-		return store.UpsertSubscription(ctx, tx, orgID, "team", "active", nil, "")
+		return store.UpsertSubscription(ctx, tx, orgID, "starter", "active", nil, "")
 	}); err != nil {
 		t.Fatalf("upsert subscription: %v", err)
 	}
@@ -446,13 +446,13 @@ func TestGenerateInvoice_TotalEqualsLineSum(t *testing.T) {
 	orgID, cleanup := seedOrg(t, ctx, database)
 	defer cleanup()
 
-	plan := planFor(t, ctx, svc, "business")
+	plan := planFor(t, ctx, svc, "pro")
 	addMember(t, ctx, database, orgID, "owner", "A")
 	addMember(t, ctx, database, orgID, "member", "B")
 	addMember(t, ctx, database, orgID, "stakeholder", "S")
 
 	if err := database.WithOrg(ctx, orgID, func(tx pgx.Tx) error {
-		return store.UpsertSubscription(ctx, tx, orgID, "business", "active", nil, "")
+		return store.UpsertSubscription(ctx, tx, orgID, "pro", "active", nil, "")
 	}); err != nil {
 		t.Fatalf("upsert subscription: %v", err)
 	}

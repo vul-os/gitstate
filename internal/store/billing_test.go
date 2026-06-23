@@ -122,14 +122,14 @@ func TestMRRAggregate_ExcludesStakeholders(t *testing.T) {
 	makeMember(t, ctx, pool, orgID, "stakeholder")
 
 	withOrgCtx(t, ctx, pool, orgID, func(tx pgx.Tx) {
-		if err := UpsertSubscription(ctx, tx, orgID, "team", "active", nil, ""); err != nil {
+		if err := UpsertSubscription(ctx, tx, orgID, "starter", "active", nil, ""); err != nil {
 			t.Fatalf("upsert sub: %v", err)
 		}
 	})
 
 	var perBuilder int
-	if err := pool.QueryRow(ctx, `SELECT per_builder_cents FROM plans WHERE key='team'`).Scan(&perBuilder); err != nil {
-		t.Fatalf("read team plan: %v", err)
+	if err := pool.QueryRow(ctx, `SELECT per_builder_cents FROM plans WHERE key='starter'`).Scan(&perBuilder); err != nil {
+		t.Fatalf("read starter plan: %v", err)
 	}
 
 	var mrr int
@@ -154,7 +154,7 @@ func TestMRRAggregate_CanceledSubscriptionNotCounted(t *testing.T) {
 	makeMember(t, ctx, pool, orgID, "member")
 
 	withOrgCtx(t, ctx, pool, orgID, func(tx pgx.Tx) {
-		if err := UpsertSubscription(ctx, tx, orgID, "team", "canceled", nil, ""); err != nil {
+		if err := UpsertSubscription(ctx, tx, orgID, "starter", "canceled", nil, ""); err != nil {
 			t.Fatalf("upsert sub: %v", err)
 		}
 	})
@@ -197,7 +197,7 @@ func TestSubscription_UpsertRoundTrip(t *testing.T) {
 
 	periodEnd := time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)
 	withOrgCtx(t, ctx, pool, orgID, func(tx pgx.Tx) {
-		if err := UpsertSubscription(ctx, tx, orgID, "business", "active", &periodEnd, "psub_123"); err != nil {
+		if err := UpsertSubscription(ctx, tx, orgID, "pro", "active", &periodEnd, "psub_123"); err != nil {
 			t.Fatalf("upsert: %v", err)
 		}
 	})
@@ -206,8 +206,8 @@ func TestSubscription_UpsertRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetSubscription: %v", err)
 	}
-	if sub.PlanKey != "business" {
-		t.Errorf("plan = %q, want business", sub.PlanKey)
+	if sub.PlanKey != "pro" {
+		t.Errorf("plan = %q, want pro", sub.PlanKey)
 	}
 	if sub.Status != "active" {
 		t.Errorf("status = %q, want active", sub.Status)
@@ -221,7 +221,7 @@ func TestSubscription_UpsertRoundTrip(t *testing.T) {
 
 	// Upsert again (ON CONFLICT path) — change plan, clear period.
 	withOrgCtx(t, ctx, pool, orgID, func(tx pgx.Tx) {
-		if err := UpsertSubscription(ctx, tx, orgID, "team", "past_due", nil, ""); err != nil {
+		if err := UpsertSubscription(ctx, tx, orgID, "starter", "past_due", nil, ""); err != nil {
 			t.Fatalf("re-upsert: %v", err)
 		}
 	})
@@ -229,8 +229,8 @@ func TestSubscription_UpsertRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetSubscription #2: %v", err)
 	}
-	if sub2.PlanKey != "team" || sub2.Status != "past_due" {
-		t.Errorf("after re-upsert: plan=%q status=%q, want team/past_due", sub2.PlanKey, sub2.Status)
+	if sub2.PlanKey != "starter" || sub2.Status != "past_due" {
+		t.Errorf("after re-upsert: plan=%q status=%q, want starter/past_due", sub2.PlanKey, sub2.Status)
 	}
 	if sub2.CurrentPeriodEnd != nil {
 		t.Errorf("free/cleared period end = %v, want nil", sub2.CurrentPeriodEnd)
