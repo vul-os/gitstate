@@ -315,6 +315,7 @@ var agentNamePatterns = []string{
 	"gitstate-agent",
 	"github-actions",
 	"dependabot",
+	"renovate",
 }
 
 func isAgentCommit(c CommitRecord) bool {
@@ -326,6 +327,17 @@ func isAgentCommit(c CommitRecord) bool {
 		return true
 	}
 	if strings.HasSuffix(emailLower, "[bot]@users.noreply.github.com") {
+		return true
+	}
+	// The author's OWN name/email matches a known agent pattern — this is the fix
+	// for an agent that commits AS the author (not just via a Co-Authored-By
+	// trailer): "claude" <noreply@anthropic.com>, dependabot, copilot, etc.
+	for _, pat := range agentNamePatterns {
+		if strings.Contains(nameLower, pat) || strings.Contains(emailLower, pat) {
+			return true
+		}
+	}
+	if strings.HasSuffix(emailLower, "@anthropic.com") {
 		return true
 	}
 
