@@ -12,6 +12,7 @@ package api
 import (
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/exo/gitstate/internal/analytics"
@@ -64,10 +65,19 @@ type analyticsHandlers struct {
 // window to the last 9 months. Returns false (after writing a 400) on bad input.
 func (h *analyticsHandlers) parseFilter(w http.ResponseWriter, r *http.Request) (analytics.Filter, bool) {
 	q := r.URL.Query()
+	// repo filters on repos.id (a UUID). Older clients sent a full_name here, which
+	// Postgres rejects when bound to a uuid column (22P02) and 500s every panel.
+	// Guard: ignore a non-UUID repo value rather than crash (treat as "all repos").
+	repoID := q.Get("repo")
+	// A repo UUID is 36 chars with no slash; a full_name ("owner/name") has a slash.
+	// Ignore anything that isn't UUID-shaped so a stray value can't 22P02 the panels.
+	if repoID != "" && (len(repoID) != 36 || strings.Contains(repoID, "/")) {
+		repoID = ""
+	}
 	f, err := analytics.ParseFilter(analytics.FilterInput{
 		From:   q.Get("from"),
 		To:     q.Get("to"),
-		RepoID: q.Get("repo"),
+		RepoID: repoID,
 		Author: q.Get("author"),
 	}, time.Now().UTC())
 	if err != nil {

@@ -168,7 +168,7 @@ function FiltersBar({ filters, setFilters, preset, setPreset, contributors, repo
         >
           <option value="">All repos</option>
           {repos.map(r => (
-            <option key={r.repoId || r.fullName} value={r.fullName}>{r.fullName}</option>
+            <option key={r.repoId || r.fullName} value={r.repoId}>{r.fullName}</option>
           ))}
         </FilterSelect>
 

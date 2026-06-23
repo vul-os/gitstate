@@ -59,8 +59,13 @@ func analyzeBlame(ctx context.Context, database *db.DB, orgID string, repo store
 	cloneCtx, cancel := context.WithTimeout(ctx, 10*time.Minute)
 	defer cancel()
 	var stderr bytes.Buffer
-	cmd := exec.CommandContext(cloneCtx, "git", "clone",
-		"--filter=blob:none", "--no-tags", "--no-single-branch",
+	// gc.auto=0: a big repo triggers background "auto packing" mid-clone/blame which,
+	// under several parallel imports, gets OOM-killed ("signal: killed") — taking the
+	// clone (and its commit churn) down with it. Disabling auto-gc keeps the clone
+	// lean and reliable; we never reuse the temp clone so packing buys us nothing.
+	cmd := exec.CommandContext(cloneCtx, "git",
+		"-c", "gc.auto=0", "-c", "core.fsmonitor=false",
+		"clone", "--filter=blob:none", "--no-tags", "--no-single-branch",
 		injectCloneToken(repo.CloneURL, token), tmp)
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {

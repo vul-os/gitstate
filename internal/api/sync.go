@@ -493,7 +493,7 @@ func (h *syncHandlers) importRepos(w http.ResponseWriter, r *http.Request) {
 }
 
 // importSyncWorkers bounds how many repos sync concurrently during a bulk import.
-const importSyncWorkers = 5
+const importSyncWorkers = 3
 
 // syncReposConcurrently runs SyncRepo over repos with a fixed worker pool, so a
 // large import finishes in roughly total/workers time instead of the sum of every
