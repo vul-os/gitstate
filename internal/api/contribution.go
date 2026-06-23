@@ -12,6 +12,7 @@
 package api
 
 import (
+	"context"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -20,8 +21,11 @@ import (
 	"github.com/exo/gitstate/internal/config"
 	"github.com/exo/gitstate/internal/contribution"
 	"github.com/exo/gitstate/internal/db"
+	"github.com/exo/gitstate/internal/llm"
+	"github.com/exo/gitstate/internal/metrics"
 	"github.com/exo/gitstate/internal/middleware"
 	"github.com/exo/gitstate/internal/store"
+	"github.com/jackc/pgx/v5"
 )
 
 // RegisterContributionRoutes wires the contribution endpoints onto mux.
@@ -36,7 +40,13 @@ import (
 // Default period = last 90 days when from/to are omitted.
 func RegisterContributionRoutes(mux *http.ServeMux, database *db.DB, cfg *config.Config) {
 	svc := contribution.New(database)
-	h := &contributionHandlers{db: database, svc: svc}
+	// The metrics service backfills the `involvement` table (the source of the
+	// shipped / review / ownership dimensions). On synced data nothing else
+	// computes involvement across history, so the contribution window does it
+	// on-demand (idempotent upsert) before scoring — see ensureInvolvement.
+	// llm is nil here: ComputeInvolvement never touches the LLM.
+	metricsSvc := metrics.New(database, llm.New(cfg))
+	h := &contributionHandlers{db: database, svc: svc, metrics: metricsSvc}
 
 	requireAuth := middleware.RequireAuth(cfg.Auth.JWTSigningKey)
 	orgScope := middleware.OrgScope(database.Pool())
@@ -59,8 +69,73 @@ func RegisterContributionRoutes(mux *http.ServeMux, database *db.DB, cfg *config
 }
 
 type contributionHandlers struct {
-	db  *db.DB
-	svc *contribution.Service
+	db      *db.DB
+	svc     *contribution.Service
+	metrics *metrics.Service
+}
+
+// maxInvolvementMonths caps the per-request month backfill loop. Seven years of
+// history (the real data starts 2019) is ~85 months; 120 leaves generous head-
+// room while preventing a pathological window (e.g. a bad from=year-0001) from
+// computing thousands of months in one request.
+const maxInvolvementMonths = 120
+
+// ensureInvolvement computes per-month involvement texture for every calendar
+// month the [from,to] window touches, so the shipped / review / ownership
+// dimensions are populated for synced data (which otherwise only has the ~2
+// months produced on-demand by the Involvement page).
+//
+// ComputeInvolvement is idempotent (ReplaceUserInvolvement upserts and self-
+// heals), so re-running a month is cheap and safe. Failures are logged and
+// swallowed: a stale/partial month must never 500 the whole report — the
+// reporting layer simply reads whatever is stored.
+func (h *contributionHandlers) ensureInvolvement(ctx context.Context, orgID string, p contribution.Period) {
+	if h.metrics == nil {
+		return
+	}
+	// Clamp the loop START to the org's earliest activity within the window. An
+	// "All time" window has from≈2000-01, but real git history starts much later
+	// (e.g. 2019). Without this clamp the 120-month budget is spent on empty
+	// pre-history months and never reaches the actual data. We anchor on the
+	// earliest commit/PR so the budget covers REAL months.
+	from := p.From
+	if earliest, ok := h.earliestActivity(ctx, orgID, p.From, p.To); ok && earliest.After(from) {
+		from = earliest
+	}
+
+	// First-of-month for the (clamped) window start through the window end.
+	m := time.Date(from.Year(), from.Month(), 1, 0, 0, 0, 0, time.UTC)
+	endMonth := time.Date(p.To.Year(), p.To.Month(), 1, 0, 0, 0, 0, time.UTC)
+	for i := 0; !m.After(endMonth) && i < maxInvolvementMonths; i++ {
+		if err := h.metrics.ComputeInvolvement(ctx, orgID, m); err != nil {
+			slog.Warn("contribution: compute involvement failed (using stored data)",
+				"org_id", orgID, "period_start", m.Format("2006-01-02"), "err", err)
+		}
+		m = m.AddDate(0, 1, 0)
+	}
+}
+
+// earliestActivity returns the org's earliest commit/PR timestamp within [from,to],
+// used to anchor the involvement backfill loop on real history (so the all-time
+// floor doesn't waste the month budget on empty pre-history). ok=false when there
+// is no activity (then the caller keeps the original window start).
+func (h *contributionHandlers) earliestActivity(ctx context.Context, orgID string, from, to time.Time) (time.Time, bool) {
+	var earliest *time.Time
+	err := h.db.WithOrg(ctx, orgID, func(tx pgx.Tx) error {
+		const q = `
+			SELECT min(t) FROM (
+				SELECT min(c.committed_at) AS t FROM commits c
+				WHERE c.org_id = $1 AND c.committed_at >= $2 AND c.committed_at < $3
+				UNION ALL
+				SELECT min(p.merged_at) AS t FROM pull_requests p
+				WHERE p.org_id = $1 AND p.merged_at >= $2 AND p.merged_at < $3
+			) s`
+		return tx.QueryRow(ctx, q, orgID, from, to).Scan(&earliest)
+	})
+	if err != nil || earliest == nil {
+		return time.Time{}, false
+	}
+	return earliest.UTC(), true
 }
 
 // parsePeriod pulls ?from=&to= (RFC3339 or YYYY-MM-DD), defaulting to last 90d.
@@ -218,6 +293,9 @@ func (h *contributionHandlers) report(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	// Backfill involvement for the window so shipped/review/ownership populate on
+	// synced data before scoring (idempotent; failures are non-fatal).
+	h.ensureInvolvement(r.Context(), orgID, p)
 	rep, err := h.svc.Compute(r.Context(), orgID, p)
 	if err != nil {
 		slog.Error("contribution report", "err", err)
@@ -251,6 +329,9 @@ func (h *contributionHandlers) member(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	// Same window-backfill as the roster so the member's dimensions/evidence are
+	// scored against fresh involvement (idempotent; non-fatal on failure).
+	h.ensureInvolvement(r.Context(), orgID, p)
 	detail, found, err := h.svc.ComputeMember(r.Context(), orgID, userID, p)
 	if err != nil {
 		slog.Error("contribution member", "err", err)

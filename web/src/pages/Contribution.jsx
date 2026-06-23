@@ -40,10 +40,15 @@ function isoDaysAgo(days) {
   d.setDate(d.getDate() - days)
   return d.toISOString().slice(0, 10)
 }
+// All-time floor — matches the analytics backend's allTimeFloor (2000-01-01) so
+// "All time" spans the org's full history (real data starts ~2019). The backend
+// caps the per-request involvement backfill at 120 months, so this is safe.
+const ALL_TIME_FROM = '2000-01-01'
 const PRESETS = [
   { key: '30d', label: '30 days', days: 30 },
   { key: '90d', label: '90 days', days: 90 },
   { key: '365d', label: '12 months', days: 365 },
+  { key: 'all', label: 'All time', days: null, allTime: true },
   { key: 'custom', label: 'Custom', days: null },
 ]
 
@@ -62,7 +67,8 @@ const dateInputCls =
 function PeriodSelector({ preset, setPreset, range, setRange }) {
   function applyPreset(p) {
     setPreset(p.key)
-    if (p.days != null) setRange({ from: isoDaysAgo(p.days), to: todayISO() })
+    if (p.allTime) setRange({ from: ALL_TIME_FROM, to: todayISO() })
+    else if (p.days != null) setRange({ from: isoDaysAgo(p.days), to: todayISO() })
   }
   return (
     <div className="flex flex-wrap items-center gap-3">

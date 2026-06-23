@@ -138,13 +138,18 @@ func (f AnalyticsFilter) Heatmap(ctx context.Context, tx pgx.Tx) ([]DayCount, er
 
 // ── CommitsOverTime ─────────────────────────────────────────────────────────
 
-// CommitsOverTime returns commit counts bucketed by day or week over the range,
-// ordered ascending. bucket must be "day" or "week"; any other value defaults to
-// "day". The bucket date is the start of the period (date_trunc).
+// CommitsOverTime returns commit counts bucketed by day, week, or month over the
+// range, ordered ascending. bucket must be "day", "week", or "month"; any other
+// value defaults to "day". The bucket date is the start of the period
+// (date_trunc). Month bucketing keeps very wide ("All time") ranges renderable
+// without thousands of daily points.
 func (f AnalyticsFilter) CommitsOverTime(ctx context.Context, tx pgx.Tx, bucket string) ([]DayCount, error) {
 	trunc := "day"
-	if bucket == "week" {
+	switch bucket {
+	case "week":
 		trunc = "week"
+	case "month":
+		trunc = "month"
 	}
 	where, args, _ := f.whereClause(1)
 	q := fmt.Sprintf(`

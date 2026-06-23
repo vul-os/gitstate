@@ -124,12 +124,18 @@ func parseDate(s string) (time.Time, error) {
 }
 
 // NormalizeBucket maps an arbitrary bucket string to a supported value.
-// Anything other than "week" collapses to "day".
+// Supported buckets are "day", "week", and "month"; anything else collapses to
+// "day". "month" lets the UI render multi-year ranges (e.g. "All time") without
+// thousands of daily points.
 func NormalizeBucket(bucket string) string {
-	if strings.EqualFold(strings.TrimSpace(bucket), "week") {
+	switch strings.ToLower(strings.TrimSpace(bucket)) {
+	case "week":
 		return "week"
+	case "month":
+		return "month"
+	default:
+		return "day"
 	}
-	return "day"
 }
 
 // toStoreFilter projects a service Filter onto the store's AnalyticsFilter.

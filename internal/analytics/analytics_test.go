@@ -67,8 +67,10 @@ func TestNormalizeBucket(t *testing.T) {
 		{"week", "week"},
 		{"Week", "week"},
 		{" WEEK ", "week"},
-		{"month", "day"}, // unsupported → day
-		{"", "day"},      // empty → day
+		{"month", "month"}, // month bucketing for wide ranges
+		{"Month", "month"},
+		{" MONTH ", "month"},
+		{"", "day"}, // empty → day
 		{"garbage", "day"},
 	}
 	for _, tt := range tests {

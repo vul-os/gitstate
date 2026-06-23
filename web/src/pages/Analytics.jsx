@@ -338,6 +338,24 @@ function Heatmap({ heatmap, loading, endISO, selectedDate, onSelect }) {
 
   const total = weeks.reduce((a, col) => a + col.reduce((b, c) => b + c.count, 0), 0)
 
+  // Honest range caption: the grid is a fixed 53-week (1-year) GitHub-style view
+  // ending at the filter `to` (or today). On a historical window it shows that
+  // year — not always "now" — and the caption states the exact span so users
+  // understand the full history lives in commits-over-time + the summary.
+  const firstCell = weeks[0]?.[0]?.date
+  const lastVisible = (() => {
+    for (let wi = weeks.length - 1; wi >= 0; wi--) {
+      for (let dow = 6; dow >= 0; dow--) {
+        const c = weeks[wi][dow]
+        if (c && !c.future) return c.date
+      }
+    }
+    return null
+  })()
+  const rangeCaption = firstCell && lastVisible
+    ? `${fmtDate(firstCell, { month: 'short', year: 'numeric' })} → ${fmtDate(lastVisible, { month: 'short', year: 'numeric' })}`
+    : null
+
   return (
     <div className="relative" ref={wrapRef}>
       <div className="pb-1">
@@ -399,7 +417,10 @@ function Heatmap({ heatmap, loading, endISO, selectedDate, onSelect }) {
 
       {/* legend + total */}
       <div className="flex items-center justify-between mt-1.5">
-        <span className="text-[11px] font-mono text-[var(--text-faint)]">{fmtNum(total)} commits</span>
+        <span className="text-[11px] font-mono text-[var(--text-faint)]">
+          {fmtNum(total)} commits
+          {rangeCaption && <span className="text-[var(--text-faint)]/70"> · {rangeCaption} (last 53 weeks)</span>}
+        </span>
         <div className="flex items-center gap-1.5 text-[10px] font-mono text-[var(--text-faint)]">
           <span>less</span>
           <div className="w-2.5 h-2.5 rounded-[2px]" style={{ background: 'var(--bg-surface3)' }} />
@@ -478,9 +499,35 @@ function DayDrillDown({ date, filters, onClose }) {
 
 // ── commits over time (SVG area chart) ───────────────────────────────────────
 
+// Span in days between two ISO date strings (filters.from..to). When `from` is
+// empty (the analytics "All" preset sends no bounds), treat it as all-time so we
+// bucket coarsely. Returns Infinity for an unbounded lower edge.
+function rangeDays(filters) {
+  if (!filters?.from) return Infinity
+  const from = new Date(filters.from + 'T00:00:00')
+  const to = new Date((filters.to || todayISO()) + 'T00:00:00')
+  const d = (to - from) / 86400000
+  return Number.isFinite(d) ? Math.max(d, 0) : Infinity
+}
+
+// autoBucket keeps the chart legible: daily points up to ~120 days, weekly up to
+// ~3 years, then monthly for very wide ("All time") ranges — so the full history
+// renders instead of collapsing into thousands of unreadable daily points.
+function autoBucket(filters) {
+  const days = rangeDays(filters)
+  if (days <= 120) return 'day'
+  if (days <= 365 * 3) return 'week'
+  return 'month'
+}
+
 function CommitsOverTime({ filters }) {
-  const [bucket, setBucket] = useState('day')
-  const { data, loading } = useCommitsOverTime(filters, bucket)
+  // 'auto' follows the range width (day/week/month); the explicit toggles let the
+  // user override. Reset to auto whenever the range changes so a wide "All time"
+  // window doesn't stay stuck on daily.
+  const [bucketMode, setBucketMode] = useState('auto')
+  const resolvedBucket = bucketMode === 'auto' ? autoBucket(filters) : bucketMode
+  const { data, loading } = useCommitsOverTime(filters, resolvedBucket)
+  const bucket = resolvedBucket
 
   const points = useMemo(() => (data || []).filter(d => d?.date), [data])
   const total = useMemo(() => points.reduce((a, p) => a + (p.count || 0), 0), [points])
@@ -498,22 +545,29 @@ function CommitsOverTime({ filters }) {
           </span>
           <div>
             <h2 className="text-sm font-semibold text-[var(--text)]">Commits over time</h2>
-            <p className="text-xs text-[var(--text-faint)] mt-0.5">{fmtNum(total)} commits, bucketed by {bucket}</p>
+            <p className="text-xs text-[var(--text-faint)] mt-0.5">
+              {fmtNum(total)} commits, bucketed by {bucket}{bucketMode === 'auto' ? ' (auto)' : ''}
+            </p>
           </div>
         </div>
         <div className="inline-flex items-center rounded-[var(--radius-btn)] border border-[var(--border)] bg-[var(--bg)] p-0.5">
-          {['day', 'week'].map(b => (
-            <button
-              key={b}
-              onClick={() => setBucket(b)}
-              className={[
-                'px-3 py-1 text-[11px] font-mono font-medium rounded-[6px] transition-colors capitalize',
-                bucket === b ? 'bg-[#2DD4BF]/15 text-[#2DD4BF]' : 'text-[var(--text-faint)] hover:text-[var(--text-dim)]',
-              ].join(' ')}
-            >
-              {b}
-            </button>
-          ))}
+          {['auto', 'day', 'week', 'month'].map(b => {
+            // In auto mode, highlight the resolved bucket too so the user sees
+            // which granularity is being shown.
+            const active = bucketMode === b || (b === 'auto' && bucketMode === 'auto')
+            return (
+              <button
+                key={b}
+                onClick={() => setBucketMode(b)}
+                className={[
+                  'px-3 py-1 text-[11px] font-mono font-medium rounded-[6px] transition-colors capitalize',
+                  active ? 'bg-[#2DD4BF]/15 text-[#2DD4BF]' : 'text-[var(--text-faint)] hover:text-[var(--text-dim)]',
+                ].join(' ')}
+              >
+                {b}
+              </button>
+            )
+          })}
         </div>
       </div>
 
@@ -526,7 +580,11 @@ function CommitsOverTime({ filters }) {
             width={760}
             height={220}
             color="var(--chart-1)"
-            xLabel={p => fmtDate(p.x, { month: 'short', day: 'numeric' })}
+            xLabel={p => bucket === 'month'
+              ? fmtDate(p.x, { month: 'short', year: '2-digit' })
+              : bucket === 'week'
+                ? fmtDate(p.x, { month: 'short', day: 'numeric', year: '2-digit' })
+                : fmtDate(p.x, { month: 'short', day: 'numeric' })}
             yLabel={v => fmtNum(Math.round(v))}
             tooltip={p => `${fmtDate(p.x)} · ${p.y} commit${p.y === 1 ? '' : 's'}`}
             emptyIcon={<Activity size={22} className="text-[var(--text-faint)]" />}
@@ -1107,7 +1165,9 @@ export default function Analytics() {
               </span>
               <div>
                 <h2 className="text-sm font-semibold text-[var(--text)]">Contribution heatmap</h2>
-                <p className="text-xs text-[var(--text-faint)] mt-0.5">Click any day to see its commits</p>
+                <p className="text-xs text-[var(--text-faint)] mt-0.5">
+                  Last 53 weeks ending {fmtDate(filters.to || todayISO(), { month: 'short', day: 'numeric', year: 'numeric' })} · click any day for its commits
+                </p>
               </div>
             </div>
           </div>
