@@ -26,31 +26,44 @@ import (
 // ContribSnapshot is one cached composite + dimension scores for a member in a
 // period. Dimensions maps the canonical dimension keys → 0–100 scores.
 type ContribSnapshot struct {
-	UserID      string             `json:"userId"`
-	Name        string             `json:"name"`
-	Email       string             `json:"email"`
-	PeriodStart time.Time          `json:"periodStart"`
-	PeriodEnd   time.Time          `json:"periodEnd"`
-	Composite   float64            `json:"composite"`
-	Dimensions  map[string]float64 `json:"dimensions"`
+	ContributorID string             `json:"contributorId"`
+	UserID        string             `json:"userId"`
+	Name          string             `json:"name"`
+	Email         string             `json:"email"`
+	PeriodStart   time.Time          `json:"periodStart"`
+	PeriodEnd     time.Time          `json:"periodEnd"`
+	Composite     float64            `json:"composite"`
+	Dimensions    map[string]float64 `json:"dimensions"`
 }
 
 // UpsertContributionSnapshot writes (idempotently) one member's composite +
-// dimension scores for a period. Re-running a snapshot job overwrites the row
-// rather than duplicating it (UNIQUE on org_id,user_id,period_start,period_end).
-// Must run inside db.WithOrg.
+// dimension scores for a period, keyed by a linked user. Thin wrapper over
+// UpsertPersonSnapshot with no contributor id (back-compat for the user-keyed
+// callers — e.g. the demo seed). Must run inside db.WithOrg.
 func UpsertContributionSnapshot(ctx context.Context, tx pgx.Tx, orgID, userID string, start, end time.Time, composite float64, dims map[string]float64) error {
+	return UpsertPersonSnapshot(ctx, tx, orgID, "", userID, start, end, composite, dims)
+}
+
+// UpsertPersonSnapshot writes (idempotently) one PERSON's composite + dimension
+// scores for a period, keyed by the canonical contributor (the person) and/or a
+// linked user. At least one of contributorID/userID must be non-empty; "" is
+// stored as NULL. Re-running overwrites the row rather than duplicating it (UNIQUE
+// on org_id, COALESCE(contributor_id,user_id), period_start, period_end — see
+// migration 20260624_001). Must run inside db.WithOrg.
+func UpsertPersonSnapshot(ctx context.Context, tx pgx.Tx, orgID, contributorID, userID string, start, end time.Time, composite float64, dims map[string]float64) error {
 	dimJSON, err := json.Marshal(dims)
 	if err != nil {
 		return fmt.Errorf("store: marshal snapshot dimensions: %w", err)
 	}
 	const q = `
-		INSERT INTO contribution_snapshots (org_id, user_id, period_start, period_end, composite, dimensions)
-		VALUES ($1, $2, $3, $4, $5, $6::jsonb)
-		ON CONFLICT (org_id, user_id, period_start, period_end) DO UPDATE SET
-			composite  = EXCLUDED.composite,
-			dimensions = EXCLUDED.dimensions`
-	if _, err := tx.Exec(ctx, q, orgID, userID, start, end, composite, string(dimJSON)); err != nil {
+		INSERT INTO contribution_snapshots (org_id, contributor_id, user_id, period_start, period_end, composite, dimensions)
+		VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
+		ON CONFLICT (org_id, COALESCE(contributor_id, user_id), period_start, period_end) DO UPDATE SET
+			composite      = EXCLUDED.composite,
+			dimensions     = EXCLUDED.dimensions,
+			contributor_id = EXCLUDED.contributor_id,
+			user_id        = EXCLUDED.user_id`
+	if _, err := tx.Exec(ctx, q, orgID, nullString(contributorID), nullString(userID), start, end, composite, string(dimJSON)); err != nil {
 		return fmt.Errorf("store: upsert contribution snapshot: %w", err)
 	}
 	return nil
@@ -61,10 +74,13 @@ func UpsertContributionSnapshot(ctx context.Context, tx pgx.Tx, orgID, userID st
 // Must run inside db.WithOrg.
 func ListContributionSnapshots(ctx context.Context, tx pgx.Tx, orgID string, since time.Time) ([]ContribSnapshot, error) {
 	const q = `
-		SELECT s.user_id::text, COALESCE(u.name,''), COALESCE(u.email::text,''),
+		SELECT COALESCE(s.contributor_id::text,''), COALESCE(s.user_id::text,''),
+		       COALESCE(c.display_name, u.name, ''),
+		       COALESCE(c.primary_email, u.email::text, ''),
 		       s.period_start, s.period_end, s.composite::float8, s.dimensions
 		FROM contribution_snapshots s
 		LEFT JOIN users u ON u.id = s.user_id
+		LEFT JOIN contributors c ON c.id = s.contributor_id
 		WHERE s.org_id = $1 AND s.period_start >= ($2)::date
 		ORDER BY s.period_start ASC, s.composite DESC`
 	rows, err := tx.Query(ctx, q, orgID, since)
@@ -77,7 +93,7 @@ func ListContributionSnapshots(ctx context.Context, tx pgx.Tx, orgID string, sin
 	for rows.Next() {
 		var s ContribSnapshot
 		var raw []byte
-		if err := rows.Scan(&s.UserID, &s.Name, &s.Email, &s.PeriodStart, &s.PeriodEnd, &s.Composite, &raw); err != nil {
+		if err := rows.Scan(&s.ContributorID, &s.UserID, &s.Name, &s.Email, &s.PeriodStart, &s.PeriodEnd, &s.Composite, &raw); err != nil {
 			return nil, fmt.Errorf("store: scan contribution snapshot: %w", err)
 		}
 		s.Dimensions = map[string]float64{}

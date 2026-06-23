@@ -76,6 +76,7 @@ func TestContributionExtras(t *testing.T) {
 
 	// ── Snapshots: upsert idempotency. ──
 	dims := map[string]float64{"shipped": 80, "review": 60, "effort": 70}
+	// Linked-member snapshot: no contributor id, keyed by user_id (COALESCE key).
 	if err := UpsertContributionSnapshot(ctx, tx, orgID, alice, start, end, 75, dims); err != nil {
 		t.Fatalf("UpsertContributionSnapshot #1: %v", err)
 	}
