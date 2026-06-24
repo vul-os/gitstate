@@ -9,9 +9,13 @@ import {
 } from '../../lib/useNotifications.js'
 import { ChannelForm } from './ChannelForm.jsx'
 import { DigestPreview } from './DigestPreview.jsx'
+import { DiscordIcon, GoogleChatIcon, TeamsIcon } from './channelIcons.jsx'
 
 const KIND_META = {
   slack: { icon: MessageSquare, label: 'Slack' },
+  discord: { icon: DiscordIcon, label: 'Discord' },
+  google_chat: { icon: GoogleChatIcon, label: 'Google Chat' },
+  teams: { icon: TeamsIcon, label: 'Microsoft Teams' },
   webhook: { icon: Webhook, label: 'Webhook' },
   email: { icon: Mail, label: 'Email' },
 }
@@ -244,7 +248,7 @@ export function NotificationsBody() {
           <div className="rounded-[var(--radius-btn)] border border-dashed border-[var(--border)] py-8 px-4 text-center">
             <Bell size={20} className="mx-auto text-[var(--text-faint)] mb-2" />
             <p className="text-sm text-[var(--text-muted)]">No channels yet</p>
-            <p className="text-xs text-[var(--text-faint)] mt-1">Add a Slack, webhook, or email channel to push status where your team works.</p>
+            <p className="text-xs text-[var(--text-faint)] mt-1">Add a Slack, Discord, Google Chat, Teams, webhook, or email channel to push status where your team works.</p>
           </div>
         ) : (
           <div>

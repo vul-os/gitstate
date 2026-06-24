@@ -1,9 +1,13 @@
 import { useState } from 'react'
 import { Loader2, Check, MessageSquare, Webhook, Mail } from 'lucide-react'
 import { Button } from '../ui/index.js'
+import { DiscordIcon, GoogleChatIcon, TeamsIcon } from './channelIcons.jsx'
 
 const KINDS = [
   { kind: 'slack', label: 'Slack', icon: MessageSquare, placeholder: 'https://hooks.slack.com/services/…', hint: 'Incoming-webhook URL' },
+  { kind: 'discord', label: 'Discord', icon: DiscordIcon, placeholder: 'https://discord.com/api/webhooks/…', hint: 'Server Settings → Integrations → Webhooks' },
+  { kind: 'google_chat', label: 'Google Chat', icon: GoogleChatIcon, placeholder: 'https://chat.googleapis.com/v1/spaces/…', hint: 'Space → Apps & integrations → Webhooks' },
+  { kind: 'teams', label: 'Microsoft Teams', icon: TeamsIcon, placeholder: 'https://…webhook.office.com/webhookb2/…', hint: 'Workflows / Incoming webhook' },
   { kind: 'webhook', label: 'Webhook', icon: Webhook, placeholder: 'https://example.com/hooks/gitstate', hint: 'Receives Slack-format JSON' },
   { kind: 'email', label: 'Email', icon: Mail, placeholder: 'team@yourco.com', hint: 'Plain-text digest' },
 ]
@@ -93,7 +97,7 @@ export function ChannelForm({ initial, emailConfigured, onSave, onCancel }) {
       {!editing && (
         <div>
           <label className="block text-xs font-medium text-[var(--text-muted)] mb-1.5">Channel type</label>
-          <div className="flex flex-col sm:flex-row gap-2">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
             {KINDS.map(({ kind: k, label: kl, icon: Icon }) => {
               const disabled = k === 'email' && !emailConfigured
               const selected = kind === k
@@ -104,7 +108,7 @@ export function ChannelForm({ initial, emailConfigured, onSave, onCancel }) {
                   disabled={disabled}
                   onClick={() => setKind(k)}
                   className={[
-                    'flex-1 flex items-center gap-2 rounded-[var(--radius-btn)] border px-3 py-2.5 text-left transition-all duration-150',
+                    'flex items-center gap-2 rounded-[var(--radius-btn)] border px-3 py-2.5 text-left transition-all duration-150',
                     disabled ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer',
                     selected
                       ? 'border-[var(--brand-teal)] bg-[var(--brand-teal)]/5'
@@ -113,8 +117,8 @@ export function ChannelForm({ initial, emailConfigured, onSave, onCancel }) {
                 >
                   <Icon size={15} className={selected ? 'text-[var(--brand-teal)]' : 'text-[var(--text-faint)]'} />
                   <div className="min-w-0">
-                    <p className="text-sm text-[var(--text)]">{kl}</p>
-                    <p className="text-[10px] text-[var(--text-faint)]">
+                    <p className="text-sm text-[var(--text)] truncate">{kl}</p>
+                    <p className="text-[10px] text-[var(--text-faint)] truncate">
                       {k === 'email' && !emailConfigured ? 'Configure SMTP' : KINDS.find((x) => x.kind === k).hint}
                     </p>
                   </div>
