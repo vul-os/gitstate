@@ -714,7 +714,7 @@ function WalletAndModels() {
         <p className="text-[11px] text-[var(--text-faint)] mb-4">AI usage draws from your allowance first, then this balance.</p>
         <div className="flex items-end gap-3 mb-4">
           <span className={`font-display text-3xl font-semibold tabular-nums ${balanceCents < 0 ? 'text-[var(--bad)]' : 'text-[var(--text)]'}`}>
-            {fmtUSD(balanceCents, 2)}
+            {fmtUsd(balanceCents, 2)}
           </span>
           {balanceCents < 0 && <span className="text-[11px] text-[var(--bad)] mb-1.5">owed — settles on next invoice</span>}
         </div>
@@ -726,7 +726,11 @@ function WalletAndModels() {
               className="w-24 bg-[var(--bg)] border border-[var(--border)] rounded-[var(--radius-btn)] pl-5 pr-2 py-2 text-sm text-[var(--text)] font-mono outline-none focus:border-[var(--brand-teal)]/50"
             />
           </div>
-          <Button size="sm" onClick={topUp} disabled={busy}>{busy ? 'Starting…' : 'Top up'}</Button>
+          <button
+            onClick={topUp} disabled={busy}
+            className="px-4 py-2 rounded-[var(--radius-btn)] text-sm font-semibold text-[#0B1120] disabled:opacity-60 transition-opacity"
+            style={{ background: 'linear-gradient(135deg, var(--brand-teal), var(--brand-indigo))' }}
+          >{busy ? 'Starting…' : 'Top up'}</button>
           {err && <span className="text-[11px] text-[var(--bad)]">{err}</span>}
         </div>
         {txns.length > 0 && (
@@ -735,8 +739,8 @@ function WalletAndModels() {
               <div key={t.id} className="flex items-center justify-between text-[11px]">
                 <span className="text-[var(--text-faint)] truncate">{t.description || t.kind}</span>
                 <span className="flex items-center gap-3 font-mono tabular-nums shrink-0">
-                  <span className={t.amountCents >= 0 ? 'text-[var(--ok)]' : 'text-[var(--bad)]'}>{t.amountCents >= 0 ? '+' : ''}{fmtUSD(t.amountCents, 2)}</span>
-                  <span className="text-[var(--text-faint)] w-16 text-right">{fmtUSD(t.balanceAfterCents, 2)}</span>
+                  <span className={t.amountCents >= 0 ? 'text-[var(--ok)]' : 'text-[var(--bad)]'}>{t.amountCents >= 0 ? '+' : ''}{fmtUsd(t.amountCents, 2)}</span>
+                  <span className="text-[var(--text-faint)] w-16 text-right">{fmtUsd(t.balanceAfterCents, 2)}</span>
                 </span>
               </div>
             ))}
@@ -763,8 +767,8 @@ function WalletAndModels() {
               {rows.map((m, i) => (
                 <tr key={i} className="border-b border-[var(--border)] last:border-0">
                   <td className="py-2 text-[var(--text-dim)] font-mono truncate max-w-[180px]">{m.model || '—'}</td>
-                  <td className="py-2 text-right font-mono tabular-nums text-[var(--text-muted)]">{fmtNum(m.totalQty)}</td>
-                  <td className="py-2 text-right font-mono tabular-nums text-[var(--text-dim)]">{fmtUSD(Math.round((m.totalCostUSD ?? 0) * 100), 2)}</td>
+                  <td className="py-2 text-right font-mono tabular-nums text-[var(--text-muted)]">{(m.totalQty ?? 0).toLocaleString()}</td>
+                  <td className="py-2 text-right font-mono tabular-nums text-[var(--text-dim)]">{fmtUsd(Math.round((m.totalCostUSD ?? 0) * 100), 2)}</td>
                 </tr>
               ))}
             </tbody>
