@@ -372,32 +372,32 @@ function IdentityGroups({ identities, chipProps }) {
   if (groups.length === 0 && otherEmails.length === 0) return null
 
   return (
-    <div className="flex flex-col gap-2 mt-2">
+    <div className="flex flex-wrap gap-2 mt-2">
       {groups.map(({ login, emails }) => (
-        <div key={`g:${login.value}`} className="flex flex-wrap items-start gap-x-2 gap-y-1.5">
-          {/* The @login anchor. */}
+        // One unified pill: the @username and its email(s) together, so the
+        // link is obvious. Each chip keeps its own star/split actions.
+        <div
+          key={`g:${login.value}`}
+          className="inline-flex flex-wrap items-center gap-1.5 rounded-[var(--radius-badge)] border border-[var(--border)] bg-[var(--bg-surface2)]/40 px-1.5 py-1"
+        >
           <IdentityChip identity={login} {...chipProps(login)} />
-          {/* Its attached emails, nested beside it with a connector bracket. */}
-          {emails.length > 0 && (
-            <div className="flex flex-wrap items-center gap-1.5 pl-2 border-l-2 border-[var(--border2)]">
-              {emails.map(email => (
-                <IdentityChip key={`${login.value}>${email.value}`} identity={email} {...chipProps(email)} />
-              ))}
-            </div>
-          )}
+          {emails.map(email => (
+            <span key={`${login.value}>${email.value}`} className="inline-flex items-center gap-1.5">
+              <span className="text-[var(--text-faint)] text-[10px] select-none">·</span>
+              <IdentityChip identity={email} {...chipProps(email)} />
+            </span>
+          ))}
         </div>
       ))}
 
       {otherEmails.length > 0 && (
-        <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5">
-          <span className="text-[10px] uppercase tracking-wide font-medium text-[var(--text-faint)] shrink-0 pt-1">
-            Other emails
+        <div className="inline-flex flex-wrap items-center gap-1.5 rounded-[var(--radius-badge)] border border-dashed border-[var(--border)] bg-[var(--bg-surface2)]/30 px-1.5 py-1">
+          <span className="text-[10px] uppercase tracking-wide font-medium text-[var(--text-faint)] shrink-0 px-1">
+            No linked username
           </span>
-          <div className="flex flex-wrap items-center gap-1.5 pl-2 border-l-2 border-[var(--border2)]">
-            {otherEmails.map(email => (
-              <IdentityChip key={`other>${email.value}`} identity={email} {...chipProps(email)} />
-            ))}
-          </div>
+          {otherEmails.map(email => (
+            <IdentityChip key={`other>${email.value}`} identity={email} {...chipProps(email)} />
+          ))}
         </div>
       )}
     </div>
