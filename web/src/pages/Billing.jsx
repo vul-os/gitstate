@@ -24,7 +24,7 @@
  */
 import { useState, useEffect, useMemo } from 'react'
 import { useSearchParams, useNavigate } from 'react-router-dom'
-import { usePlans, useSubscription, useUsage, useInvoices, useInvoiceDetail } from '../lib/useBilling.js'
+import { usePlans, useSubscription, useUsage, useInvoices, useInvoiceDetail, useWallet, useUsageByModel } from '../lib/useBilling.js'
 import * as api from '../lib/api.js'
 import { Reveal, RevealList } from '../components/Reveal.jsx'
 import { UsageMeter } from '../components/billing/UsageMeter.jsx'
@@ -668,9 +668,109 @@ function OverviewTab({ onGoToPlans }) {
         </>
       )}
 
+      {/* Prepaid wallet + per-model managed-LLM usage */}
+      <Reveal delay={0.1}><WalletAndModels /></Reveal>
+
       <Reveal delay={0.12}>
         <PaymentMethodCard hasPaymentMethod={hasPaymentMethod} onManage={startPaystack} busy={busy} />
       </Reveal>
+    </div>
+  )
+}
+
+// ── Wallet (prepaid balance + top-up) + per-model managed-LLM usage ───────────
+
+function WalletAndModels() {
+  const { data: wallet } = useWallet()
+  const { data: models } = useUsageByModel()
+  const [amount, setAmount] = useState('20')
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState(null)
+
+  const balanceCents = wallet?.balanceCents ?? 0
+  const txns = wallet?.transactions ?? []
+  const rows = Array.isArray(models) ? models : (models?.models ?? [])
+
+  async function topUp() {
+    const usd = Math.round(parseFloat(amount || '0') * 100)
+    if (!usd || usd < 100) { setErr('Minimum top-up is $1'); return }
+    setBusy(true); setErr(null)
+    try {
+      const res = await api.topupWallet(usd)
+      if (res?.authorization_url) window.location.href = res.authorization_url
+      else setErr('Could not start top-up')
+    } catch (e) { setErr(e?.message ?? 'Top-up failed') }
+    finally { setBusy(false) }
+  }
+
+  return (
+    <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      {/* Wallet */}
+      <Panel className="p-6">
+        <div className="flex items-center justify-between mb-1">
+          <h3 className="text-sm font-semibold text-[var(--text)]">Wallet balance</h3>
+          <span className="text-[10px] font-mono text-[var(--text-faint)] uppercase tracking-wider">prepaid · {wallet?.currency ?? 'USD'}</span>
+        </div>
+        <p className="text-[11px] text-[var(--text-faint)] mb-4">AI usage draws from your allowance first, then this balance.</p>
+        <div className="flex items-end gap-3 mb-4">
+          <span className={`font-display text-3xl font-semibold tabular-nums ${balanceCents < 0 ? 'text-[var(--bad)]' : 'text-[var(--text)]'}`}>
+            {fmtUSD(balanceCents, 2)}
+          </span>
+          {balanceCents < 0 && <span className="text-[11px] text-[var(--bad)] mb-1.5">owed — settles on next invoice</span>}
+        </div>
+        <div className="flex items-center gap-2">
+          <div className="relative">
+            <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--text-faint)] text-sm">$</span>
+            <input
+              type="number" min="1" step="5" value={amount} onChange={e => setAmount(e.target.value)}
+              className="w-24 bg-[var(--bg)] border border-[var(--border)] rounded-[var(--radius-btn)] pl-5 pr-2 py-2 text-sm text-[var(--text)] font-mono outline-none focus:border-[var(--brand-teal)]/50"
+            />
+          </div>
+          <Button size="sm" onClick={topUp} disabled={busy}>{busy ? 'Starting…' : 'Top up'}</Button>
+          {err && <span className="text-[11px] text-[var(--bad)]">{err}</span>}
+        </div>
+        {txns.length > 0 && (
+          <div className="mt-5 border-t border-[var(--border)] pt-3 space-y-1.5 max-h-40 overflow-y-auto">
+            {txns.slice(0, 8).map(t => (
+              <div key={t.id} className="flex items-center justify-between text-[11px]">
+                <span className="text-[var(--text-faint)] truncate">{t.description || t.kind}</span>
+                <span className="flex items-center gap-3 font-mono tabular-nums shrink-0">
+                  <span className={t.amountCents >= 0 ? 'text-[var(--ok)]' : 'text-[var(--bad)]'}>{t.amountCents >= 0 ? '+' : ''}{fmtUSD(t.amountCents, 2)}</span>
+                  <span className="text-[var(--text-faint)] w-16 text-right">{fmtUSD(t.balanceAfterCents, 2)}</span>
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+      </Panel>
+
+      {/* Per-model usage */}
+      <Panel className="p-6">
+        <h3 className="text-sm font-semibold text-[var(--text)] mb-1">Managed-AI by model</h3>
+        <p className="text-[11px] text-[var(--text-faint)] mb-4">Token usage + cost per model this period.</p>
+        {rows.length === 0 ? (
+          <div className="py-8 text-center text-xs text-[var(--text-faint)] border border-dashed border-[var(--border)] rounded-[var(--radius-card)]">No managed-AI usage yet.</div>
+        ) : (
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="text-[var(--text-faint)] border-b border-[var(--border)]">
+                <th className="text-left font-mono uppercase tracking-wider font-medium py-1.5">Model</th>
+                <th className="text-right font-mono uppercase tracking-wider font-medium py-1.5">Tokens</th>
+                <th className="text-right font-mono uppercase tracking-wider font-medium py-1.5">Cost</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((m, i) => (
+                <tr key={i} className="border-b border-[var(--border)] last:border-0">
+                  <td className="py-2 text-[var(--text-dim)] font-mono truncate max-w-[180px]">{m.model || '—'}</td>
+                  <td className="py-2 text-right font-mono tabular-nums text-[var(--text-muted)]">{fmtNum(m.totalQty)}</td>
+                  <td className="py-2 text-right font-mono tabular-nums text-[var(--text-dim)]">{fmtUSD(Math.round((m.totalCostUSD ?? 0) * 100), 2)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </Panel>
     </div>
   )
 }

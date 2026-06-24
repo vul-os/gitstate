@@ -180,6 +180,22 @@ export function useUsage() {
   return fetcher(activeOrgId)
 }
 
+// ── Wallet hook (prepaid balance + transactions) ──────────────────────────────
+
+export function useWallet() {
+  const { activeOrgId } = useOrg()
+  const fetcher = makeFetcher('/api/billing/wallet', { notFoundIsEmpty: true })
+  return fetcher(activeOrgId)
+}
+
+// ── Per-model managed-LLM usage breakdown ─────────────────────────────────────
+
+export function useUsageByModel() {
+  const { activeOrgId } = useOrg()
+  const fetcher = makeFetcher('/api/billing/usage/by-model')
+  return fetcher(activeOrgId)
+}
+
 // ── Invoices hook ─────────────────────────────────────────────────────────────
 
 export function useInvoices() {

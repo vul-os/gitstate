@@ -50,6 +50,7 @@ type publicPlan struct {
 	BYOKPerBuilderUSD *float64 `json:"byokPerBuilderUsd"`
 	OverageMarkup     float64  `json:"overageMarkup"`
 	Builders          int      `json:"builders"` // cap: 0 = unlimited
+	Features          map[string]any `json:"features"`
 }
 
 // RegisterPublicPlans wires GET /api/plans (public — for the pricing page).
@@ -97,6 +98,7 @@ func RegisterPublicPlans(mux *http.ServeMux, database *db.DB, _ *config.Config) 
 				IncludedLLMUSD:    p.IncludedLLMCents / 100,
 				BYOKPerBuilderUSD: byok,
 				OverageMarkup:     p.OverageMarkup,
+				Features:          p.Features,
 				Builders:          p.Builders,
 			})
 		}

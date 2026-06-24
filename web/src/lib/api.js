@@ -542,3 +542,8 @@ export function linkContributor(id, userId) {
 export function inviteContributor(id, email) {
   return post(`/api/contributors/${id}/invite`, email ? { email } : {})
 }
+
+/** Start a wallet top-up: returns { authorization_url, reference, ... } from Paystack. */
+export function topupWallet(amountCents) {
+  return post('/api/billing/wallet/topup', { amountCents })
+}
