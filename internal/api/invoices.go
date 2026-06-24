@@ -576,6 +576,10 @@ type fromGitRequest struct {
 	RateCents       *int    `json:"rateCents"`
 	HoursPerPoint   float64 `json:"hoursPerPoint"`
 	HourlyRateCents int     `json:"hourlyRateCents"`
+	// RateBasis ("effort" | "hours") + ProjectIDs are the frontend's contract: when
+	// basis=="hours" we bill points as hours (1 point ≈ 1 hour) at the entered rate.
+	RateBasis  string   `json:"rateBasis"`
+	ProjectIDs []string `json:"projectIds"`
 
 	DiscountCents int     `json:"discountCents"`
 	TaxCents      int     `json:"taxCents"`
@@ -599,6 +603,17 @@ func (h *invoiceHandlers) fromGit(w http.ResponseWriter, r *http.Request) {
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
+	}
+	// Frontend contract reconciliation: accept projectIds[] (use the first) and
+	// rateBasis=="hours" (bill points as hours at the entered rate, 1 point ≈ 1h).
+	if req.ProjectID == "" && len(req.ProjectIDs) > 0 {
+		req.ProjectID = req.ProjectIDs[0]
+	}
+	if strings.EqualFold(req.RateBasis, "hours") && req.HoursPerPoint == 0 {
+		req.HoursPerPoint = 1
+		if req.HourlyRateCents == 0 && req.RateCents != nil {
+			req.HourlyRateCents = *req.RateCents
+		}
 	}
 	from, to, ok := parseInvoicePeriod(req.From, req.To)
 	if !ok {
