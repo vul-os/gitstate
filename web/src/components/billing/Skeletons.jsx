@@ -58,6 +58,48 @@ export function MetersSkeleton() {
   )
 }
 
+export function HeroSkeleton() {
+  return (
+    <div className="space-y-4">
+      <Panel>
+        <div className="flex items-start justify-between gap-4">
+          <div className="space-y-3">
+            <Skel className="h-3 w-24" />
+            <Skel className="h-8 w-44" />
+            <Skel className="h-3 w-56" />
+          </div>
+          <Skel className="h-8 w-28 rounded-[var(--radius-btn)]" />
+        </div>
+      </Panel>
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        {[0, 1, 2].map((i) => (
+          <Panel key={i}>
+            <Skel className="h-3 w-24 mb-4" />
+            <Skel className="h-8 w-20 mb-3" />
+            <Skel className="h-2.5 w-full rounded-full" />
+          </Panel>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+export function BreakdownSkeleton() {
+  return (
+    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+      {[0, 1, 2].map((i) => (
+        <Panel key={i}>
+          <Skel className="h-3 w-24 mb-4" />
+          <div className="flex items-end justify-between">
+            <Skel className="h-8 w-16" />
+            <Skel className="h-4 w-14" />
+          </div>
+        </Panel>
+      ))}
+    </div>
+  )
+}
+
 export function PlansSkeleton() {
   return (
     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">

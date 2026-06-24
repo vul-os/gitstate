@@ -28,8 +28,9 @@ import { usePlans, useSubscription, useUsage, useInvoices, useInvoiceDetail } fr
 import * as api from '../lib/api.js'
 import { Reveal, RevealList } from '../components/Reveal.jsx'
 import { UsageMeter } from '../components/billing/UsageMeter.jsx'
+import { UsageBreakdown } from '../components/billing/UsageBreakdown.jsx'
 import { StatusPill, DunningBanner } from '../components/billing/BillingStatus.jsx'
-import { MetersSkeleton, PlansSkeleton, InvoicesSkeleton } from '../components/billing/Skeletons.jsx'
+import { MetersSkeleton, BreakdownSkeleton, PlansSkeleton, InvoicesSkeleton } from '../components/billing/Skeletons.jsx'
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -312,6 +313,59 @@ function PlanHeader({ plan, planKey, status, periodEnd, hasPaymentMethod, onUpgr
   )
 }
 
+// ── Hero headline meter tile ─────────────────────────────────────────────────────
+
+/** A compact, crafted stat tile with a slim animated meter — the headline numbers
+ *  that sit directly under the plan header. Over → red, ≥85% → amber, else brand. */
+function HeroMeter({ label, value, sub, ratio, over, accent = 'var(--brand-teal)' }) {
+  const metered = ratio != null && Number.isFinite(ratio)
+  const clamped = metered ? Math.max(0, Math.min(1, ratio)) : 0
+  const pct = Math.round(clamped * 100)
+  const fill = over
+    ? 'linear-gradient(90deg,#f87171,#ef4444)'
+    : clamped >= 0.85
+      ? 'linear-gradient(90deg,#fbbf24,#f59e0b)'
+      : 'linear-gradient(90deg,#2DD4BF,#6366F1)'
+  const glow = over ? 'rgba(239,68,68,0.32)' : clamped >= 0.85 ? 'rgba(245,158,11,0.28)' : 'rgba(99,102,241,0.26)'
+
+  const [w, setW] = useState(0)
+  useEffect(() => {
+    const id = requestAnimationFrame(() => setW(metered ? pct : 100))
+    return () => cancelAnimationFrame(id)
+  }, [pct, metered])
+
+  return (
+    <div
+      className="relative rounded-[var(--radius-card)] p-4 overflow-hidden"
+      style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)' }}
+    >
+      <span aria-hidden className="absolute inset-y-0 left-0 w-[2px] opacity-70" style={{ background: accent }} />
+      <p className="text-[10.5px] font-mono uppercase tracking-[0.14em] text-[var(--text-faint)] mb-2">{label}</p>
+      <div className="flex items-end justify-between gap-2 mb-3">
+        <span className="font-display text-[1.7rem] leading-none font-semibold text-[var(--text)] tabular-nums tracking-tight">
+          {value}
+        </span>
+        {sub && <span className="text-[11px] text-[var(--text-faint)] mb-0.5 tabular-nums">{sub}</span>}
+      </div>
+      <div
+        className="relative h-2 rounded-full overflow-hidden"
+        style={{ background: 'var(--bg-surface3)', border: '1px solid var(--border)', boxShadow: 'inset 0 1px 2px rgba(0,0,0,0.25)' }}
+      >
+        <div
+          className="h-full rounded-full"
+          style={{
+            width: `${w}%`,
+            background: fill,
+            boxShadow: `0 0 10px ${glow}`,
+            transition: 'width 900ms cubic-bezier(0.22,1,0.36,1)',
+            opacity: metered ? 1 : 0.4,
+          }}
+        />
+      </div>
+    </div>
+  )
+}
+
 // ── Payment-method card ─────────────────────────────────────────────────────────
 
 function PaymentMethodCard({ hasPaymentMethod, onManage, busy }) {
@@ -356,6 +410,7 @@ function OverviewTab({ onGoToPlans }) {
   const { data: usage, loading: usageLoading, error: usageError, disabled } = useUsage()
   const { data: sub } = useSubscription()
   const { data: plansData } = usePlans()
+  const { data: invoicesData } = useInvoices()
 
   const [busy, setBusy] = useState(false)
   const [actionError, setActionError] = useState(null)
@@ -400,6 +455,81 @@ function OverviewTab({ onGoToPlans }) {
   const maxRepos = plan?.features?.max_repos ?? null
   const historyDays = plan?.features?.history_days ?? null
 
+  // ZAR estimate for usage costs: the usage endpoint is USD-only, so we reuse the
+  // FX rate captured on the most-recent invoice (1 USD = N ZAR) to *estimate* the
+  // charge-currency amount. Falls back to USD-only when no invoice FX is available.
+  const invoiceList = Array.isArray(invoicesData) ? invoicesData : (invoicesData?.invoices ?? [])
+  const fxRate = (() => {
+    for (const inv of invoiceList) {
+      const r = inv.fxRate ?? inv.fx_rate
+      if (r != null && r > 0) return Number(r)
+    }
+    return null
+  })()
+  const toZar = (usd) => (fxRate != null ? usd * fxRate : null)
+
+  const llmHasBudget = includedLlmUSD != null
+  const llmBillable = llmHasBudget ? Math.max(0, llmSpentUSD - (includedLlmUSD ?? 0)) : 0
+  const breakdownTiles = [
+    {
+      key: 'builders',
+      icon: (
+        <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8">
+          <path strokeLinecap="round" strokeLinejoin="round" d="M15 19.128a9.38 9.38 0 0 0 2.625.372 9.337 9.337 0 0 0 4.121-.952 4.125 4.125 0 0 0-7.533-2.493M15 19.128v-.003c0-1.113-.285-2.16-.786-3.07M15 19.128v.106A12.318 12.318 0 0 1 8.624 21c-2.331 0-4.512-.645-6.374-1.766l-.001-.109a6.375 6.375 0 0 1 11.964-3.07M12 6.375a3.375 3.375 0 1 1-6.75 0 3.375 3.375 0 0 1 6.75 0Z" />
+        </svg>
+      ),
+      accent: 'var(--brand-indigo)',
+      label: 'Builder seats',
+      qty: String(builderUsed),
+      qtyUnit: builderUsed === 1 ? 'seat' : 'seats',
+      costUSD: by.builder_seat?.costUSD ?? 0,
+      costZAR: toZar(by.builder_seat?.costUSD ?? 0),
+      empty: builderUsed === 0 && (by.builder_seat?.costUSD ?? 0) === 0,
+      note: 'Devs, PMs & anyone creating work. Stakeholders are free.',
+    },
+    {
+      key: 'llm',
+      icon: (
+        <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8">
+          <path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09Z" />
+        </svg>
+      ),
+      accent: 'var(--brand-teal)',
+      label: 'Managed LLM',
+      qty: fmtUsdAmount(llmSpentUSD),
+      qtyUnit: null,
+      costUSD: llmBillable,
+      costZAR: llmHasBudget ? toZar(llmBillable) : null,
+      empty: llmSpentUSD === 0,
+      free: !llmHasBudget || llmBillable === 0,
+      note: !llmHasBudget
+        ? 'Bring-your-own key — not billed.'
+        : llmBillable === 0
+          ? `Within the ${fmtUsdAmount(includedLlmUSD)} included allowance.`
+          : `Overage above allowance, billed at +${overagePct}%.`,
+    },
+    {
+      key: 'repos',
+      icon: (
+        <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8">
+          <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 12.75V12A2.25 2.25 0 0 1 4.5 9.75h15A2.25 2.25 0 0 1 21.75 12v.75m-8.69-6.44-2.12-2.12a1.5 1.5 0 0 0-1.061-.44H4.5A2.25 2.25 0 0 0 2.25 6v12a2.25 2.25 0 0 0 2.25 2.25h15A2.25 2.25 0 0 0 21.75 18V9a2.25 2.25 0 0 0-2.25-2.25h-5.379a1.5 1.5 0 0 1-1.06-.44Z" />
+        </svg>
+      ),
+      accent: 'var(--chart-5)',
+      label: 'Repo sync',
+      qty: String(syncCount),
+      qtyUnit: maxRepos != null ? `/ ${maxRepos}` : 'events',
+      costUSD: by.sync?.costUSD ?? 0,
+      costZAR: toZar(by.sync?.costUSD ?? 0),
+      empty: syncCount === 0 && (by.sync?.costUSD ?? 0) === 0,
+      free: (by.sync?.costUSD ?? 0) === 0,
+      note: historyDays ? `${historyDays} days of history retained.` : 'Connected repositories synced this period.',
+    },
+  ]
+  const fxNote = fxRate != null
+    ? `ZAR amounts are estimates at 1 USD = R${fxRate.toFixed(2)} (last invoice FX); each invoice locks its own rate at charge time.`
+    : null
+
   return (
     <div className="space-y-6">
       {actionError && <ErrorBanner msg={actionError} />}
@@ -424,12 +554,46 @@ function OverviewTab({ onGoToPlans }) {
         />
       </Reveal>
 
+      {/* Headline meters — the hero numbers at a glance */}
+      {!usageLoading && !usageError && (
+        <RevealList className="grid grid-cols-1 sm:grid-cols-3 gap-3" staggerDelay={0.06} baseDelay={0.04}>
+          <HeroMeter
+            label="Billable builders"
+            value={String(builderUsed)}
+            sub={builderCap > 0 ? `of ${builderCap}` : 'unlimited'}
+            ratio={builderCap > 0 ? builderUsed / builderCap : null}
+            over={builderCap > 0 && builderUsed > builderCap}
+            accent="var(--brand-indigo)"
+          />
+          <HeroMeter
+            label="Managed-LLM spend"
+            value={fmtUsdAmount(llmSpentUSD)}
+            sub={includedLlmUSD != null ? `of ${fmtUsdAmount(includedLlmUSD)}` : 'BYOK'}
+            ratio={includedLlmUSD != null && includedLlmUSD > 0 ? llmSpentUSD / includedLlmUSD : (includedLlmUSD === 0 ? (llmSpentUSD > 0 ? 1 : 0) : null)}
+            over={llmOver}
+            accent="var(--brand-teal)"
+          />
+          <HeroMeter
+            label={maxRepos != null ? 'Connected repos' : 'Repo activity'}
+            value={String(syncCount)}
+            sub={maxRepos != null ? `of ${maxRepos}` : 'events'}
+            ratio={maxRepos != null && maxRepos > 0 ? Math.min(syncCount, maxRepos) / maxRepos : null}
+            over={maxRepos != null && syncCount > maxRepos}
+            accent="var(--chart-5)"
+          />
+        </RevealList>
+      )}
+
       {/* Usage meters */}
       {usageLoading ? (
-        <MetersSkeleton />
+        <>
+          <MetersSkeleton />
+          <BreakdownSkeleton />
+        </>
       ) : usageError ? (
         <ErrorBanner msg={usageError} />
       ) : (
+        <>
         <Reveal delay={0.05}>
           <Panel className="p-6">
             <div className="flex items-center justify-between mb-6">
@@ -491,9 +655,20 @@ function OverviewTab({ onGoToPlans }) {
             </div>
           </Panel>
         </Reveal>
+
+        <Reveal delay={0.08}>
+          <div>
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-sm font-semibold text-[var(--text)]">Cost breakdown</h3>
+              <span className="text-[11px] text-[var(--text-faint)]">USD billed{fxRate != null ? ` · ZAR est.` : ''}</span>
+            </div>
+            <UsageBreakdown tiles={breakdownTiles} fxNote={fxNote} />
+          </div>
+        </Reveal>
+        </>
       )}
 
-      <Reveal delay={0.1}>
+      <Reveal delay={0.12}>
         <PaymentMethodCard hasPaymentMethod={hasPaymentMethod} onManage={startPaystack} busy={busy} />
       </Reveal>
     </div>
@@ -502,7 +677,7 @@ function OverviewTab({ onGoToPlans }) {
 
 // ── Plan ladder ───────────────────────────────────────────────────────────────
 
-function PlanCard({ plan, isCurrent, onUpgrade, upgrading }) {
+function PlanCard({ plan, isCurrent, onUpgrade, upgrading, builderCount = 0 }) {
   const key = plan.key ?? plan.planKey ?? ''
   const accent = planAccent(key)
   const priceCents = planPriceCents(plan)
@@ -512,6 +687,11 @@ function PlanCard({ plan, isCurrent, onUpgrade, upgrading }) {
   const popular = key === 'pro'
   const isEnterprise = key === 'enterprise'
   const features = planFeatureLines(plan)
+
+  // Monthly cost preview at the org's current billable-builder count.
+  const seats = Math.max(1, builderCount)
+  const monthlyCents = perBuilder && priceCents > 0 ? priceCents * seats : (priceCents > 0 ? priceCents : 0)
+  const showPreview = !isEnterprise && priceCents > 0 && perBuilder
 
   return (
     <div
@@ -563,6 +743,20 @@ function PlanCard({ plan, isCurrent, onUpgrade, upgrading }) {
             ? 'Bring-your-own LLM key'
             : <>charged in {CHARGE_CURRENCY} at current FX</>}
       </p>
+
+      {showPreview && (
+        <div
+          className="rounded-[var(--radius-badge)] px-3 py-2 mb-4 flex items-center justify-between gap-2"
+          style={{ background: `color-mix(in srgb, ${accent.grad[0]} 8%, transparent)`, border: `1px solid ${accent.grad[0]}33` }}
+        >
+          <span className="text-[11px] text-[var(--text-muted)]">
+            At your <strong className="text-[var(--text)]">{seats}</strong> builder{seats !== 1 ? 's' : ''}
+          </span>
+          <span className="text-xs font-bold tabular-nums" style={{ color: accent.text }}>
+            {fmtUsd(monthlyCents)}/mo
+          </span>
+        </div>
+      )}
 
       {/* Quotas */}
       <div className="rounded-[var(--radius-badge)] p-3 mb-4 space-y-1.5" style={{ background: 'var(--bg)', border: '1px solid var(--border)' }}>
@@ -643,8 +837,11 @@ function PlanCard({ plan, isCurrent, onUpgrade, upgrading }) {
 function PlansTab() {
   const { data: plans, loading, error, disabled } = usePlans()
   const { data: sub } = useSubscription()
+  const { data: usage } = useUsage()
   const [upgrading, setUpgrading] = useState(null)
   const [upgradeError, setUpgradeError] = useState(null)
+
+  const builderCount = Math.round(indexUsage(usage).builder_seat?.qty ?? 0)
 
   async function handleUpgrade(planKey) {
     if (planKey === 'free') { setUpgradeError('Contact support to downgrade to the Free plan.'); return }
@@ -710,6 +907,7 @@ function PlansTab() {
               isCurrent={(plan.key ?? plan.planKey) === currentPlanKey}
               onUpgrade={handleUpgrade}
               upgrading={upgrading === (plan.key ?? plan.planKey)}
+              builderCount={builderCount}
             />
           ))}
         </RevealList>
