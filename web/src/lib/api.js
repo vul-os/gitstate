@@ -428,9 +428,26 @@ export function disconnectAccounting(provider) {
   return del(`/api/accounting/${provider}`)
 }
 
-/** Push an invoice to a connected accounting provider; returns {provider, externalId, externalUrl}. */
+/**
+ * Push an invoice to a connected accounting provider.
+ * Hits POST /api/invoices/{id}/push/{provider} (provider in the path); the body
+ * still carries `provider` so the legacy POST /api/invoices/{id}/push route also
+ * works if the server hasn't adopted the path form yet.
+ * @returns {Promise<{provider, externalId, externalUrl}>}
+ */
 export function pushInvoice(invoiceId, provider) {
-  return post(`/api/invoices/${invoiceId}/push`, { provider })
+  return post(`/api/invoices/${invoiceId}/push/${encodeURIComponent(provider)}`, { provider })
+}
+
+/**
+ * Generate a draft invoice from git-derived effort.
+ * POST /api/invoices/from-git → draft invoice with `source:"git"` lines + evidence.
+ * @param {{ clientName?:string, clientId?:string, from:string, to:string,
+ *           repoIds?:string[], projectIds?:string[], rateCents:number,
+ *           rateBasis?:"effort"|"hours", preview?:boolean }} body
+ */
+export function generateInvoiceFromGit(body) {
+  return post('/api/invoices/from-git', body)
 }
 
 /** Pull busy windows from connected calendars into availability for a period. */

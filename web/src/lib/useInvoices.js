@@ -12,7 +12,9 @@
  */
 import { useReducer, useEffect, useCallback, useRef } from 'react'
 import { useOrg } from './useOrg.js'
-import { get, post, patch, del } from './api.js'
+import { get, post, patch, del, generateInvoiceFromGit } from './api.js'
+
+export { generateInvoiceFromGit }
 
 const BASE = import.meta.env.VITE_API_BASE_URL ?? ''
 
@@ -138,7 +140,12 @@ export function generateInvoice(body) {
   return post('/api/invoices/generate', body)
 }
 
-/** Update invoice status/notes. status='sent' mints a share token server-side. */
+/**
+ * Update an invoice. Accepts any of:
+ *   { status, clientName, notes, discountCents, taxCents|taxRate, lines:[…] }
+ * `lines` fully replaces the line set (each: { id?, source, description,
+ * quantity, unitRateCents, amountCents }). status='sent' mints a share token.
+ */
 export function patchInvoice(id, body) {
   return patch(`/api/invoices/${id}`, body)
 }

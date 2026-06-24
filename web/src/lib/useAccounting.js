@@ -1,6 +1,7 @@
 /**
- * useAccounting — Xero / QuickBooks connection status for the org.
+ * useAccounting — accounting connection status for the org.
  *
+ * Providers: xero, quickbooks, sage, zoho_books, freshbooks.
  * GET /api/accounting/status → [{provider, configured, connected, externalName}]
  * Connect is a top-level navigation (accountingStartUrl); disconnect + invoice
  * push are imperative helpers in api.js.
@@ -44,9 +45,11 @@ export function useAccounting() {
   const providers = Array.isArray(state.data) ? state.data : []
   return {
     providers,
+    connected: providers.filter((p) => p.connected),
     xero: providers.find((p) => p.provider === 'xero'),
     quickbooks: providers.find((p) => p.provider === 'quickbooks'),
     anyConfigured: providers.some((p) => p.configured),
+    anyConnected: providers.some((p) => p.connected),
     loading: state.loading,
     error: state.error,
     refetch,
