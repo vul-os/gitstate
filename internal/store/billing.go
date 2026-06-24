@@ -53,6 +53,29 @@ type UsageRollup struct {
 	TotalCostUSD float64
 }
 
+// ModelUsageRollup is a single (model, kind)-aggregated result from UsageByModel.
+// TotalQty is the metered quantity (tokens for managed-LLM usage); TotalCostUSD is
+// the summed provider cost in USD.
+type ModelUsageRollup struct {
+	Model        string
+	Kind         string
+	TotalQty     float64
+	TotalCostUSD float64
+}
+
+// WalletTxn mirrors a row from the wallet_ledger table (append-only).
+type WalletTxn struct {
+	ID                string
+	OrgID             string
+	Kind              string // topup | usage | adjustment | refund
+	AmountCents       int64  // signed: + credit, − debit
+	Currency          string
+	BalanceAfterCents int64
+	Description       string
+	Ref               string
+	CreatedAt         time.Time
+}
+
 // Invoice mirrors a row from the invoices table.
 type Invoice struct {
 	ID          string
@@ -183,15 +206,55 @@ func UpsertSubscription(ctx context.Context, tx pgx.Tx, orgID, planKey, status s
 // RecordUsage appends a usage_event row for the org.
 // Must be called inside db.WithOrg (tx already has the RLS context set).
 // kind examples: "builder_seat", "llm_tokens", "sync".
-func RecordUsage(ctx context.Context, tx pgx.Tx, orgID, kind string, qty, costUSD float64) error {
+// model identifies the managed-LLM model that produced the usage (for the
+// per-model breakdown); pass "" for non-LLM kinds or when the model is unknown.
+func RecordUsage(ctx context.Context, tx pgx.Tx, orgID, kind string, qty, costUSD float64, model string) error {
 	const q = `
-		INSERT INTO usage_events (org_id, kind, quantity, cost_usd)
-		VALUES ($1, $2, $3, $4)`
+		INSERT INTO usage_events (org_id, kind, quantity, cost_usd, model)
+		VALUES ($1, $2, $3, $4, $5)`
 
-	if _, err := tx.Exec(ctx, q, orgID, kind, qty, costUSD); err != nil {
+	if _, err := tx.Exec(ctx, q, orgID, kind, qty, costUSD, model); err != nil {
 		return fmt.Errorf("store.billing: record usage: %w", err)
 	}
 	return nil
+}
+
+// UsageByModel returns per-(model, kind) aggregated usage for an org within
+// [from, to]. Only rows with a non-empty model are returned — i.e. the managed-LLM
+// usage that carries a model tag. TotalQty sums quantity (tokens); TotalCostUSD
+// sums cost_usd (provider cost in USD).
+//
+// TODO(llmux): once the llmux gateway returns a real usage block, quantity should
+// carry the gateway's exact token count (prompt+completion). Until then quantity
+// is whatever RecordUsage stored (a synthetic token estimate from llmEstimateUsage).
+//
+// Must be called inside db.WithOrg (tx already has the RLS context set).
+func UsageByModel(ctx context.Context, tx pgx.Tx, orgID string, from, to time.Time) ([]ModelUsageRollup, error) {
+	const q = `
+		SELECT model, kind, SUM(quantity)::float8, SUM(cost_usd)::float8
+		FROM usage_events
+		WHERE org_id = $1
+		  AND model <> ''
+		  AND occurred_at >= $2
+		  AND occurred_at <= $3
+		GROUP BY model, kind
+		ORDER BY SUM(cost_usd) DESC, model, kind`
+
+	rows, err := tx.Query(ctx, q, orgID, from, to)
+	if err != nil {
+		return nil, fmt.Errorf("store.billing: usage by model: %w", err)
+	}
+	defer rows.Close()
+
+	var out []ModelUsageRollup
+	for rows.Next() {
+		var r ModelUsageRollup
+		if err := rows.Scan(&r.Model, &r.Kind, &r.TotalQty, &r.TotalCostUSD); err != nil {
+			return nil, fmt.Errorf("store.billing: scan model usage: %w", err)
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
 }
 
 // SumUsage returns per-kind aggregated usage for an org within [from, to].
@@ -219,6 +282,145 @@ func SumUsage(ctx context.Context, tx pgx.Tx, orgID string, from, to time.Time) 
 			return nil, fmt.Errorf("store.billing: scan usage rollup: %w", err)
 		}
 		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// ── Wallet ledger (prepaid balance) ──────────────────────────────────────────
+//
+// wallet_ledger is append-only. The current balance is the balance_after_cents of
+// the newest row (0 when the org has no rows). Every credit/debit reads the latest
+// balance and writes a new row carrying the updated running balance, all inside the
+// caller's tx so concurrent writers serialise correctly (the read is FOR UPDATE-free
+// because the callers below take a row lock via SELECT ... FOR UPDATE on the org's
+// latest row; see WalletCredit/WalletDebit).
+//
+// Balance semantics: debits are allowed to drive the balance negative — the wallet
+// is "extra billing" that tops up beyond the included allowance, and a transient
+// negative balance simply represents usage that will be reconciled on the next
+// invoice. Callers that want a hard floor can check WalletBalance first.
+
+// WalletBalance returns the org's current prepaid balance in cents (0 if no rows).
+// Must be called inside db.WithOrg (tx already has the RLS context set).
+func WalletBalance(ctx context.Context, tx pgx.Tx, orgID string) (int64, error) {
+	const q = `
+		SELECT COALESCE(
+			(SELECT balance_after_cents
+			   FROM wallet_ledger
+			  WHERE org_id = $1
+			  ORDER BY seq DESC
+			  LIMIT 1), 0)`
+	var bal int64
+	if err := tx.QueryRow(ctx, q, orgID).Scan(&bal); err != nil {
+		return 0, fmt.Errorf("store.billing: wallet balance: %w", err)
+	}
+	return bal, nil
+}
+
+// walletAppend reads the current balance (locking the org's newest row to serialise
+// concurrent writers) and appends a new ledger row with the updated running balance.
+// delta is signed: positive credits, negative debits. Returns the new balance.
+// Must be called inside db.WithOrg (tx already has the RLS context set).
+func walletAppend(ctx context.Context, tx pgx.Tx, orgID, kind string, delta int64, currency, desc, ref string) (int64, error) {
+	if currency == "" {
+		currency = "USD"
+	}
+
+	// Lock the org's latest ledger row (if any) so two concurrent writers compute
+	// balance_after off the same base; the second blocks until the first commits.
+	const lockQ = `
+		SELECT balance_after_cents
+		  FROM wallet_ledger
+		 WHERE org_id = $1
+		 ORDER BY seq DESC
+		 LIMIT 1
+		 FOR UPDATE`
+	var prev int64
+	err := tx.QueryRow(ctx, lockQ, orgID).Scan(&prev)
+	if errors.Is(err, pgx.ErrNoRows) {
+		prev = 0
+	} else if err != nil {
+		return 0, fmt.Errorf("store.billing: wallet lock: %w", err)
+	}
+
+	newBal := prev + delta
+
+	const insQ = `
+		INSERT INTO wallet_ledger
+			(org_id, kind, amount_cents, currency, balance_after_cents, description, ref)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)`
+	if _, err := tx.Exec(ctx, insQ, orgID, kind, delta, currency, newBal, desc, ref); err != nil {
+		return 0, fmt.Errorf("store.billing: wallet append: %w", err)
+	}
+	return newBal, nil
+}
+
+// WalletCredit appends a positive ledger entry (top-up / refund / positive
+// adjustment) for cents and returns the new balance. cents must be > 0.
+// Must be called inside db.WithOrg (tx already has the RLS context set).
+func WalletCredit(ctx context.Context, tx pgx.Tx, orgID string, cents int64, kind, desc, ref string) (int64, error) {
+	if cents <= 0 {
+		return 0, fmt.Errorf("store.billing: wallet credit: cents must be positive, got %d", cents)
+	}
+	return walletAppend(ctx, tx, orgID, kind, cents, "USD", desc, ref)
+}
+
+// WalletDebit appends a negative ledger entry (usage draw-down / negative
+// adjustment) for cents and returns the new balance. cents must be > 0 (it is
+// stored as −cents). The balance MAY go negative — see the section comment.
+// Must be called inside db.WithOrg (tx already has the RLS context set).
+func WalletDebit(ctx context.Context, tx pgx.Tx, orgID string, cents int64, kind, desc, ref string) (int64, error) {
+	if cents <= 0 {
+		return 0, fmt.Errorf("store.billing: wallet debit: cents must be positive, got %d", cents)
+	}
+	return walletAppend(ctx, tx, orgID, kind, -cents, "USD", desc, ref)
+}
+
+// WalletTopupExists reports whether a 'topup' ledger row already exists for the
+// given (org, paystack ref) — used to make webhook crediting idempotent on the
+// Paystack reference. Must be called inside db.WithOrg (RLS context set).
+func WalletTopupExists(ctx context.Context, tx pgx.Tx, orgID, ref string) (bool, error) {
+	const q = `SELECT EXISTS(
+		SELECT 1 FROM wallet_ledger
+		 WHERE org_id = $1 AND kind = 'topup' AND ref = $2)`
+	var exists bool
+	if err := tx.QueryRow(ctx, q, orgID, ref).Scan(&exists); err != nil {
+		return false, fmt.Errorf("store.billing: wallet topup exists: %w", err)
+	}
+	return exists, nil
+}
+
+// ListWalletTransactions returns the org's wallet ledger rows, newest first,
+// capped at limit (limit <= 0 defaults to 50).
+// Must be called inside db.WithOrg (tx already has the RLS context set).
+func ListWalletTransactions(ctx context.Context, tx pgx.Tx, orgID string, limit int) ([]WalletTxn, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	const q = `
+		SELECT id, org_id, kind, amount_cents, currency, balance_after_cents,
+		       description, ref, created_at
+		FROM wallet_ledger
+		WHERE org_id = $1
+		ORDER BY seq DESC
+		LIMIT $2`
+
+	rows, err := tx.Query(ctx, q, orgID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("store.billing: list wallet txns: %w", err)
+	}
+	defer rows.Close()
+
+	var out []WalletTxn
+	for rows.Next() {
+		var t WalletTxn
+		if err := rows.Scan(
+			&t.ID, &t.OrgID, &t.Kind, &t.AmountCents, &t.Currency,
+			&t.BalanceAfterCents, &t.Description, &t.Ref, &t.CreatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("store.billing: scan wallet txn: %w", err)
+		}
+		out = append(out, t)
 	}
 	return out, rows.Err()
 }

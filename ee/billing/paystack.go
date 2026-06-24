@@ -22,6 +22,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
+	"github.com/exo/gitstate/internal/billing"
 	"github.com/exo/gitstate/internal/config"
 	"github.com/exo/gitstate/internal/db"
 	"github.com/exo/gitstate/internal/exchange"
@@ -46,6 +47,10 @@ func RegisterPaystackRoutes(mux *http.ServeMux, database *db.DB, cfg *config.Con
 	// POST /api/billing/checkout — requires auth + org scope
 	checkoutHandler := auth(orgScope(http.HandlerFunc(svc.handleCheckout)))
 	mux.Handle("POST /api/billing/checkout", checkoutHandler)
+
+	// POST /api/billing/wallet/topup — requires auth + org scope
+	topupHandler := auth(orgScope(http.HandlerFunc(svc.handleWalletTopup)))
+	mux.Handle("POST /api/billing/wallet/topup", topupHandler)
 
 	// POST /api/billing/webhook — public endpoint, verified via HMAC-SHA512 signature (S4)
 	mux.HandleFunc("POST /api/billing/webhook", svc.handleWebhook)
@@ -259,6 +264,107 @@ func (s *paystackService) handleCheckout(w http.ResponseWriter, r *http.Request)
 	})
 }
 
+// ── Wallet top-up — POST /api/billing/wallet/topup ───────────────────────────
+
+type walletTopupRequest struct {
+	AmountCents int `json:"amountCents"` // USD cents to credit to the wallet
+}
+
+type walletTopupResponse struct {
+	AuthorizationURL string `json:"authorization_url"`
+	Reference        string `json:"reference"`
+	ZARCents         int    `json:"zar_cents"`
+	USDCents         int    `json:"usd_cents"`
+	FXRate           string `json:"fx_rate"`
+}
+
+// handleWalletTopup initialises a Paystack transaction in ZAR to top up the org's
+// prepaid wallet. The requested USD amount is converted to ZAR at the capture-time
+// rate; the metadata carries purpose=wallet_topup + org_id + usd_cents so the
+// charge.success webhook can credit the wallet idempotently on the Paystack ref.
+func (s *paystackService) handleWalletTopup(w http.ResponseWriter, r *http.Request) {
+	user := middleware.UserFromContext(r.Context())
+	if user == nil {
+		writeError(w, "authentication required", http.StatusUnauthorized)
+		return
+	}
+	orgID := middleware.OrgFromContext(r.Context())
+	if orgID == "" {
+		writeError(w, "org context required", http.StatusBadRequest)
+		return
+	}
+
+	var req walletTopupRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	if req.AmountCents <= 0 {
+		writeError(w, "amountCents must be positive", http.StatusBadRequest)
+		return
+	}
+
+	usdCents := req.AmountCents
+
+	// Convert USD → ZAR at the capture-time rate (decisions A8); Paystack charges ZAR.
+	zarCents, rateID, err := s.exchange.Convert(r.Context(), usdCents)
+	if err != nil {
+		var stale *exchange.ErrStaleRate
+		if !errors.As(err, &stale) {
+			slog.ErrorContext(r.Context(), "ee/billing: topup exchange rate unavailable", "error", err)
+			writeError(w, "exchange rate unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		slog.WarnContext(r.Context(), "ee/billing: topup using stale exchange rate", "error", err)
+	}
+
+	var fxRate float64
+	if usdCents > 0 {
+		fxRate = float64(zarCents) / float64(usdCents)
+	}
+
+	// Initialise the transaction. The wallet is credited only on charge.success
+	// (webhook), keyed idempotently on the Paystack reference.
+	initPayload := map[string]any{
+		"email":    user.Email,
+		"amount":   zarCents,
+		"currency": "ZAR",
+		"metadata": map[string]any{
+			"purpose":   "wallet_topup",
+			"org_id":    orgID,
+			"usd_cents": usdCents,
+			"rate_id":   rateID,
+		},
+	}
+
+	resp, err := s.paystackDo(r.Context(), http.MethodPost, "/transaction/initialize", initPayload)
+	if err != nil {
+		slog.ErrorContext(r.Context(), "ee/billing: topup paystack init failed", "error", err)
+		writeError(w, "payment provider unavailable", http.StatusBadGateway)
+		return
+	}
+	var initResp struct {
+		Status bool `json:"status"`
+		Data   struct {
+			AuthorizationURL string `json:"authorization_url"`
+			Reference        string `json:"reference"`
+		} `json:"data"`
+	}
+	if err := decodePaystack(resp, &initResp); err != nil {
+		slog.ErrorContext(r.Context(), "ee/billing: topup paystack init decode failed", "error", err)
+		writeError(w, "payment provider error", http.StatusBadGateway)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, walletTopupResponse{
+		AuthorizationURL: initResp.Data.AuthorizationURL,
+		Reference:        initResp.Data.Reference,
+		ZARCents:         zarCents,
+		USDCents:         usdCents,
+		FXRate:           fmt.Sprintf("%.6f", fxRate),
+	})
+}
+
 // ── Webhook — POST /api/billing/webhook ──────────────────────────────────────
 
 // handleWebhook processes Paystack webhook events.
@@ -364,6 +470,7 @@ func (s *paystackService) handleChargeSuccess(ctx context.Context, data json.Raw
 		Reference string `json:"reference"`
 		Amount    int    `json:"amount"` // ZAR cents/kobo as charged by Paystack
 		Metadata  struct {
+			Purpose   string `json:"purpose"` // "wallet_topup" routes to the wallet credit path
 			OrgID     string `json:"org_id"`
 			Plan      string `json:"plan"`
 			InvoiceID string `json:"invoice_id"`
@@ -379,6 +486,30 @@ func (s *paystackService) handleChargeSuccess(ctx context.Context, data json.Raw
 	orgID := charge.Metadata.OrgID
 	invoiceID := charge.Metadata.InvoiceID
 	plan := charge.Metadata.Plan
+
+	// Wallet top-up branch: credit the prepaid balance (in USD cents) idempotently
+	// on the Paystack reference. The webhook-level paystack_events idempotency plus
+	// the per-ref WalletTopupExists check together guarantee a replayed webhook
+	// credits the wallet exactly once.
+	if charge.Metadata.Purpose == "wallet_topup" {
+		if orgID == "" || charge.Metadata.USDCents <= 0 {
+			slog.ErrorContext(ctx, "ee/billing: wallet_topup charge.success missing metadata",
+				"org_id", orgID, "usd_cents", charge.Metadata.USDCents)
+			return
+		}
+		bal, credited, err := billing.New(s.db, s.cfg).CreditWalletTopup(
+			ctx, orgID, int64(charge.Metadata.USDCents), charge.Reference,
+			"Paystack wallet top-up")
+		if err != nil {
+			slog.ErrorContext(ctx, "ee/billing: wallet top-up credit failed",
+				"org_id", orgID, "reference", charge.Reference, "error", err)
+			return
+		}
+		slog.InfoContext(ctx, "ee/billing: wallet top-up processed",
+			"org_id", orgID, "reference", charge.Reference,
+			"usd_cents", charge.Metadata.USDCents, "credited", credited, "balance_cents", bal)
+		return
+	}
 
 	if orgID == "" || invoiceID == "" {
 		slog.ErrorContext(ctx, "ee/billing: charge.success missing metadata",

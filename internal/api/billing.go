@@ -41,8 +41,10 @@ func RegisterBillingRoutes(mux *http.ServeMux, database *db.DB, cfg *config.Conf
 	mux.Handle("GET /api/billing/plans", auth(http.HandlerFunc(h.listPlans)))
 	mux.Handle("GET /api/billing/subscription", auth(http.HandlerFunc(h.getSubscription)))
 	mux.Handle("GET /api/billing/usage", auth(http.HandlerFunc(h.getUsage)))
+	mux.Handle("GET /api/billing/usage/by-model", auth(http.HandlerFunc(h.getUsageByModel)))
 	mux.Handle("GET /api/billing/invoices", auth(http.HandlerFunc(h.listInvoices)))
 	mux.Handle("GET /api/billing/invoices/{id}", auth(http.HandlerFunc(h.getInvoice)))
+	mux.Handle("GET /api/billing/wallet", auth(http.HandlerFunc(h.getWallet)))
 }
 
 type billingHandlers struct {
@@ -86,6 +88,30 @@ type usageRollupResponse struct {
 	Kind         string  `json:"kind"`
 	TotalQty     float64 `json:"totalQty"`
 	TotalCostUSD float64 `json:"totalCostUSD"`
+}
+
+type modelUsageResponse struct {
+	Model        string  `json:"model"`
+	Kind         string  `json:"kind"`
+	TotalQty     float64 `json:"totalQty"`     // tokens (see TODO in store.UsageByModel)
+	TotalCostUSD float64 `json:"totalCostUSD"` // provider cost in USD
+}
+
+type walletTxnResponse struct {
+	ID                string `json:"id"`
+	Kind              string `json:"kind"` // topup | usage | adjustment | refund
+	AmountCents       int64  `json:"amountCents"`
+	Currency          string `json:"currency"`
+	BalanceAfterCents int64  `json:"balanceAfterCents"`
+	Description       string `json:"description"`
+	Ref               string `json:"ref,omitempty"`
+	CreatedAt         string `json:"createdAt"`
+}
+
+type walletResponse struct {
+	BalanceCents int64               `json:"balanceCents"`
+	Currency     string              `json:"currency"`
+	Transactions []walletTxnResponse `json:"transactions"`
 }
 
 type invoiceResponse struct {
@@ -225,6 +251,72 @@ func (h *billingHandlers) getUsage(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// GET /api/billing/usage/by-model
+// Returns the per-model managed-LLM usage breakdown for the current period.
+func (h *billingHandlers) getUsageByModel(w http.ResponseWriter, r *http.Request) {
+	if !h.billingEnabled(w) {
+		return
+	}
+	orgID := middleware.OrgFromContext(r.Context())
+
+	rollups, err := h.svc.CurrentUsageByModel(r.Context(), orgID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not fetch per-model usage")
+		return
+	}
+
+	resp := make([]modelUsageResponse, 0, len(rollups))
+	for _, u := range rollups {
+		resp = append(resp, modelUsageResponse{
+			Model:        u.Model,
+			Kind:         u.Kind,
+			TotalQty:     u.TotalQty,
+			TotalCostUSD: u.TotalCostUSD,
+		})
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// GET /api/billing/wallet
+// Returns the org's prepaid wallet balance + recent ledger transactions.
+func (h *billingHandlers) getWallet(w http.ResponseWriter, r *http.Request) {
+	if !h.billingEnabled(w) {
+		return
+	}
+	orgID := middleware.OrgFromContext(r.Context())
+
+	bal, err := h.svc.WalletBalance(r.Context(), orgID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not fetch wallet balance")
+		return
+	}
+	txns, err := h.svc.WalletTransactions(r.Context(), orgID, 50)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not fetch wallet transactions")
+		return
+	}
+
+	txnResp := make([]walletTxnResponse, 0, len(txns))
+	for _, t := range txns {
+		txnResp = append(txnResp, walletTxnResponse{
+			ID:                t.ID,
+			Kind:              t.Kind,
+			AmountCents:       t.AmountCents,
+			Currency:          t.Currency,
+			BalanceAfterCents: t.BalanceAfterCents,
+			Description:       t.Description,
+			Ref:               t.Ref,
+			CreatedAt:         t.CreatedAt.UTC().Format(time.RFC3339),
+		})
+	}
+
+	writeJSON(w, http.StatusOK, walletResponse{
+		BalanceCents: bal,
+		Currency:     "USD",
+		Transactions: txnResp,
+	})
 }
 
 // GET /api/billing/invoices

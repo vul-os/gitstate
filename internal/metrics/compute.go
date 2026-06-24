@@ -13,6 +13,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"math"
 	"regexp"
 	"strings"
 	"time"
@@ -559,10 +560,29 @@ func (s *Service) EstimateForPR(ctx context.Context, orgID, prID, diff string) (
 		if !managed {
 			costUSD = 0
 		}
-		if err := store.RecordUsage(ctx, tx, orgID, "llm_tokens", qty, costUSD); err != nil {
+		// Tag the usage event with the producing model so it shows up in the
+		// per-model breakdown (GET /api/billing/usage/by-model).
+		if err := store.RecordUsage(ctx, tx, orgID, "llm_tokens", qty, costUSD, summary.Model); err != nil {
 			// Non-fatal: the estimate is saved; a missed usage row only under-bills.
 			slog.Warn("metrics: record llm usage failed",
 				"org_id", orgID, "managed", managed, "err", err)
+		}
+
+		// Draw down the prepaid wallet by the managed-LLM cost. The wallet is the
+		// "extra billing" balance beyond the included allowance: allowance is
+		// consumed first (computed at invoice time), then the wallet absorbs cost,
+		// then any remainder lands on the monthly overage invoice. Best-effort —
+		// a failed debit only means usage wasn't deducted from the prepaid balance;
+		// the invoice path still bills it. BYOK (costUSD==0) never debits.
+		if managed && costUSD > 0 {
+			debitCents := int64(math.Round(costUSD * 100))
+			if debitCents > 0 {
+				if _, err := store.WalletDebit(ctx, tx, orgID, debitCents, "usage",
+					"managed LLM usage ("+summary.Model+")", saved.ID); err != nil {
+					slog.Warn("metrics: wallet debit failed",
+						"org_id", orgID, "cents", debitCents, "err", err)
+				}
+			}
 		}
 		return nil
 	}); err != nil {

@@ -491,3 +491,86 @@ func TestGenerateInvoice_TotalEqualsLineSum(t *testing.T) {
 		t.Errorf("sum(lines) = %d, invoice total = %d (must match)", sum, inv.USDCents)
 	}
 }
+
+// TestService_CreditWalletTopup_Idempotent verifies that two CreditWalletTopup
+// calls with the same Paystack reference credit the wallet exactly once (the
+// webhook idempotency contract), and that WalletBalance/WalletTransactions reflect
+// the single credit.
+func TestService_CreditWalletTopup_Idempotent(t *testing.T) {
+	database := testDB(t)
+	ctx := context.Background()
+	orgID, cleanup := seedOrg(t, ctx, database)
+	defer cleanup()
+
+	svc := New(database, &config.Config{})
+	ref := "ps-svc-topup-1"
+
+	bal1, credited1, err := svc.CreditWalletTopup(ctx, orgID, 2500, ref, "top-up")
+	if err != nil {
+		t.Fatalf("first topup: %v", err)
+	}
+	if !credited1 || bal1 != 2500 {
+		t.Errorf("first topup: balance=%d credited=%v, want 2500/true", bal1, credited1)
+	}
+
+	bal2, credited2, err := svc.CreditWalletTopup(ctx, orgID, 2500, ref, "top-up replay")
+	if err != nil {
+		t.Fatalf("replay topup: %v", err)
+	}
+	if credited2 || bal2 != 2500 {
+		t.Errorf("replay topup: balance=%d credited=%v, want 2500/false (idempotent)", bal2, credited2)
+	}
+
+	bal, err := svc.WalletBalance(ctx, orgID)
+	if err != nil {
+		t.Fatalf("WalletBalance: %v", err)
+	}
+	if bal != 2500 {
+		t.Errorf("final balance = %d, want 2500", bal)
+	}
+
+	txns, err := svc.WalletTransactions(ctx, orgID, 10)
+	if err != nil {
+		t.Fatalf("WalletTransactions: %v", err)
+	}
+	if len(txns) != 1 {
+		t.Errorf("got %d txns, want 1 (no double-credit)", len(txns))
+	}
+}
+
+// TestService_CurrentUsageByModel checks the per-model breakdown surfaces summed
+// managed-LLM usage grouped by model for the current period.
+func TestService_CurrentUsageByModel(t *testing.T) {
+	database := testDB(t)
+	ctx := context.Background()
+	orgID, cleanup := seedOrg(t, ctx, database)
+	defer cleanup()
+
+	if err := database.WithOrg(ctx, orgID, func(tx pgx.Tx) error {
+		if e := store.RecordUsage(ctx, tx, orgID, "llm_tokens", 12, 0.12, "claude-sonnet"); e != nil {
+			return e
+		}
+		if e := store.RecordUsage(ctx, tx, orgID, "llm_tokens", 8, 0.08, "claude-sonnet"); e != nil {
+			return e
+		}
+		return store.RecordUsage(ctx, tx, orgID, "llm_tokens", 3, 0.03, "claude-haiku")
+	}); err != nil {
+		t.Fatalf("record usage: %v", err)
+	}
+
+	svc := New(database, &config.Config{})
+	rollups, err := svc.CurrentUsageByModel(ctx, orgID)
+	if err != nil {
+		t.Fatalf("CurrentUsageByModel: %v", err)
+	}
+	got := map[string]float64{}
+	for _, r := range rollups {
+		got[r.Model] = r.TotalQty
+	}
+	if got["claude-sonnet"] != 20 {
+		t.Errorf("claude-sonnet qty = %v, want 20", got["claude-sonnet"])
+	}
+	if got["claude-haiku"] != 3 {
+		t.Errorf("claude-haiku qty = %v, want 3", got["claude-haiku"])
+	}
+}

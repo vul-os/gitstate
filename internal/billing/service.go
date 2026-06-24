@@ -151,6 +151,101 @@ func (s *Service) CurrentUsage(ctx context.Context, orgID string) ([]store.Usage
 	return rollups, nil
 }
 
+// CurrentUsageByModel returns the per-model managed-LLM usage breakdown for the
+// current billing period (same window as CurrentUsage). Each entry is a
+// (model, kind) rollup with summed tokens and provider cost.
+func (s *Service) CurrentUsageByModel(ctx context.Context, orgID string) ([]store.ModelUsageRollup, error) {
+	now := time.Now().UTC()
+	from := now.AddDate(0, 0, -30)
+
+	sub, err := store.GetSubscription(ctx, s.db.Pool(), orgID)
+	if err != nil && err != store.ErrNotFound {
+		return nil, fmt.Errorf("billing: usage by model: get subscription: %w", err)
+	}
+	if sub != nil && sub.CurrentPeriodEnd != nil {
+		approxStart := sub.CurrentPeriodEnd.AddDate(0, -1, 0)
+		if approxStart.Before(now) {
+			from = approxStart
+		}
+	}
+
+	var rollups []store.ModelUsageRollup
+	if err := s.db.WithOrg(ctx, orgID, func(tx pgx.Tx) error {
+		var err error
+		rollups, err = store.UsageByModel(ctx, tx, orgID, from, now)
+		return err
+	}); err != nil {
+		return nil, fmt.Errorf("billing: usage by model: %w", err)
+	}
+	return rollups, nil
+}
+
+// ── Wallet (prepaid balance) ───────────────────────────────────────────────────
+
+// WalletBalance returns the org's current prepaid wallet balance in cents.
+func (s *Service) WalletBalance(ctx context.Context, orgID string) (int64, error) {
+	var bal int64
+	if err := s.db.WithOrg(ctx, orgID, func(tx pgx.Tx) error {
+		var err error
+		bal, err = store.WalletBalance(ctx, tx, orgID)
+		return err
+	}); err != nil {
+		return 0, fmt.Errorf("billing: wallet balance: %w", err)
+	}
+	return bal, nil
+}
+
+// WalletTransactions returns the org's wallet ledger, newest first (capped).
+func (s *Service) WalletTransactions(ctx context.Context, orgID string, limit int) ([]store.WalletTxn, error) {
+	var txns []store.WalletTxn
+	if err := s.db.WithOrg(ctx, orgID, func(tx pgx.Tx) error {
+		var err error
+		txns, err = store.ListWalletTransactions(ctx, tx, orgID, limit)
+		return err
+	}); err != nil {
+		return nil, fmt.Errorf("billing: wallet transactions: %w", err)
+	}
+	return txns, nil
+}
+
+// CreditWalletTopup idempotently credits the wallet for a Paystack top-up keyed on
+// the Paystack reference. A replayed webhook with the same ref is a no-op (returns
+// the current balance + credited=false). cents must be > 0.
+func (s *Service) CreditWalletTopup(ctx context.Context, orgID string, cents int64, ref, desc string) (balance int64, credited bool, err error) {
+	if cents <= 0 {
+		return 0, false, fmt.Errorf("billing: wallet topup: cents must be positive, got %d", cents)
+	}
+	werr := s.db.WithOrg(ctx, orgID, func(tx pgx.Tx) error {
+		if ref != "" {
+			exists, e := store.WalletTopupExists(ctx, tx, orgID, ref)
+			if e != nil {
+				return e
+			}
+			if exists {
+				// Already credited this reference — no-op (idempotent replay).
+				bal, e := store.WalletBalance(ctx, tx, orgID)
+				if e != nil {
+					return e
+				}
+				balance = bal
+				credited = false
+				return nil
+			}
+		}
+		bal, e := store.WalletCredit(ctx, tx, orgID, cents, "topup", desc, ref)
+		if e != nil {
+			return e
+		}
+		balance = bal
+		credited = true
+		return nil
+	})
+	if werr != nil {
+		return 0, false, fmt.Errorf("billing: wallet topup: %w", werr)
+	}
+	return balance, credited, nil
+}
+
 // ── Invoice generation ────────────────────────────────────────────────────────
 
 // GenerateInvoice builds a USD invoice for the org covering [periodStart, periodEnd].
