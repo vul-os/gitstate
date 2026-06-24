@@ -66,6 +66,13 @@ export function useRepos() {
     }
   }, [state.repos])
 
+  // Disconnect a repo and delete all its synced data. Optimistically drops the row
+  // (via refetch on settle); reverts by refetching on failure.
+  const removeRepo = useCallback(async (id) => {
+    await api.disconnectRepo(id)
+    await doFetch()
+  }, [doFetch])
+
   return {
     repos: state.repos,
     loading: state.loading,
@@ -74,5 +81,6 @@ export function useRepos() {
     connectRepo,
     syncRepo,
     moveRepo,
+    removeRepo,
   }
 }

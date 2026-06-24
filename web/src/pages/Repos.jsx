@@ -4,7 +4,7 @@
  */
 import { useState, useCallback, useMemo, useEffect, useRef } from 'react'
 import {
-  GitBranch, Plus, RefreshCw, Loader2, X, Check,
+  GitBranch, Trash2, Plus, RefreshCw, Loader2, X, Check,
   CircleDot, GitPullRequest, AlertCircle, Clock, ArrowRight,
   Link2, Unlink, KeyRound, Download, Building2, Settings, Info, ExternalLink,
   ChevronRight, FolderGit2, FolderPlus, MoveRight, Inbox,
@@ -358,10 +358,12 @@ function NewProjectForm({ onCreate, onClose }) {
   )
 }
 
-function RepoRow({ repo, onSync, projects, onMove }) {
+function RepoRow({ repo, onSync, projects, onMove, onRemove }) {
   const meta = platformMeta(repo.platform)
   const Icon = meta.icon
   const synced = relativeTime(repo.lastSyncedAt)
+  const [confirming, setConfirming] = useState(false)
+  const [removing, setRemoving] = useState(false)
 
   return (
     <div className="group flex items-center gap-4 px-5 py-4 border-b border-[var(--border)] last:border-0 hover:bg-[var(--bg-surface2)]/60 transition-colors">
@@ -412,6 +414,31 @@ function RepoRow({ repo, onSync, projects, onMove }) {
         <RefreshCw size={13} className={repo.syncing ? 'animate-spin' : 'group-hover:rotate-45 transition-transform duration-300'} />
         {repo.syncing ? 'Syncing…' : 'Sync'}
       </button>
+
+      {/* Disconnect + delete data (two-step confirm) */}
+      {onRemove && (confirming ? (
+        <span className="flex items-center gap-1 shrink-0">
+          <span className="text-[10px] text-[var(--bad)] font-medium hidden sm:inline">Delete all data?</span>
+          <button
+            onClick={async (e) => { e.stopPropagation(); setRemoving(true); try { await onRemove(repo.id) } catch { setRemoving(false); setConfirming(false) } }}
+            disabled={removing}
+            className="text-[11px] font-semibold px-2 py-1.5 rounded-[var(--radius-badge)] text-white bg-[var(--bad)] hover:opacity-90 transition-opacity disabled:opacity-60"
+            title="Yes — disconnect and delete its synced data"
+          >
+            {removing ? <Loader2 size={12} className="animate-spin" /> : 'Yes'}
+          </button>
+          <button onClick={(e) => { e.stopPropagation(); setConfirming(false) }} className="text-[11px] px-2 py-1.5 rounded-[var(--radius-badge)] text-[var(--text-faint)] hover:text-[var(--text)] hover:bg-[var(--bg-surface2)] transition-colors">No</button>
+        </span>
+      ) : (
+        <button
+          onClick={(e) => { e.stopPropagation(); setConfirming(true) }}
+          className="grid place-items-center w-8 h-8 rounded-[var(--radius-badge)] text-[var(--text-faint)] hover:text-[var(--bad)] hover:bg-[var(--bad)]/[0.08] transition-colors shrink-0"
+          title="Disconnect repo & delete its synced data"
+          aria-label={`Disconnect ${repo.fullName}`}
+        >
+          <Trash2 size={14} />
+        </button>
+      ))}
     </div>
   )
 }
@@ -754,7 +781,7 @@ function ConnectSection({ onImport, onImportAll, onUsePat, justConnected }) {
 }
 
 export default function Repos() {
-  const { repos, loading, error, connectRepo, syncRepo, moveRepo, refetch } = useRepos()
+  const { repos, loading, error, connectRepo, syncRepo, moveRepo, removeRepo, refetch } = useRepos()
   const { projects, createProject, refetch: refetchProjects } = useProjects()
   const [syncingAll, setSyncingAll] = useState(false)
   // Search within the grouped repo list, and per-group collapse state.
@@ -790,6 +817,18 @@ export default function Repos() {
       setToast({ kind: 'err', text: e.message ?? 'Could not move repo' })
     }
   }, [moveRepo, refetch])
+
+  // Disconnect a repo + delete its synced data.
+  const handleRemoveRepo = useCallback(async (id) => {
+    const repo = repos.find(r => r.id === id)
+    try {
+      await removeRepo(id)
+      setToast({ kind: 'ok', text: `Disconnected ${repo?.fullName ?? 'repo'} and deleted its data` })
+    } catch (e) {
+      setToast({ kind: 'err', text: e.message ?? 'Could not disconnect repo' })
+      throw e
+    }
+  }, [removeRepo, repos])
 
   const handleSyncAll = useCallback(async () => {
     setSyncingAll(true)
@@ -1158,7 +1197,7 @@ export default function Repos() {
                       </p>
                     )}
                     {open && list.map(repo => (
-                      <RepoRow key={repo.id} repo={repo} onSync={syncRepo} projects={projects.filter(p => !p.archived)} onMove={handleMoveRepo} />
+                      <RepoRow key={repo.id} repo={repo} onSync={syncRepo} projects={projects.filter(p => !p.archived)} onMove={handleMoveRepo} onRemove={handleRemoveRepo} />
                     ))}
                   </div>
                 )
@@ -1211,7 +1250,7 @@ export default function Repos() {
                             <span className="text-[10px] font-mono text-[var(--text-faint)] tabular-nums">{ownerList.length}</span>
                           </button>
                           {oopen && ownerList.map(repo => (
-                            <RepoRow key={repo.id} repo={repo} onSync={syncRepo} projects={projects.filter(p => !p.archived)} onMove={handleMoveRepo} />
+                            <RepoRow key={repo.id} repo={repo} onSync={syncRepo} projects={projects.filter(p => !p.archived)} onMove={handleMoveRepo} onRemove={handleRemoveRepo} />
                           ))}
                         </div>
                       )

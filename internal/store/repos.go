@@ -100,6 +100,35 @@ func ListRepos(ctx context.Context, tx pgx.Tx, orgID string) ([]Repo, error) {
 	return out, rows.Err()
 }
 
+// DeleteRepo disconnects a repo and DELETES all of its derived data. Tables with
+// repo_id ON DELETE CASCADE (commits, pull_requests, pr_reviews, commit_files,
+// author_survival, bug_introductions, …) clear automatically when the repo row is
+// removed; the few SET-NULL tables (issues, agent_runs, deployments, incidents)
+// and cycle_times (keyed by pr_id) are deleted explicitly first so nothing lingers
+// orphaned. Run inside db.WithOrg. Returns ErrNotFound if the repo doesn't exist.
+func DeleteRepo(ctx context.Context, tx pgx.Tx, orgID, repoID string) error {
+	// cycle_times reference the repo's PRs (which are about to cascade away).
+	if _, err := tx.Exec(ctx,
+		`DELETE FROM cycle_times WHERE org_id = $1 AND pr_id IN (SELECT id FROM pull_requests WHERE org_id = $1 AND repo_id = $2)`,
+		orgID, repoID); err != nil {
+		return fmt.Errorf("store: delete repo cycle_times: %w", err)
+	}
+	// SET-NULL tables: delete the repo's rows so they don't survive repo-less.
+	for _, t := range []string{"issues", "agent_runs", "deployments", "incidents"} {
+		if _, err := tx.Exec(ctx, `DELETE FROM `+t+` WHERE org_id = $1 AND repo_id = $2`, orgID, repoID); err != nil {
+			return fmt.Errorf("store: delete repo %s: %w", t, err)
+		}
+	}
+	tag, err := tx.Exec(ctx, `DELETE FROM repos WHERE org_id = $1 AND id = $2`, orgID, repoID)
+	if err != nil {
+		return fmt.Errorf("store: delete repo: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 // SetRepoProject assigns a repo to a project (projectID nil/empty ⇒ unassign).
 // Run inside db.WithOrg. The FK + RLS ensure the project belongs to the same org.
 func SetRepoProject(ctx context.Context, tx pgx.Tx, orgID, repoID string, projectID *string) error {

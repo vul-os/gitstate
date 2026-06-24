@@ -71,6 +71,7 @@ func RegisterSyncRoutes(mux *http.ServeMux, database *db.DB, cfg *config.Config)
 	mux.Handle("GET /api/repos", auth(http.HandlerFunc(h.listRepos)))
 	mux.Handle("POST /api/repos", auth(http.HandlerFunc(h.connectRepo)))
 	mux.Handle("POST /api/repos/{id}/sync", auth(http.HandlerFunc(h.triggerSync)))
+	mux.Handle("DELETE /api/repos/{id}", auth(http.HandlerFunc(h.deleteRepo)))
 	mux.Handle("POST /api/repos/sync-all", auth(http.HandlerFunc(h.syncAll)))
 	mux.Handle("POST /api/repos/import", auth(http.HandlerFunc(h.importRepos)))
 
@@ -191,6 +192,21 @@ func (h *syncHandlers) listRepos(w http.ResponseWriter, r *http.Request) {
 		out[i] = repoToResponse(rp)
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// ── DELETE /api/repos/{id} ──────────────────────────────────────────────────────
+// Disconnect a repo and delete ALL its synced data (commits, PRs, reviews, issues,
+// cycle times, deployments, …). Irreversible — the frontend confirms first.
+func (h *syncHandlers) deleteRepo(w http.ResponseWriter, r *http.Request) {
+	orgID := middleware.OrgFromContext(r.Context())
+	repoID := r.PathValue("id")
+	if err := h.db.WithOrg(r.Context(), orgID, func(tx pgx.Tx) error {
+		return store.DeleteRepo(r.Context(), tx, orgID, repoID)
+	}); err != nil {
+		writeSyncError(w, "delete repo", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
 // ── POST /api/repos ───────────────────────────────────────────────────────────

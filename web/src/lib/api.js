@@ -341,6 +341,11 @@ export function disconnectPlatform(platform) {
   return del(`/api/connect/${platform}`)
 }
 
+/** Disconnect a repo and DELETE all its synced data (commits/PRs/issues/analytics). */
+export function disconnectRepo(repoId) {
+  return del(`/api/repos/${repoId}`)
+}
+
 // ── Projects ────────────────────────────────────────────────────────────────────
 
 /** List the org's user-created projects: [{id, name, key, archived}]. */
