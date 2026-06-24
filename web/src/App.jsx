@@ -10,6 +10,7 @@ import MarketingLayout from './components/marketing/MarketingLayout.jsx'
 // chrome + the auth provider. Each page becomes its own on-demand chunk.
 const Landing = lazy(() => import('./pages/Landing.jsx'))
 const Pricing = lazy(() => import('./pages/Pricing.jsx'))
+const ModelPricing = lazy(() => import('./pages/ModelPricing.jsx'))
 const Compare = lazy(() => import('./pages/Compare.jsx'))
 const Docs = lazy(() => import('./pages/Docs.jsx'))
 const Login = lazy(() => import('./pages/Login.jsx'))
@@ -103,6 +104,9 @@ export default function App() {
               {/* Public landing (Landing brings its own MarketingLayout) */}
               <Route path="/" element={<Root />} />
               <Route path="/welcome" element={<Navigate to="/" replace />} />
+
+              {/* Public AI model pricing — brings its own MarketingLayout */}
+              <Route path="/models" element={<ModelPricing />} />
 
               {/* Public marketing pages share the marketing chrome via <Outlet/> */}
               <Route element={<MarketingLayout />}>

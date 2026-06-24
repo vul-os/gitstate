@@ -18,10 +18,11 @@ import { LogoFull } from '../Logo.jsx'
 
 const FOOTER_LINKS = {
   Product: [
-    { label: 'Overview',   to: '/' },
-    { label: 'Pricing',    to: '/pricing' },
-    { label: 'Compare',    to: '/compare' },
-    { label: 'Changelog',  to: '/changelog' },
+    { label: 'Overview',      to: '/' },
+    { label: 'Pricing',       to: '/pricing' },
+    { label: 'Model pricing', to: '/models' },
+    { label: 'Compare',       to: '/compare' },
+    { label: 'Changelog',     to: '/changelog' },
   ],
   Resources: [
     { label: 'Docs',             to: '/docs' },

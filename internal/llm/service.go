@@ -100,21 +100,53 @@ type Service struct {
 	model    string // recorded on each estimate for traceability
 }
 
+// defaultModel is the model recorded on estimates (and used as the gateway's
+// requested model) when cfg.LLM.Model is unset: the cheapest current model for
+// bulk effort scoring.
+const defaultModel = "claude-haiku-4-5-20251001"
+
 // New constructs a Service from config. Returns a service with a nil provider
-// (all operations return ErrLLMNotConfigured) when the API key is absent —
+// (all operations return ErrLLMNotConfigured) when no provider can be built —
 // the service never panics on missing config.
+//
+// Gateway-off behavior is unchanged: it builds the Anthropic-direct client when
+// an Anthropic API key is present, else a nil-provider Service. To route through
+// the in-process llmux gateway, use NewWithGateway with a started *Gateway's
+// base URL (see main.go wiring).
 func New(cfg *config.Config) *Service {
 	if cfg.LLM.AnthropicAPIKey == "" {
 		return &Service{}
 	}
 	model := cfg.LLM.Model
 	if model == "" {
-		model = "claude-haiku-4-5-20251001" // default: cheapest current model for bulk effort scoring; logged per estimate
+		model = defaultModel
 	}
 	return &Service{
 		provider: newAnthropicClient(cfg.LLM.AnthropicAPIKey, model),
 		model:    model,
 	}
+}
+
+// NewWithGateway constructs a Service that prefers the in-process llmux gateway
+// when one is running (cfg.LLM.Gateway == "llmux" and gw is enabled): completions
+// route through the gateway's OpenAI-compatible client. Otherwise it falls back
+// to the legacy Anthropic-direct path (identical to New). The model string is
+// still recorded/logged per estimate.
+//
+// gw may be nil (gateway off) — callers don't need a nil check.
+func NewWithGateway(cfg *config.Config, gw *Gateway) *Service {
+	model := cfg.LLM.Model
+	if model == "" {
+		model = defaultModel
+	}
+	if cfg.LLM.Gateway == GatewayKind && gw.Enabled() {
+		// Gateway holds the provider keys server-side; the client needs no key.
+		return &Service{
+			provider: newOpenAIClient(gw.BaseURL(), "", model),
+			model:    model,
+		}
+	}
+	return New(cfg)
 }
 
 // NewWithProvider constructs a Service using a caller-supplied Provider

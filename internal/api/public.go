@@ -54,7 +54,10 @@ type publicPlan struct {
 }
 
 // RegisterPublicPlans wires GET /api/plans (public — for the pricing page).
-func RegisterPublicPlans(mux *http.ServeMux, database *db.DB, _ *config.Config) {
+// It also folds in the public model catalog (GET /api/models) so the catalog
+// rides an already-registered registrar without touching router.go.
+func RegisterPublicPlans(mux *http.ServeMux, database *db.DB, cfg *config.Config) {
+	RegisterModelRoutes(mux, cfg)
 	mux.HandleFunc("GET /api/plans", func(w http.ResponseWriter, r *http.Request) {
 		plans, err := store.ListPlans(r.Context(), database.Pool())
 		if err != nil {

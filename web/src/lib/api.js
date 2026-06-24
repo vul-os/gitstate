@@ -547,3 +547,20 @@ export function inviteContributor(id, email) {
 export function topupWallet(amountCents) {
   return post('/api/billing/wallet/topup', { amountCents })
 }
+
+// ── Managed-AI model catalog ────────────────────────────────────────────────────
+//
+// Public, unauthenticated price list for the managed-AI passthrough. Each model:
+//   { provider: "anthropic"|"openai"|"google", id, displayName, contextTokens,
+//     inputUsdPerMTok, outputUsdPerMTok,          // provider's published rate
+//     ourInputUsdPerMTok, ourOutputUsdPerMTok }   // our rate = base × 1.05
+//
+// Used by the public /models page. Falls back to a curated list (in
+// components/pricing/modelData.js) when the endpoint is unavailable so the page
+// renders offline.
+
+/** Fetch the public managed-AI model price list. GET /api/models → array (see shape above). */
+export function fetchModels() {
+  // Public route — no auth/org headers needed, but request() is harmless without a token.
+  return get('/api/models')
+}

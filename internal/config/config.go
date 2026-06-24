@@ -127,6 +127,15 @@ type LLMConfig struct {
 	Provider        string `yaml:"provider"`
 	Model           string `yaml:"model"`
 	AnthropicAPIKey string `yaml:"anthropic_api_key"`
+
+	// Gateway selects the in-process LLM gateway. "llmux" (env LLM_GATEWAY)
+	// boots the embedded llmux multi-provider gateway and routes completions
+	// through its OpenAI-compatible endpoint; empty/unset keeps the legacy
+	// Anthropic-direct client (unchanged behavior).
+	Gateway string `yaml:"gateway"`
+	// Markup is the multiplier applied to managed-LLM base prices when we
+	// on-charge usage (e.g. 1.05 = +5%). Defaults to 1.05 when unset.
+	Markup float64 `yaml:"markup"`
 }
 
 // BillingConfig holds EE billing settings.
@@ -276,6 +285,12 @@ func Load() (*Config, error) {
 	// Overlay raw env vars — env always wins over file values.
 	overlayEnv(cfg)
 
+	// Default the managed-LLM markup to +5% when neither file nor env set it
+	// (a non-positive markup would zero out on-charge pricing).
+	if cfg.LLM.Markup <= 0 {
+		cfg.LLM.Markup = 1.05
+	}
+
 	// Derive OAuth enabled flags (decisions A6).
 	cfg.Auth.Providers.Google.Enabled =
 		cfg.Auth.Providers.Google.ClientID != "" &&
@@ -359,6 +374,13 @@ func overlayEnv(cfg *Config) {
 			}
 		}
 	}
+	setFloat := func(dest *float64, key string) {
+		if v := os.Getenv(key); v != "" {
+			if f, err := strconv.ParseFloat(v, 64); err == nil {
+				*dest = f
+			}
+		}
+	}
 	setDuration := func(dest *time.Duration, key string) {
 		if v := os.Getenv(key); v != "" {
 			if d, err := time.ParseDuration(v); err == nil {
@@ -419,6 +441,8 @@ func overlayEnv(cfg *Config) {
 	setStr(&cfg.LLM.Provider, "LLM_PROVIDER")
 	setStr(&cfg.LLM.Model, "LLM_MODEL")
 	setStr(&cfg.LLM.AnthropicAPIKey, "ANTHROPIC_API_KEY")
+	setStr(&cfg.LLM.Gateway, "LLM_GATEWAY")
+	setFloat(&cfg.LLM.Markup, "LLM_MARKUP")
 
 	// Billing
 	setBool(&cfg.Billing.Enabled, "BILLING_ENABLED")
