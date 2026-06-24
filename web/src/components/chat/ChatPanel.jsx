@@ -1,66 +1,31 @@
 /**
- * ChatPanel — polished AI chat rail for the app shell.
+ * ChatPanel — the agentic AI assistant rail for the app shell.
  *
- * A conversational front-end over the NL→report endpoint. Each question is
- * sent to POST /api/reports/query; the assistant reply renders the natural
- * answer plus a collapsible result table and the SQL used (transparency).
- *
- * Theme-aware, uses design tokens. Rendered inside AppShell's right rail.
+ * A streaming, tool-using assistant over POST /api/chat (SSE). The header carries
+ * a provider-grouped model selector; assistant turns stream token-by-token with
+ * markdown, interleaved tool-use cards, and confirmable action buttons (e.g.
+ * "Upgrade to Pro", "Sync repo"). Theme-aware; uses design tokens. Rendered inside
+ * AppShell's right rail.
  */
 import { useEffect, useRef, useState } from 'react'
-import { Sparkles, X, ArrowUp, Table2, Code2 } from 'lucide-react'
+import { Sparkles, X, ArrowUp, Square, RotateCcw } from 'lucide-react'
 import { useChat } from '../../lib/useChat.js'
+import { ModelSelector } from './ModelSelector.jsx'
+import { ToolCard } from './ToolCard.jsx'
+import { ActionButton } from './ActionButton.jsx'
+import { ChatMarkdown } from './ChatMarkdown.jsx'
 
 const SUGGESTIONS = [
-  'Which PRs took longest to merge?',
-  'Which issues have been open longest?',
-  'Who reviewed the most PRs this month?',
+  'How’s our cycle time trending?',
+  'Who are the top contributors?',
+  'Upgrade me to Pro',
+  'Invoice Acme for last month from git',
 ]
 
-function Collapsible({ icon, label, defaultOpen = false, children }) {
-  const [open, setOpen] = useState(defaultOpen)
+function Avatar() {
   return (
-    <div className="mt-2 rounded-[var(--radius-badge)] border border-[var(--border)] bg-[var(--bg)] overflow-hidden">
-      <button
-        type="button"
-        onClick={() => setOpen(v => !v)}
-        className="w-full flex items-center gap-1.5 px-2.5 py-1.5 text-[10px] font-mono uppercase tracking-wider text-[var(--text-faint)] hover:text-[var(--text-muted)] transition-colors cursor-pointer"
-      >
-        {icon}
-        {label}
-        <span className="ml-auto">{open ? '−' : '+'}</span>
-      </button>
-      {open && <div className="px-2.5 pb-2.5">{children}</div>}
-    </div>
-  )
-}
-
-function RowsTable({ rows }) {
-  const cols = Object.keys(rows[0])
-  return (
-    <div className="overflow-x-auto">
-      <table className="w-full text-[11px]">
-        <thead>
-          <tr className="border-b border-[var(--border)]">
-            {cols.map(col => (
-              <th key={col} className="text-left px-2 py-1.5 text-[var(--text-faint)] font-mono uppercase tracking-wider whitespace-nowrap">
-                {col}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((row, ri) => (
-            <tr key={ri} className="border-b border-[var(--border)]/60">
-              {cols.map(col => (
-                <td key={col} className="px-2 py-1.5 text-[var(--text-muted)] font-mono whitespace-nowrap">
-                  {row[col] === null || row[col] === undefined ? '—' : String(row[col])}
-                </td>
-              ))}
-            </tr>
-          ))}
-        </tbody>
-      </table>
+    <div className="mt-0.5 shrink-0 w-6 h-6 rounded-full bg-gradient-to-br from-[var(--brand-teal)] to-[var(--brand-indigo)] flex items-center justify-center">
+      <Sparkles size={12} strokeWidth={2.5} className="text-white" />
     </div>
   )
 }
@@ -68,87 +33,72 @@ function RowsTable({ rows }) {
 function UserBubble({ text }) {
   return (
     <div className="flex justify-end">
-      <div className="max-w-[85%] rounded-[var(--radius-card)] rounded-br-sm px-3.5 py-2 bg-[var(--brand-indigo)]/15 border border-[var(--brand-indigo)]/25 text-sm text-[var(--text)] leading-relaxed">
+      <div className="max-w-[85%] rounded-[var(--radius-card)] rounded-br-sm px-3.5 py-2 bg-[var(--brand-indigo)]/15 border border-[var(--brand-indigo)]/25 text-sm text-[var(--text)] leading-relaxed whitespace-pre-wrap">
         {text}
       </div>
     </div>
   )
 }
 
-function AssistantBubble({ msg }) {
+function StreamingDots() {
+  return (
+    <span className="inline-flex items-center gap-1 align-middle ml-0.5">
+      {[0, 1, 2].map(i => (
+        <span key={i} className="w-1 h-1 rounded-full bg-[var(--text-faint)] animate-bounce" style={{ animationDelay: `${i * 0.15}s` }} />
+      ))}
+    </span>
+  )
+}
+
+function AssistantBubble({ msg, onRunAction }) {
+  const hasContent = msg.parts.some(p => (p.kind === 'text' && p.text) || p.kind === 'tool' || p.kind === 'action')
   return (
     <div className="flex gap-2.5">
-      <div className="mt-0.5 shrink-0 w-6 h-6 rounded-full bg-gradient-to-br from-[var(--brand-teal)] to-[var(--brand-indigo)] flex items-center justify-center">
-        <Sparkles size={12} strokeWidth={2.5} className="text-white" />
-      </div>
+      <Avatar />
       <div className="min-w-0 flex-1">
-        {msg.error ? (
-          <div className="rounded-[var(--radius-badge)] px-3 py-2 text-sm text-red-400 bg-red-500/[0.06] border border-red-500/20">
+        {msg.parts.map((part, i) => {
+          if (part.kind === 'tool') return <ToolCard key={part.id ?? i} part={part} />
+          if (part.kind === 'action') return <ActionButton key={part.id ?? i} part={part} onConfirm={() => onRunAction(msg.id, part.id)} />
+          if (part.kind === 'text' && part.text) return <ChatMarkdown key={i}>{part.text}</ChatMarkdown>
+          return null
+        })}
+
+        {/* Thinking indicator before the first token arrives. */}
+        {msg.streaming && !hasContent && !msg.error && (
+          <div className="flex items-center h-6"><StreamingDots /></div>
+        )}
+        {/* Trailing caret while text is still streaming. */}
+        {msg.streaming && hasContent && !msg.error && (
+          <span className="inline-block w-1.5 h-3.5 align-text-bottom bg-[var(--brand-teal)] animate-pulse rounded-sm" aria-hidden="true" />
+        )}
+
+        {msg.error && (
+          <div className="mt-1 rounded-[var(--radius-badge)] px-3 py-2 text-sm text-red-400 bg-red-500/[0.06] border border-red-500/20">
             {msg.error}
           </div>
-        ) : (
-          <>
-            {msg.text && (
-              <p className="text-sm text-[var(--text-dim)] leading-relaxed whitespace-pre-wrap">{msg.text}</p>
-            )}
-            {Array.isArray(msg.rows) && msg.rows.length > 0 && (
-              <Collapsible
-                icon={<Table2 size={11} strokeWidth={2} />}
-                label={`${msg.rows.length} row${msg.rows.length === 1 ? '' : 's'}`}
-                defaultOpen
-              >
-                <RowsTable rows={msg.rows} />
-              </Collapsible>
-            )}
-            {msg.sql && (
-              <Collapsible icon={<Code2 size={11} strokeWidth={2} />} label="SQL used">
-                <pre className="text-[11px] text-[var(--text-muted)] font-mono whitespace-pre-wrap leading-relaxed overflow-auto">
-                  {msg.sql}
-                </pre>
-              </Collapsible>
-            )}
-          </>
         )}
       </div>
     </div>
   )
 }
 
-function TypingIndicator() {
-  return (
-    <div className="flex gap-2.5" role="status" aria-label="Assistant is typing">
-      <div className="mt-0.5 shrink-0 w-6 h-6 rounded-full bg-gradient-to-br from-[var(--brand-teal)] to-[var(--brand-indigo)] flex items-center justify-center">
-        <Sparkles size={12} strokeWidth={2.5} className="text-white" />
-      </div>
-      <div className="flex items-center gap-1 h-6">
-        {[0, 1, 2].map(i => (
-          <span
-            key={i}
-            className="w-1.5 h-1.5 rounded-full bg-[var(--text-faint)] animate-bounce"
-            style={{ animationDelay: `${i * 0.15}s` }}
-          />
-        ))}
-      </div>
-    </div>
-  )
-}
-
-function EmptyState({ onPick }) {
+function EmptyState({ onPick, disabled }) {
   return (
     <div className="h-full flex flex-col items-center justify-center text-center px-6">
       <div className="w-11 h-11 rounded-full bg-gradient-to-br from-[var(--brand-teal)] to-[var(--brand-indigo)] flex items-center justify-center mb-4">
         <Sparkles size={20} strokeWidth={2} className="text-white" />
       </div>
       <p className="text-sm text-[var(--text-dim)] leading-relaxed max-w-[260px]">
-        Ask anything about your repos — e.g. <span className="text-[var(--text)]">“which PRs took longest to merge?”</span>
+        Your repo-aware assistant. Ask about metrics, contributors, billing — it can act, with your confirm.
       </p>
       <div className="mt-5 w-full flex flex-col gap-2">
         {SUGGESTIONS.map(s => (
           <button
             key={s}
             type="button"
+            disabled={disabled}
             onClick={() => onPick(s)}
-            className="text-left text-[12px] text-[var(--text-muted)] hover:text-[var(--text)] rounded-[var(--radius-btn)] border border-[var(--border)] bg-[var(--bg-surface2)] hover:border-[var(--border2)] px-3 py-2 transition-colors cursor-pointer"
+            className="text-left text-[12px] text-[var(--text-muted)] hover:text-[var(--text)] rounded-[var(--radius-btn)] border border-[var(--border)] bg-[var(--bg-surface2)] hover:border-[var(--border2)] px-3 py-2 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {s}
           </button>
@@ -159,14 +109,18 @@ function EmptyState({ onPick }) {
 }
 
 export function ChatPanel({ onClose }) {
-  const { messages, sending, send } = useChat()
+  const {
+    messages, sending, send, stop, regenerate, runAction,
+    models, modelId, selectedModel, chooseModel,
+    gatewayDisabled, canRegenerate,
+  } = useChat()
   const [input, setInput] = useState('')
   const scrollRef = useRef(null)
   const endRef = useRef(null)
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
-  }, [messages, sending])
+  }, [messages])
 
   function submit(e) {
     e?.preventDefault()
@@ -188,29 +142,55 @@ export function ChatPanel({ onClose }) {
       <header className="h-12 shrink-0 flex items-center gap-2 px-4 border-b border-[var(--border)]">
         <Sparkles size={15} strokeWidth={2} className="text-[var(--brand-teal)]" aria-hidden="true" />
         <span className="text-[13px] font-semibold text-[var(--text)] tracking-tight">Ask AI</span>
-        <button
-          type="button"
-          onClick={onClose}
-          aria-label="Close chat"
-          title="Close"
-          className="ml-auto flex items-center justify-center w-7 h-7 rounded-md text-[var(--text-faint)] hover:text-[var(--text)] hover:bg-[var(--bg-surface2)] transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand-teal)]"
-        >
-          <X size={15} strokeWidth={2} aria-hidden="true" />
-        </button>
+        <div className="ml-auto flex items-center gap-1.5">
+          <ModelSelector
+            models={models}
+            modelId={modelId}
+            selectedModel={selectedModel}
+            onChoose={chooseModel}
+            disabled={sending}
+          />
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close chat"
+            title="Close"
+            className="flex items-center justify-center w-7 h-7 rounded-md text-[var(--text-faint)] hover:text-[var(--text)] hover:bg-[var(--bg-surface2)] transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand-teal)]"
+          >
+            <X size={15} strokeWidth={2} aria-hidden="true" />
+          </button>
+        </div>
       </header>
+
+      {/* Gateway-off banner */}
+      {gatewayDisabled && (
+        <div className="shrink-0 px-4 py-2 text-[11.5px] text-[var(--text-faint)] bg-[var(--bg-surface)] border-b border-[var(--border)]">
+          AI chat isn’t enabled on this server. Set <code className="font-mono text-[var(--text-muted)]">LLM_GATEWAY</code> + a provider key to turn it on.
+        </div>
+      )}
 
       {/* Messages */}
       <div ref={scrollRef} className="flex-1 min-h-0 overflow-y-auto" aria-live="polite" aria-busy={sending}>
         {isEmpty ? (
-          <EmptyState onPick={pick} />
+          <EmptyState onPick={pick} disabled={gatewayDisabled} />
         ) : (
           <div className="px-4 py-5 space-y-5">
             {messages.map(msg =>
               msg.role === 'user'
-                ? <UserBubble key={msg.id} text={msg.text} />
-                : <AssistantBubble key={msg.id} msg={msg} />
+                ? <UserBubble key={msg.id} text={msg.content} />
+                : <AssistantBubble key={msg.id} msg={msg} onRunAction={runAction} />
             )}
-            {sending && <TypingIndicator />}
+            {canRegenerate && (
+              <div className="flex justify-center">
+                <button
+                  type="button"
+                  onClick={regenerate}
+                  className="inline-flex items-center gap-1.5 rounded-[var(--radius-btn)] border border-[var(--border)] bg-[var(--bg-surface2)] px-2.5 py-1 text-[11.5px] text-[var(--text-muted)] hover:text-[var(--text)] hover:border-[var(--border2)] transition-colors cursor-pointer"
+                >
+                  <RotateCcw size={11} strokeWidth={2} /> Regenerate
+                </button>
+              </div>
+            )}
             <div ref={endRef} />
           </div>
         )}
@@ -223,21 +203,32 @@ export function ChatPanel({ onClose }) {
             rows={1}
             value={input}
             onChange={e => setInput(e.target.value)}
-            onKeyDown={e => {
-              if (e.key === 'Enter' && !e.shiftKey) submit(e)
-            }}
-            placeholder="Ask about your repos…"
+            onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) submit(e) }}
+            placeholder={gatewayDisabled ? 'AI chat is disabled' : 'Ask anything about your repos…'}
             aria-label="Ask AI about your repos"
-            className="flex-1 resize-none bg-transparent text-sm text-[var(--text)] outline-none placeholder-[var(--text-faint)] max-h-32 leading-relaxed"
+            disabled={gatewayDisabled}
+            className="flex-1 resize-none bg-transparent text-sm text-[var(--text)] outline-none placeholder-[var(--text-faint)] max-h-32 leading-relaxed disabled:cursor-not-allowed"
           />
-          <button
-            type="submit"
-            disabled={!input.trim() || sending}
-            aria-label="Send message"
-            className="shrink-0 flex items-center justify-center w-7 h-7 rounded-full bg-gradient-to-br from-[var(--brand-teal)] to-[var(--brand-indigo)] text-white disabled:opacity-40 disabled:cursor-not-allowed hover:opacity-90 transition-opacity cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand-teal)] focus-visible:ring-offset-1 focus-visible:ring-offset-[var(--bg)]"
-          >
-            <ArrowUp size={15} strokeWidth={2.5} aria-hidden="true" />
-          </button>
+          {sending ? (
+            <button
+              type="button"
+              onClick={stop}
+              aria-label="Stop generating"
+              title="Stop"
+              className="shrink-0 flex items-center justify-center w-7 h-7 rounded-full bg-[var(--bg-surface3)] text-[var(--text)] hover:bg-[var(--border2)] transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand-teal)]"
+            >
+              <Square size={11} strokeWidth={2.5} fill="currentColor" aria-hidden="true" />
+            </button>
+          ) : (
+            <button
+              type="submit"
+              disabled={!input.trim() || gatewayDisabled}
+              aria-label="Send message"
+              className="shrink-0 flex items-center justify-center w-7 h-7 rounded-full bg-gradient-to-br from-[var(--brand-teal)] to-[var(--brand-indigo)] text-white disabled:opacity-40 disabled:cursor-not-allowed hover:opacity-90 transition-opacity cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand-teal)] focus-visible:ring-offset-1 focus-visible:ring-offset-[var(--bg)]"
+            >
+              <ArrowUp size={15} strokeWidth={2.5} aria-hidden="true" />
+            </button>
+          )}
         </div>
       </form>
     </div>
