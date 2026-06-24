@@ -93,6 +93,15 @@ func Load(cfg *config.Config, publicURL string) map[string]Provider {
 	if cfg.Accounting.QuickBooks.Enabled {
 		providers["quickbooks"] = NewQuickBooks(cfg.Accounting.QuickBooks, publicURL)
 	}
+	if cfg.Accounting.Sage.Enabled {
+		providers["sage"] = NewSage(cfg.Accounting.Sage, publicURL)
+	}
+	if cfg.Accounting.ZohoBooks.Enabled {
+		providers["zoho_books"] = NewZohoBooks(cfg.Accounting.ZohoBooks, publicURL)
+	}
+	if cfg.Accounting.FreshBooks.Enabled {
+		providers["freshbooks"] = NewFreshBooks(cfg.Accounting.FreshBooks, publicURL)
+	}
 	return providers
 }
 
