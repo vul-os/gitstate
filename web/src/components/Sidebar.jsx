@@ -150,6 +150,16 @@ const NAV = [
     ),
   },
   {
+    label: 'Integrations',
+    to: '/integrations',
+    icon: (
+      <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8">
+        <path strokeLinecap="round" strokeLinejoin="round"
+          d="M9 7V4m6 3V4M9 17v3m6-3v3M6 7h12v3.5a5.5 5.5 0 0 1-5.5 5.5h-1A5.5 5.5 0 0 1 6 10.5V7Z" />
+      </svg>
+    ),
+  },
+  {
     label: 'Settings',
     to: '/settings',
     // Exact match only — '/settings' must not light up on nested routes like
