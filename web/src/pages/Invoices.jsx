@@ -8,24 +8,25 @@
  * This is the "…and the invoice" half of the wedge: a defensible invoice
  * straight from git. Currency-aware, both themes, lucide icons.
  */
-import { useState, useCallback, useMemo, useRef } from 'react'
+import { useState, useCallback, useMemo, useRef, useEffect } from 'react'
 import {
-  Sparkles, Users, FileText, Plus, ChevronRight, ChevronDown, ArrowLeft,
+  Sparkles, Users, FileText, Plus, ChevronRight, ArrowLeft,
   Link2, Check, Send, CircleDollarSign, Ban, Trash2, X, GitMerge, Receipt, Hourglass, Wallet,
-  ExternalLink, Loader2,
+  ExternalLink, Loader2, Download, Plug,
 } from 'lucide-react'
 import { useCurrency } from '../lib/currency.jsx'
 import { StatCard } from '../components/ui/index.js'
 import { useProjects } from '../lib/useProjects.js'
 import { useAccounting } from '../lib/useAccounting.js'
-import { pushInvoice } from '../lib/api.js'
+import { pushInvoice, accountingStartUrl, downloadInvoicePdf } from '../lib/api.js'
 import {
   useClients, useInvoiceList, useInvoiceDetail,
   patchInvoice, deleteInvoice,
 } from '../lib/useInvoices.js'
-import GenerateModal from '../components/invoices/GenerateModal.jsx'
+import GenerateFromGitModal from '../components/invoices/GenerateFromGitModal.jsx'
+import InvoiceEditor from '../components/invoices/InvoiceEditor.jsx'
 import {
-  InvoiceStatusBadge, LoadingCenter, ErrorBanner, EvidenceList, Spinner,
+  InvoiceStatusBadge, LoadingCenter, ErrorBanner, Spinner, providerMeta,
 } from '../components/invoices/shared.jsx'
 import { fmtDate, periodLabel } from '../components/invoices/format.js'
 import { useFocusTrap } from '../lib/useFocusTrap.js'
@@ -64,33 +65,6 @@ function InvoiceRow({ inv, onClick }) {
 
 const SHARE_BASE = typeof window !== 'undefined' ? window.location.origin : ''
 
-function LineItem({ line }) {
-  const { format } = useCurrency()
-  const [open, setOpen] = useState(false)
-  const count = line.evidence?.length ?? 0
-  return (
-    <div className="rounded-[var(--radius-badge)]" style={{ background: 'var(--bg-surface2)', border: '1px solid var(--border)' }}>
-      <button onClick={() => setOpen(!open)} className="w-full flex items-center gap-3 px-4 py-3 text-left">
-        <ChevronDown size={14} className={`shrink-0 text-[var(--text-faint)] transition-transform ${open ? 'rotate-180' : ''}`} />
-        <div className="flex-1 min-w-0">
-          <p className="text-sm font-medium text-[var(--text)] truncate">{line.description}</p>
-          <p className="text-[11px] text-[var(--text-faint)] mt-0.5 flex items-center gap-1.5">
-            <GitMerge size={11} style={{ color: 'var(--brand-teal)' }} />
-            {(line.effortPoints ?? 0).toFixed(1)} effort pts × {format((line.unitRateCents ?? 0) / 100)}
-            {count > 0 && <span className="text-[var(--text-muted)]">· {count} PR{count !== 1 ? 's' : ''}</span>}
-          </p>
-        </div>
-        <span className="text-sm font-bold text-[var(--text)] shrink-0">{format((line.amountCents ?? 0) / 100)}</span>
-      </button>
-      {open && (
-        <div className="px-4 pb-3 pl-11">
-          <EvidenceList evidence={line.evidence} />
-        </div>
-      )}
-    </div>
-  )
-}
-
 function StatusAction({ icon: Icon, label, onClick, busy, tone = 'default' }) {
   const tones = {
     default: { border: 'var(--border2)', text: 'var(--text)' },
@@ -111,49 +85,41 @@ function StatusAction({ icon: Icon, label, onClick, busy, tone = 'default' }) {
   )
 }
 
-// Brand marks for the accounting providers (inline; no extra deps).
-function XeroMark({ size = 15 }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden>
-      <circle cx="12" cy="12" r="11" fill="#13B5EA" />
-      <path d="M8.6 12l-1.9-1.9a.7.7 0 1 1 1-1l1.9 1.9 1.9-1.9a.7.7 0 0 1 1 1L10.6 12l1.9 1.9a.7.7 0 0 1-1 1l-1.9-1.9-1.9 1.9a.7.7 0 1 1-1-1L8.6 12z" fill="#fff" />
-      <circle cx="15.4" cy="12" r="1.15" fill="#fff" />
-    </svg>
-  )
-}
-function QuickBooksMark({ size = 15 }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden>
-      <circle cx="12" cy="12" r="11" fill="#2CA01C" />
-      <path d="M12 5.5a6.5 6.5 0 0 0-1 12.92V11.7a1.5 1.5 0 0 1 1.5-1.5h.6V6.6h-.6A1.1 1.1 0 0 0 12 5.5z" fill="#fff" opacity=".45" />
-      <path d="M13 5.58V12.3a1.5 1.5 0 0 1-1.5 1.5h-.6v3.6h.6A1.1 1.1 0 0 0 13 18.5 6.5 6.5 0 0 0 13 5.58z" fill="#fff" />
-    </svg>
-  )
-}
-
-const PROVIDER_META = {
-  xero: { label: 'Xero', Mark: XeroMark, accent: '#13B5EA' },
-  quickbooks: { label: 'QuickBooks', Mark: QuickBooksMark, accent: '#2CA01C' },
-}
-
-// AccountingPush — "Send to Xero / QuickBooks" action + the resulting external
-// link. Sits beside git-evidence + manual creation; enabled only when a provider
-// is connected. Once pushed, shows an "in Xero ↗" deep link from external_url.
+// AccountingPush — a "Send to…" dropdown over the org's connected accounting
+// providers (Xero, QuickBooks, Sage, Zoho Books, FreshBooks). Connected
+// providers push the invoice (POST /api/invoices/{id}/push/{provider}); the
+// returned deep link surfaces as an "in <Provider> ↗" affordance plus the
+// external id. Unconnected-but-configured providers offer a "Connect" link to
+// the OAuth start flow.
 function AccountingPush({ invoice, onChanged }) {
   const { providers, anyConfigured } = useAccounting()
+  const [open, setOpen] = useState(false)
   const [busy, setBusy] = useState('')
   const [error, setError] = useState(null)
-  const [link, setLink] = useState(null) // { provider, externalUrl } after a fresh push
+  const [link, setLink] = useState(null) // { provider, externalUrl, externalId } after a fresh push
+  const menuRef = useRef(null)
 
   const connected = providers.filter((p) => p.connected)
+  const connectable = providers.filter((p) => p.configured && !p.connected)
   const externalUrl = link?.externalUrl ?? invoice.externalUrl
+  const externalId = link?.externalId ?? invoice.externalId
   const externalProvider = link?.provider ?? invoice.externalProvider
 
+  // Close the dropdown on outside-click / Escape.
+  useEffect(() => {
+    if (!open) return
+    function onDoc(e) { if (menuRef.current && !menuRef.current.contains(e.target)) setOpen(false) }
+    function onKey(e) { if (e.key === 'Escape') setOpen(false) }
+    document.addEventListener('mousedown', onDoc)
+    document.addEventListener('keydown', onKey)
+    return () => { document.removeEventListener('mousedown', onDoc); document.removeEventListener('keydown', onKey) }
+  }, [open])
+
   async function send(provider) {
-    setBusy(provider); setError(null)
+    setBusy(provider); setError(null); setOpen(false)
     try {
       const res = await pushInvoice(invoice.id, provider)
-      setLink({ provider, externalUrl: res.externalUrl })
+      setLink({ provider, externalUrl: res?.externalUrl, externalId: res?.externalId })
       onChanged?.()
     } catch (e) {
       setError(e.message ?? 'Could not send to accounting')
@@ -162,58 +128,113 @@ function AccountingPush({ invoice, onChanged }) {
     }
   }
 
-  // Nothing configured server-side → don't clutter the UI at all.
+  // Nothing configured server-side and never pushed → don't clutter the UI.
   if (!anyConfigured && !externalUrl) return null
+
+  const sentMeta = externalProvider ? providerMeta(externalProvider) : null
 
   return (
     <div className="mt-4 rounded-[var(--radius-badge)] px-4 py-3.5" style={{ background: 'var(--bg)', border: '1px solid var(--border)' }}>
-      <div className="flex items-center gap-2 mb-2.5">
-        <Receipt size={13} style={{ color: 'var(--brand-teal)' }} />
-        <span className="text-xs font-semibold text-[var(--text-muted)]">Accounting</span>
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <div className="flex items-center gap-2">
+          <Receipt size={13} style={{ color: 'var(--brand-teal)' }} />
+          <span className="text-xs font-semibold text-[var(--text-muted)]">Accounting</span>
+        </div>
+
+        {/* Send-to dropdown */}
+        <div className="relative" ref={menuRef}>
+          <button
+            onClick={() => setOpen((v) => !v)}
+            disabled={!!busy}
+            aria-haspopup="menu"
+            aria-expanded={open}
+            className="inline-flex items-center gap-1.5 rounded-[var(--radius-btn)] px-3 py-1.5 text-xs font-bold text-[#04121a] transition-all disabled:opacity-50 hover:brightness-110"
+            style={{ background: 'linear-gradient(135deg, var(--brand-teal), var(--brand-indigo))' }}
+          >
+            {busy ? <Loader2 size={13} className="animate-spin" /> : <Send size={13} />}
+            {busy ? 'Sending…' : 'Send to…'}
+          </button>
+
+          {open && (
+            <div
+              role="menu"
+              className="absolute right-0 mt-1.5 w-60 rounded-[var(--radius-badge)] overflow-hidden z-20 shadow-xl"
+              style={{ background: 'var(--bg-surface)', border: '1px solid var(--border2)' }}
+            >
+              {connected.length > 0 && (
+                <div className="py-1">
+                  {connected.map((p) => {
+                    const m = providerMeta(p.provider)
+                    const sent = externalProvider === p.provider && externalUrl
+                    return (
+                      <button
+                        key={p.provider}
+                        role="menuitem"
+                        onClick={() => send(p.provider)}
+                        className="w-full flex items-center gap-2.5 px-3 py-2 text-left text-xs font-semibold text-[var(--text)] hover:bg-[var(--bg-surface2)] transition-colors"
+                      >
+                        <m.Mark size={15} />
+                        <span className="flex-1 truncate">{sent ? `Re-send to ${m.label}` : m.label}</span>
+                        {p.externalName && <span className="text-[10px] text-[var(--text-faint)] truncate max-w-[6rem]">{p.externalName}</span>}
+                      </button>
+                    )
+                  })}
+                </div>
+              )}
+              {connectable.length > 0 && (
+                <div className="py-1 border-t border-[var(--border)]">
+                  <p className="px-3 py-1 text-[9px] font-bold uppercase tracking-widest text-[var(--text-faint)]">Connect</p>
+                  {connectable.map((p) => {
+                    const m = providerMeta(p.provider)
+                    const url = accountingStartUrl(p.provider)
+                    return (
+                      <a
+                        key={p.provider}
+                        role="menuitem"
+                        href={url ?? '/settings'}
+                        className="w-full flex items-center gap-2.5 px-3 py-2 text-left text-xs font-semibold text-[var(--text-muted)] hover:bg-[var(--bg-surface2)] hover:text-[var(--text)] transition-colors"
+                      >
+                        <m.Mark size={15} />
+                        <span className="flex-1 truncate">{m.label}</span>
+                        <Plug size={12} className="text-[var(--text-faint)]" />
+                      </a>
+                    )
+                  })}
+                </div>
+              )}
+              {connected.length === 0 && connectable.length === 0 && (
+                <p className="px-3 py-3 text-[11px] text-[var(--text-faint)]">
+                  No accounting providers configured. Set one up in <a href="/settings" className="text-[var(--brand-teal)] hover:underline">Settings</a>.
+                </p>
+              )}
+            </div>
+          )}
+        </div>
       </div>
 
-      {/* Already pushed → show the deep link. */}
-      {externalUrl && externalProvider && PROVIDER_META[externalProvider] && (
-        <a
-          href={externalUrl} target="_blank" rel="noopener noreferrer"
-          className="inline-flex items-center gap-2 rounded-[var(--radius-btn)] px-3 py-1.5 text-xs font-semibold transition-colors hover:brightness-110 mb-2"
-          style={{
-            border: `1px solid ${PROVIDER_META[externalProvider].accent}55`,
-            color: PROVIDER_META[externalProvider].accent,
-            background: `${PROVIDER_META[externalProvider].accent}14`,
-          }}
-        >
-          {(() => { const M = PROVIDER_META[externalProvider].Mark; return <M size={14} /> })()}
-          in {PROVIDER_META[externalProvider].label}
-          <ExternalLink size={12} />
-        </a>
+      {/* Already pushed → show the deep link + external id. */}
+      {externalUrl && sentMeta && (
+        <div className="flex items-center gap-2 flex-wrap mt-2.5">
+          <a
+            href={externalUrl} target="_blank" rel="noopener noreferrer"
+            className="inline-flex items-center gap-2 rounded-[var(--radius-btn)] px-3 py-1.5 text-xs font-semibold transition-colors hover:brightness-110"
+            style={{ border: `1px solid ${sentMeta.accent}55`, color: sentMeta.accent, background: `${sentMeta.accent}14` }}
+          >
+            <sentMeta.Mark size={14} />
+            View in {sentMeta.label}
+            <ExternalLink size={12} />
+          </a>
+          {externalId && (
+            <span className="text-[10px] font-mono text-[var(--text-faint)]">#{externalId}</span>
+          )}
+        </div>
       )}
 
-      {/* Connect prompt or send buttons. */}
-      {connected.length === 0 ? (
-        <p className="text-[11px] text-[var(--text-faint)]">
-          Connect Xero or QuickBooks in <a href="/settings" className="text-[var(--brand-teal)] hover:underline">Settings</a> to push invoices to your books.
+      {/* Hint when nothing is connected yet. */}
+      {connected.length === 0 && !externalUrl && (
+        <p className="text-[11px] text-[var(--text-faint)] mt-2">
+          Connect an accounting provider in <a href="/settings" className="text-[var(--brand-teal)] hover:underline">Settings</a> to push invoices to your books.
         </p>
-      ) : (
-        <div className="flex flex-wrap items-center gap-2">
-          {connected.map((p) => {
-            const m = PROVIDER_META[p.provider]
-            if (!m) return null
-            const sent = externalProvider === p.provider && externalUrl
-            return (
-              <button
-                key={p.provider}
-                onClick={() => send(p.provider)}
-                disabled={!!busy}
-                className="inline-flex items-center gap-1.5 rounded-[var(--radius-btn)] px-3 py-1.5 text-xs font-semibold transition-colors disabled:opacity-50 hover:brightness-110"
-                style={{ border: `1px solid ${m.accent}55`, color: m.accent, background: 'var(--bg-surface)' }}
-              >
-                {busy === p.provider ? <Loader2 size={13} className="animate-spin" /> : <m.Mark size={14} />}
-                {sent ? `Re-send to ${m.label}` : `Send to ${m.label}`}
-              </button>
-            )
-          })}
-        </div>
       )}
 
       {error && <p className="text-[11px] mt-2" style={{ color: 'var(--bad)' }}>{error}</p>}
@@ -254,12 +275,23 @@ function InvoiceDetail({ id, onBack, onChanged }) {
     }
   }, [id, onBack, onChanged])
 
+  const [pdfBusy, setPdfBusy] = useState(false)
+  const downloadPdf = useCallback(async () => {
+    setPdfBusy(true); setActionError(null)
+    try {
+      await downloadInvoicePdf(id)
+    } catch (e) {
+      setActionError(e.message ?? 'Could not download PDF')
+    } finally {
+      setPdfBusy(false)
+    }
+  }, [id])
+
   if (loading) return <LoadingCenter label="Loading invoice…" />
   if (error) return <ErrorBanner msg={error} />
   if (!invoice) return null
 
   const inv = invoice
-  const lines = inv.lines ?? []
   const shareLink = inv.shareToken ? `${SHARE_BASE}/i/${inv.shareToken}` : null
 
   async function copyShare() {
@@ -303,6 +335,7 @@ function InvoiceDetail({ id, onBack, onChanged }) {
           {inv.status === 'sent' && <StatusAction icon={CircleDollarSign} label="Mark paid" tone="green" busy={busy} onClick={() => setStatus('paid')} />}
           {(inv.status === 'sent' || inv.status === 'paid') && <StatusAction icon={FileText} label="Back to draft" busy={busy} onClick={() => setStatus('draft')} />}
           {inv.status !== 'void' && <StatusAction icon={Ban} label="Void" tone="red" busy={busy} onClick={() => setStatus('void')} />}
+          <StatusAction icon={Download} label="Download PDF" busy={pdfBusy} onClick={downloadPdf} />
           <StatusAction icon={Trash2} label="Delete" tone="red" busy={busy} onClick={remove} />
         </div>
 
@@ -327,28 +360,12 @@ function InvoiceDetail({ id, onBack, onChanged }) {
         <AccountingPush invoice={inv} onChanged={() => { refetch(); onChanged?.() }} />
       </div>
 
-      {/* Line items */}
-      <div className="rounded-[var(--radius-card)] p-6" style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)' }}>
-        <div className="flex items-center justify-between mb-4">
-          <h3 className="text-sm font-semibold text-[var(--text)]">Delivered work</h3>
-          <span className="text-[11px] text-[var(--text-faint)] font-mono">{lines.length} line{lines.length !== 1 ? 's' : ''}</span>
-        </div>
-        {lines.length === 0 ? (
-          <p className="text-xs text-[var(--text-faint)] text-center py-6">No line items on this invoice.</p>
-        ) : (
-          <div className="space-y-2">
-            {lines.map((l, i) => <LineItem key={l.id ?? i} line={l} />)}
-          </div>
-        )}
-        <div className="flex items-center justify-between pt-4 mt-4 border-t border-[var(--border)]">
-          <span className="text-sm font-semibold text-[var(--text-muted)]">Total</span>
-          <span className="text-lg font-bold text-[var(--text)]">{format((inv.totalCents ?? 0) / 100)}</span>
-        </div>
-      </div>
+      {/* Editor — git + manual lines, inline edit, discount/tax/notes */}
+      <InvoiceEditor invoice={inv} onSaved={() => { refetch(); onChanged?.() }} />
 
       <p className="text-[10px] text-[var(--text-faint)] flex items-center gap-1.5 px-1">
         <GitMerge size={11} style={{ color: 'var(--brand-teal)' }} />
-        Every line is backed by merged pull requests — expand a line to see the git evidence.
+        Git-derived lines are backed by merged work — expand a line to see the evidence. Add manual lines, set tax & a discount, then push to your books.
       </p>
     </div>
   )
@@ -539,7 +556,7 @@ export default function Invoices() {
       )}
 
       {showGenerate && (
-        <GenerateModal
+        <GenerateFromGitModal
           clients={clients}
           projects={projects}
           onClose={() => setShowGenerate(false)}
