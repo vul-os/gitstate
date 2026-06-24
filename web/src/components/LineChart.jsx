@@ -395,18 +395,23 @@ export function LineChart({
         )
       })()}
 
-      {/* Rich HTML legend below the chart (opt-in): rounded swatch + truncated
-          canonical name, wraps nicely, theme-aware. */}
-      {showLegend && isMulti && legendBelow && (
-        <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 mt-3 px-1">
-          {allSeries.map((s, si) => (
-            <span key={si} className="inline-flex items-center gap-1.5 min-w-0" title={s.name}>
-              <span className="inline-block w-3 h-2 rounded-full shrink-0" style={{ background: s.color }} />
-              <span className="text-[11px] font-mono text-[var(--text-muted)] truncate max-w-[140px]">{truncate(s.name, 20)}</span>
-            </span>
-          ))}
-        </div>
-      )}
+    </div>
+  )
+}
+
+// ContributorLegend — a compact, height-bounded legend (rounded swatch + the
+// canonical person name) rendered ABOVE a chart. Bounded so it never grows the
+// card / causes page scroll; overflows internally for large contributor sets.
+export function ContributorLegend({ series }) {
+  if (!Array.isArray(series) || series.length === 0) return null
+  return (
+    <div className="flex flex-wrap items-center gap-x-3.5 gap-y-1.5 mb-3 max-h-[3.25rem] overflow-y-auto pr-1">
+      {series.map((s, si) => (
+        <span key={si} className="inline-flex items-center gap-1.5 min-w-0" title={s.name}>
+          <span className="inline-block w-2.5 h-2.5 rounded-full shrink-0" style={{ background: s.color }} />
+          <span className="text-[11px] font-mono text-[var(--text-muted)] truncate max-w-[150px]">{truncate(s.name, 22)}</span>
+        </span>
+      ))}
     </div>
   )
 }

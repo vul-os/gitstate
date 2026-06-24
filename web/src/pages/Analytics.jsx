@@ -19,7 +19,7 @@ import {
   usePullRequests, useIssueFlow, useAgentShare, useProjects,
 } from '../lib/useAnalytics.js'
 import { Card, Badge, StatCard } from '../components/ui/index.js'
-import { LineChart } from '../components/LineChart.jsx'
+import { LineChart, ContributorLegend } from '../components/LineChart.jsx'
 import { Reveal } from '../components/Reveal.jsx'
 import {
   GitCommitHorizontal, GitBranch, Users, CalendarDays, Plus, Minus,
@@ -746,6 +746,8 @@ function CommitsOverTime({ filters }) {
       {busy ? (
         <div className="h-[220px] rounded-[var(--radius-card)] bg-[var(--bg-surface2)] animate-pulse" />
       ) : showContrib ? (
+        <>
+        <ContributorLegend series={contribSeries} />
         <div className="overflow-x-auto">
           <LineChart
             series={contribSeries}
@@ -754,7 +756,6 @@ function CommitsOverTime({ filters }) {
             fill={false}
             curve="monotone"
             areaFill
-            legendBelow
             tooltipRows={contribTooltipRows}
             xLabel={xLabelFor(bucket)}
             yLabel={v => fmtNum(Math.round(v))}
@@ -762,6 +763,7 @@ function CommitsOverTime({ filters }) {
             emptyText="No contributor activity in this range."
           />
         </div>
+        </>
       ) : (
         <div className="overflow-x-auto">
           <LineChart
@@ -916,6 +918,8 @@ function LinesOverTime({ filters }) {
       {busy ? (
         <div className="h-[240px] rounded-[var(--radius-card)] bg-[var(--bg-surface2)] animate-pulse" />
       ) : showContrib ? (
+        <>
+        <ContributorLegend series={contribSeries} />
         <div className="overflow-x-auto">
           <LineChart
             series={contribSeries}
@@ -924,7 +928,6 @@ function LinesOverTime({ filters }) {
             fill={false}
             curve="monotone"
             areaFill
-            legendBelow
             tooltipRows={contribTooltipRows}
             xLabel={xLabelFor(bucket)}
             yLabel={v => fmtSigned(Math.round(v))}
@@ -932,6 +935,7 @@ function LinesOverTime({ filters }) {
             emptyText="No contributor churn in this range."
           />
         </div>
+        </>
       ) : (
         <div className="overflow-x-auto">
           <LineChart
@@ -940,7 +944,6 @@ function LinesOverTime({ filters }) {
             height={240}
             curve="monotone"
             areaFill
-            legendBelow
             tooltipRows={totalTooltipRows}
             xLabel={xLabelFor(bucket)}
             yLabel={v => fmtSigned(Math.round(v))}
