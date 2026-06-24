@@ -155,6 +155,32 @@ func NewWithProvider(p Provider, model string) *Service {
 	return &Service{provider: p, model: model}
 }
 
+// ChatClient is the streaming, tool-calling surface the agentic chat engine
+// drives. It is the exported contract over openAIClient.ChatStream so callers
+// outside this package (internal/chat) can run a multi-turn function-calling
+// loop through the gateway without depending on the unexported client type.
+// Tests inject their own ChatClient implementation.
+type ChatClient interface {
+	ChatStream(ctx context.Context, req ChatRequest) (ChatResult, error)
+}
+
+// NewChatClient builds a ChatClient targeting the in-process llmux gateway when
+// one is enabled (the gateway holds provider keys server-side, so no API key is
+// passed). model is the requested model id; when empty the package default is
+// used. Returns (nil, false) when no gateway is available — the caller then
+// reports that chat is unavailable rather than calling a real provider directly.
+//
+// gw may be nil (gateway off) — callers don't need a nil check.
+func NewChatClient(gw *Gateway, model string) (ChatClient, bool) {
+	if !gw.Enabled() {
+		return nil, false
+	}
+	if model == "" {
+		model = defaultModel
+	}
+	return newOpenAIClient(gw.BaseURL(), "", model), true
+}
+
 // ─── EstimateDifficulty ────────────────────────────────────────────────────
 
 // difficultyModelResponse is the JSON shape we ask the model to return.
