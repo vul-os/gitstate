@@ -15,7 +15,6 @@ const Docs = lazy(() => import('./pages/Docs.jsx'))
 const Login = lazy(() => import('./pages/Login.jsx'))
 const Signup = lazy(() => import('./pages/Signup.jsx'))
 const Dashboard = lazy(() => import('./pages/Dashboard.jsx'))
-const Projects = lazy(() => import('./pages/Projects.jsx'))
 const Settings = lazy(() => import('./pages/Settings.jsx'))
 const Members = lazy(() => import('./pages/Members.jsx'))
 const People = lazy(() => import('./pages/People.jsx'))
@@ -127,7 +126,9 @@ export default function App() {
               <Route element={<AppShell />}>
                 <Route path="/dashboard" element={<Dashboard />} />
                 <Route path="/board" element={<Board />} />
-                <Route path="/projects" element={<Projects />} />
+                {/* Projects + Repos are unified: a "project" is a repo's owner-org.
+                    /projects redirects to the unified /repos view so old links work. */}
+                <Route path="/projects" element={<Navigate to="/repos" replace />} />
                 <Route path="/repos" element={<Repos />} />
                 <Route path="/import" element={<Import />} />
                 <Route path="/analytics" element={<Analytics />} />

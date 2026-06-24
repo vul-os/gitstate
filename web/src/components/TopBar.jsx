@@ -10,8 +10,7 @@ import { useChatPanel, useNavDrawer } from './AppShell.jsx'
 const TITLES = {
   '/dashboard':          'Dashboard',
   '/board':              'Board',
-  '/projects':           'Projects',
-  '/repos':              'Repositories',
+  '/repos':              'Projects',
   '/analytics':          'Analytics',
   '/cycle-time':         'Cycle Time',
   '/involvement':        'Involvement',

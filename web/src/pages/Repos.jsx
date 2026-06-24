@@ -7,6 +7,7 @@ import {
   GitBranch, Plus, RefreshCw, Loader2, X, Check,
   CircleDot, GitPullRequest, AlertCircle, Clock, ArrowRight,
   Link2, Unlink, KeyRound, Download, Building2, Settings, Info, ExternalLink,
+  ChevronRight, FolderGit2,
 } from 'lucide-react'
 import { useRepos } from '../lib/useRepos.js'
 import {
@@ -582,6 +583,12 @@ function ConnectSection({ onImport, onImportAll, onUsePat, justConnected }) {
 export default function Repos() {
   const { repos, loading, error, connectRepo, syncRepo, refetch } = useRepos()
   const [syncingAll, setSyncingAll] = useState(false)
+  // Search within the grouped repo list, and per-project collapse state.
+  const [query, setQuery] = useState('')
+  const [openGroups, setOpenGroups] = useState({}) // { [owner]: bool }
+  const toggleGroup = useCallback((owner) => {
+    setOpenGroups(prev => ({ ...prev, [owner]: !(prev[owner] ?? true) }))
+  }, [])
 
   const handleSyncAll = useCallback(async () => {
     setSyncingAll(true)
@@ -640,11 +647,16 @@ export default function Repos() {
     refetch?.().catch(() => {})
   }, [connectRepo, refetch])
 
-  // Group the connected-repos list by owner (org/user) — same pattern as the
-  // import picker — so rows sit under a per-owner header with a count.
+  // A "project" = the repo's owner-org (the part before "/" in full_name). Group
+  // the connected repos by that owner — same derivation as the import picker — so
+  // each project is a collapsible header with its repos nested + counted.
   const repoGroups = useMemo(() => {
+    const q = query.trim().toLowerCase()
+    const filtered = q
+      ? repos.filter(r => (r.fullName || '').toLowerCase().includes(q))
+      : repos
     const groups = {}
-    for (const r of repos) {
+    for (const r of filtered) {
       const owner = r.fullName?.includes('/') ? r.fullName.split('/')[0] : '(personal)'
       ;(groups[owner] ||= []).push(r)
     }
@@ -654,7 +666,7 @@ export default function Repos() {
     return Object.keys(groups)
       .sort((a, b) => a.localeCompare(b))
       .map(owner => ({ owner, list: groups[owner] }))
-  }, [repos])
+  }, [repos, query])
 
   const stats = useMemo(() => {
     const total = repos.length
@@ -663,7 +675,11 @@ export default function Repos() {
     const synced = repos.filter(r => r.lastSyncedAt).length
     const issues = repos.reduce((sum, r) => sum + (Number(r.issueCount) || 0), 0)
     const hasIssueData = repos.some(r => r.issueCount != null)
-    return { total, github, gitlab, synced, issues, hasIssueData }
+    // A "project" = a distinct owner-org across the connected repos.
+    const projects = new Set(
+      repos.map(r => (r.fullName?.includes('/') ? r.fullName.split('/')[0] : '(personal)'))
+    ).size
+    return { total, github, gitlab, synced, issues, hasIssueData, projects }
   }, [repos])
 
   return (
@@ -676,9 +692,9 @@ export default function Repos() {
               <GitBranch size={17} className="text-[var(--brand-teal)]" />
             </span>
             <div>
-              <h1 className="font-display text-2xl font-semibold text-[var(--text)] tracking-tight">Repositories</h1>
+              <h1 className="font-display text-2xl font-semibold text-[var(--text)] tracking-tight">Projects</h1>
               <p className="text-sm text-[var(--text-faint)] mt-1">
-                Connected repos are the source of truth for dev work.
+                Repositories grouped by project — your connected repos are the source of truth for dev work.
               </p>
             </div>
           </div>
@@ -714,7 +730,14 @@ export default function Repos() {
       {/* Summary strip */}
       {!loading && repos.length > 0 && (
         <Reveal delay={0.05}>
-          <div className="grid grid-cols-2 md:grid-cols-3 gap-4 mb-6">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+            <StatCard
+              label="Projects"
+              value={stats.projects.toLocaleString()}
+              sublabel={stats.projects === 1 ? 'owner-org' : 'owner-orgs'}
+              accent="var(--chart-2)"
+              icon={<FolderGit2 size={14} />}
+            />
             <StatCard
               label="Connected"
               value={stats.total.toLocaleString()}
@@ -773,11 +796,21 @@ export default function Repos() {
         </div>
       )}
 
-      {/* Repo list */}
+      {/* Repo list — grouped by project (owner-org) */}
       <Reveal delay={0.08}>
         <Card padding="none" className="overflow-hidden">
+          {!loading && !error && repos.length > 0 && (
+            <div className="px-4 py-2.5 border-b border-[var(--border)] bg-[var(--bg-surface2)]/40">
+              <input
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder={`Search ${repos.length} repositories by name or project…`}
+                className="w-full px-3 py-1.5 rounded-[var(--radius-btn)] bg-[var(--bg)] border border-[var(--border)] text-xs text-[var(--text)] placeholder-[var(--text-faint)] outline-none focus:border-[var(--brand-teal)]"
+              />
+            </div>
+          )}
           <div className="flex items-center gap-4 px-5 py-3 border-b border-[var(--border)] bg-[var(--bg-surface2)]/40">
-            <span className="text-[10px] font-semibold text-[var(--text-faint)] uppercase tracking-widest flex-1">Repository</span>
+            <span className="text-[10px] font-semibold text-[var(--text-faint)] uppercase tracking-widest flex-1">Project / Repository</span>
             <span className="text-[10px] font-semibold text-[var(--text-faint)] uppercase tracking-widest hidden md:block">Activity</span>
             <span className="text-[10px] font-semibold text-[var(--text-faint)] uppercase tracking-widest w-14 text-right">Sync</span>
           </div>
@@ -819,20 +852,51 @@ export default function Repos() {
             </div>
           )}
 
-          {!loading && !error && repos.length > 0 && (
+          {!loading && !error && repos.length > 0 && repoGroups.length === 0 && (
+            <p className="px-5 py-10 text-center text-xs text-[var(--text-faint)]">
+              No repositories match “{query}”.
+            </p>
+          )}
+
+          {!loading && !error && repoGroups.length > 0 && (
             <RevealList staggerDelay={0.04}>
-              {repoGroups.map(({ owner, list }) => (
-                <div key={owner}>
-                  <div className="flex items-center gap-2 px-5 py-2 bg-[var(--bg-surface2)]/70 border-b border-[var(--border)]">
-                    <Building2 size={12} className="text-[var(--text-faint)] shrink-0" />
-                    <span className="text-[11px] font-semibold text-[var(--text-muted)] truncate">{owner}</span>
-                    <span className="text-[10px] font-mono text-[var(--text-faint)]">{list.length}</span>
+              {repoGroups.map(({ owner, list }) => {
+                // Default-open; a project header toggles its repos. Avatar = owner's
+                // first initial in the brand gradient (no org logos available client-side).
+                const open = openGroups[owner] ?? true
+                const synced = list.filter(r => r.lastSyncedAt).length
+                return (
+                  <div key={owner}>
+                    <button
+                      type="button"
+                      onClick={() => toggleGroup(owner)}
+                      aria-expanded={open}
+                      className="w-full flex items-center gap-2.5 px-5 py-2.5 bg-[var(--bg-surface2)]/70 hover:bg-[var(--bg-surface2)] border-b border-[var(--border)] transition-colors text-left"
+                    >
+                      <ChevronRight
+                        size={13}
+                        className={`text-[var(--text-faint)] shrink-0 transition-transform duration-150 ${open ? 'rotate-90' : ''}`}
+                      />
+                      <span
+                        className="w-5 h-5 rounded-[5px] flex items-center justify-center shrink-0 text-[9px] font-bold text-[#0B1120] bg-gradient-to-br from-[#2DD4BF] to-[#6366F1] select-none uppercase"
+                        aria-hidden="true"
+                      >
+                        {owner === '(personal)' ? '@' : owner.slice(0, 2)}
+                      </span>
+                      <span className="text-[12px] font-semibold text-[var(--text)] truncate">{owner}</span>
+                      <span className="text-[10px] font-mono text-[var(--text-faint)] rounded-full px-2 py-0.5 bg-[var(--bg)] border border-[var(--border)] tabular-nums shrink-0">
+                        {list.length} {list.length === 1 ? 'repo' : 'repos'}
+                      </span>
+                      <span className="ml-auto text-[10px] font-mono text-[var(--text-faint)] shrink-0">
+                        {synced === list.length ? 'all synced' : `${synced}/${list.length} synced`}
+                      </span>
+                    </button>
+                    {open && list.map(repo => (
+                      <RepoRow key={repo.id} repo={repo} onSync={syncRepo} />
+                    ))}
                   </div>
-                  {list.map(repo => (
-                    <RepoRow key={repo.id} repo={repo} onSync={syncRepo} />
-                  ))}
-                </div>
-              ))}
+                )
+              })}
             </RevealList>
           )}
         </Card>
