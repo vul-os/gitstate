@@ -32,6 +32,9 @@ type Config struct {
 type AccountingConfig struct {
 	Xero       OAuthCreds `yaml:"xero"`
 	QuickBooks OAuthCreds `yaml:"quickbooks"`
+	Sage       OAuthCreds `yaml:"sage"`
+	ZohoBooks  OAuthCreds `yaml:"zoho_books"`
+	FreshBooks OAuthCreds `yaml:"freshbooks"`
 }
 
 // OAuthCreds is a generic client id/secret pair with a derived Enabled flag.
@@ -297,6 +300,12 @@ func Load() (*Config, error) {
 		cfg.Accounting.Xero.ClientID != "" && cfg.Accounting.Xero.ClientSecret != ""
 	cfg.Accounting.QuickBooks.Enabled =
 		cfg.Accounting.QuickBooks.ClientID != "" && cfg.Accounting.QuickBooks.ClientSecret != ""
+	cfg.Accounting.Sage.Enabled =
+		cfg.Accounting.Sage.ClientID != "" && cfg.Accounting.Sage.ClientSecret != ""
+	cfg.Accounting.ZohoBooks.Enabled =
+		cfg.Accounting.ZohoBooks.ClientID != "" && cfg.Accounting.ZohoBooks.ClientSecret != ""
+	cfg.Accounting.FreshBooks.Enabled =
+		cfg.Accounting.FreshBooks.ClientID != "" && cfg.Accounting.FreshBooks.ClientSecret != ""
 
 	return cfg, nil
 }
@@ -378,6 +387,12 @@ func overlayEnv(cfg *Config) {
 	setStr(&cfg.Auth.Providers.Microsoft.ClientID, "OAUTH_MICROSOFT_CLIENT_ID")
 	setStr(&cfg.Auth.Providers.Microsoft.ClientSecret, "OAUTH_MICROSOFT_CLIENT_SECRET")
 	setStr(&cfg.Accounting.Xero.ClientID, "XERO_CLIENT_ID")
+	setStr(&cfg.Accounting.Sage.ClientID, "SAGE_CLIENT_ID")
+	setStr(&cfg.Accounting.Sage.ClientSecret, "SAGE_CLIENT_SECRET")
+	setStr(&cfg.Accounting.ZohoBooks.ClientID, "ZOHO_BOOKS_CLIENT_ID")
+	setStr(&cfg.Accounting.ZohoBooks.ClientSecret, "ZOHO_BOOKS_CLIENT_SECRET")
+	setStr(&cfg.Accounting.FreshBooks.ClientID, "FRESHBOOKS_CLIENT_ID")
+	setStr(&cfg.Accounting.FreshBooks.ClientSecret, "FRESHBOOKS_CLIENT_SECRET")
 	setStr(&cfg.Accounting.Xero.ClientSecret, "XERO_CLIENT_SECRET")
 	setStr(&cfg.Accounting.QuickBooks.ClientID, "QUICKBOOKS_CLIENT_ID")
 	setStr(&cfg.Accounting.QuickBooks.ClientSecret, "QUICKBOOKS_CLIENT_SECRET")
