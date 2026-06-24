@@ -126,6 +126,11 @@ func DeleteRepo(ctx context.Context, tx pgx.Tx, orgID, repoID string) error {
 	if tag.RowsAffected() == 0 {
 		return ErrNotFound
 	}
+	// Remove contributors/identities now orphaned by the deleted data (keeps
+	// linked members). So "remove a repo" also removes the people only it carried.
+	if _, err := PruneOrphanContributors(ctx, tx, orgID); err != nil {
+		return err
+	}
 	return nil
 }
 

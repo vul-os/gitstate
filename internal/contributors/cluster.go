@@ -196,7 +196,10 @@ func identityKey(id Identity) string { return id.Kind + ":" + id.Value }
 
 // Cluster runs the union-find over the supplied identities and returns one
 // Cluster per resolved person. Pure (no DB) so the rules are unit-testable.
-func ClusterIdentities(ids []Identity) []Cluster {
+// ClusterIdentities groups identities into people. `pairs` are (email, login)
+// values that CO-OCCURRED on the same commit author — the strongest same-person
+// signal (the commit literally has both), unioned before any heuristic rule.
+func ClusterIdentities(ids []Identity, pairs ...[2]string) []Cluster {
 	// De-duplicate by (kind,value), summing counts and keeping the most-frequent
 	// non-empty name as NameSeen.
 	merged := map[string]*Identity{}
@@ -256,6 +259,21 @@ func ClusterIdentities(ids []Identity) []Cluster {
 		if nm != "" && !genericNames[nm] {
 			byName[nm] = append(byName[nm], id)
 		}
+	}
+
+	// Rule 0 (STRONGEST): an email + a login that appear together on the same
+	// commit are the same person — the commit literally carries both. This beats
+	// every heuristic below (a person's email and username are linked, not separate).
+	for _, p := range pairs {
+		ek := identityKey(Identity{Kind: KindEmail, Value: strings.ToLower(strings.TrimSpace(p[0]))})
+		lk := identityKey(Identity{Kind: KindLogin, Value: strings.ToLower(strings.TrimSpace(p[1]))})
+		if _, ok := merged[ek]; !ok {
+			continue
+		}
+		if _, ok := merged[lk]; !ok {
+			continue
+		}
+		uf.union(ek, lk)
 	}
 
 	// Rule 1: identities sharing the same (non-generic, non-bot) display name.
@@ -443,6 +461,10 @@ func DetectAndUpsert(ctx context.Context, tx pgx.Tx, orgID string) (DetectResult
 	var res DetectResult
 
 	// 1) Collect every distinct identity from the org's data.
+	pairs, err := collectCoOccurrencePairs(ctx, tx, orgID)
+	if err != nil {
+		return res, err
+	}
 	all, err := collectIdentities(ctx, tx, orgID)
 	if err != nil {
 		return res, err
@@ -460,7 +482,7 @@ func DetectAndUpsert(ctx context.Context, tx pgx.Tx, orgID string) (DetectResult
 
 	// 3) Cluster ALL identities (existing + new) so new identities can union onto
 	//    existing contributors, but only PERSIST changes for new identities.
-	clusters := ClusterIdentities(all)
+	clusters := ClusterIdentities(all, pairs...)
 
 	for _, cl := range clusters {
 		// Does this cluster already overlap an existing contributor? If several
@@ -531,6 +553,33 @@ func pickExistingContributor(cl Cluster, existing map[string]string) string {
 // commits, pull_requests, pr_reviews and author_survival, with the best display
 // name (the git login, since commits carry no separate name column) and a usage
 // count used to weight the most-frequent display/primary-email picks.
+// collectCoOccurrencePairs returns (email, login) values that appeared TOGETHER on
+// the same commit author — the strongest same-person signal for ClusterIdentities.
+func collectCoOccurrencePairs(ctx context.Context, tx pgx.Tx, orgID string) ([][2]string, error) {
+	const q = `
+		SELECT lower(author_email::text), lower(author_login)
+		FROM commits
+		WHERE org_id = $1 AND author_email IS NOT NULL AND author_email::text <> ''
+		  AND author_login IS NOT NULL AND author_login <> ''
+		GROUP BY 1,2`
+	rows, err := tx.Query(ctx, q, orgID)
+	if err != nil {
+		return nil, fmt.Errorf("contributors: collect co-occurrence: %w", err)
+	}
+	defer rows.Close()
+	var out [][2]string
+	for rows.Next() {
+		var email, login string
+		if err := rows.Scan(&email, &login); err != nil {
+			return nil, fmt.Errorf("contributors: scan co-occurrence: %w", err)
+		}
+		if email != "" && login != "" {
+			out = append(out, [2]string{email, login})
+		}
+	}
+	return out, rows.Err()
+}
+
 func collectIdentities(ctx context.Context, tx pgx.Tx, orgID string) ([]Identity, error) {
 	out := make([]Identity, 0, 256)
 

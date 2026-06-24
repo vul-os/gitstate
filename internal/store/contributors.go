@@ -598,3 +598,31 @@ func nullString(s string) any {
 	}
 	return s
 }
+
+// PruneOrphanContributors removes identities whose git value no longer appears in
+// ANY remaining commit/PR/review (e.g. after a repo is disconnected + its data
+// deleted), then removes contributors left with no identities — UNLESS they are
+// linked to a user (real members stay). Run inside db.WithOrg (RLS scopes it).
+func PruneOrphanContributors(ctx context.Context, tx pgx.Tx, orgID string) (int64, error) {
+	const delIdents = `
+		WITH live AS (
+			SELECT lower(author_email::text) v FROM commits WHERE author_email IS NOT NULL
+			UNION SELECT lower(author_login) FROM commits WHERE author_login IS NOT NULL
+			UNION SELECT lower(author_login) FROM pull_requests WHERE author_login IS NOT NULL
+			UNION SELECT lower(reviewer_login) FROM pr_reviews WHERE reviewer_login IS NOT NULL
+		)
+		DELETE FROM contributor_identities ci
+		WHERE ci.org_id = $1 AND ci.value NOT IN (SELECT v FROM live WHERE v IS NOT NULL AND v <> '')`
+	if _, err := tx.Exec(ctx, delIdents, orgID); err != nil {
+		return 0, fmt.Errorf("store: prune orphan identities: %w", err)
+	}
+	const delContribs = `
+		DELETE FROM contributors c
+		WHERE c.org_id = $1 AND c.user_id IS NULL
+		  AND NOT EXISTS (SELECT 1 FROM contributor_identities ci WHERE ci.contributor_id = c.id)`
+	tag, err := tx.Exec(ctx, delContribs, orgID)
+	if err != nil {
+		return 0, fmt.Errorf("store: prune orphan contributors: %w", err)
+	}
+	return tag.RowsAffected(), nil
+}
