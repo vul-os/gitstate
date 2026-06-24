@@ -2,14 +2,15 @@
  * Repos page — connected integrations + connect form + trigger sync.
  * Premium integrations surface: platform identity, sync health, derived-state legend.
  */
-import { useState, useCallback, useMemo, useEffect } from 'react'
+import { useState, useCallback, useMemo, useEffect, useRef } from 'react'
 import {
   GitBranch, Plus, RefreshCw, Loader2, X, Check,
   CircleDot, GitPullRequest, AlertCircle, Clock, ArrowRight,
   Link2, Unlink, KeyRound, Download, Building2, Settings, Info, ExternalLink,
-  ChevronRight, FolderGit2,
+  ChevronRight, FolderGit2, FolderPlus, MoveRight, Inbox,
 } from 'lucide-react'
 import { useRepos } from '../lib/useRepos.js'
+import { useProjects } from '../lib/useProjects.js'
 import {
   connectStartUrl, githubAppInstallUrl, fetchConnectStatus, fetchConnectRepos, disconnectPlatform, syncAllRepos, importRepos,
 } from '../lib/api.js'
@@ -188,7 +189,176 @@ function StatPip({ icon: Icon, value, label, color }) {
   )
 }
 
-function RepoRow({ repo, onSync }) {
+/**
+ * MoveTo — per-row dropdown to move a repo into any project (or "Unassigned").
+ * Calls onMove(projectId|null); shows a spinner while the PATCH settles.
+ */
+function MoveTo({ repo, projects, onMove }) {
+  const [open, setOpen] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const ref = useRef(null)
+
+  useEffect(() => {
+    if (!open) return
+    const onDoc = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false) }
+    document.addEventListener('mousedown', onDoc)
+    return () => document.removeEventListener('mousedown', onDoc)
+  }, [open])
+
+  const choose = useCallback(async (projectId) => {
+    setOpen(false)
+    if ((repo.projectId ?? null) === (projectId ?? null)) return
+    setBusy(true)
+    try {
+      await onMove(repo.id, projectId)
+    } finally {
+      setBusy(false)
+    }
+  }, [repo.id, repo.projectId, onMove])
+
+  const current = repo.projectId ?? null
+
+  return (
+    <div className="relative shrink-0" ref={ref}>
+      <button
+        type="button"
+        onClick={(e) => { e.stopPropagation(); setOpen(o => !o) }}
+        disabled={busy}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        className="flex items-center gap-1.5 text-xs font-medium px-2.5 py-1.5 rounded-[var(--radius-badge)] text-[var(--text-faint)] hover:text-[var(--brand-indigo)] hover:bg-[var(--brand-indigo)]/[0.08] transition-colors disabled:opacity-60"
+        title="Move to project"
+      >
+        {busy ? <Loader2 size={13} className="animate-spin" /> : <MoveRight size={13} />}
+        <span className="hidden sm:inline">Move to</span>
+        <ChevronRight size={11} className={`transition-transform duration-150 ${open ? 'rotate-90' : ''}`} />
+      </button>
+      {open && (
+        <div
+          role="menu"
+          className="absolute right-0 z-20 mt-1 w-52 max-h-72 overflow-auto rounded-[var(--radius-btn)] border border-[var(--border2)] bg-[var(--bg-surface)] shadow-[0_8px_30px_rgba(0,0,0,0.45)] py-1"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => choose(null)}
+            className="w-full flex items-center gap-2 px-3 py-2 text-xs text-left text-[var(--text-muted)] hover:bg-[var(--bg-surface2)] hover:text-[var(--text)] transition-colors"
+          >
+            <Inbox size={13} className="text-[var(--text-faint)] shrink-0" />
+            <span className="flex-1 truncate">Unassigned</span>
+            {current === null && <Check size={13} className="text-[var(--brand-teal)] shrink-0" />}
+          </button>
+          {projects.length > 0 && <div className="my-1 border-t border-[var(--border)]" />}
+          {projects.map(p => (
+            <button
+              key={p.id}
+              type="button"
+              role="menuitem"
+              onClick={() => choose(p.id)}
+              className="w-full flex items-center gap-2 px-3 py-2 text-xs text-left text-[var(--text-muted)] hover:bg-[var(--bg-surface2)] hover:text-[var(--text)] transition-colors"
+            >
+              <FolderGit2 size={13} className="text-[var(--text-faint)] shrink-0" />
+              <span className="flex-1 truncate">{p.name}</span>
+              {current === p.id && <Check size={13} className="text-[var(--brand-teal)] shrink-0" />}
+            </button>
+          ))}
+          {projects.length === 0 && (
+            <p className="px-3 py-2 text-[11px] text-[var(--text-faint)]">No projects yet — create one above.</p>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+/**
+ * NewProjectForm — inline create-project card (name + optional key).
+ * POSTs via onCreate({name, key}); shows busy + error, closes on success.
+ */
+function NewProjectForm({ onCreate, onClose }) {
+  const [name, setName] = useState('')
+  const [key, setKey] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState(null)
+
+  const submit = useCallback(async (e) => {
+    e.preventDefault()
+    if (!name.trim()) return
+    setSaving(true)
+    setError(null)
+    try {
+      await onCreate({ name: name.trim(), key: key.trim() || undefined })
+      onClose()
+    } catch (err) {
+      setError(err.message ?? 'Failed to create project')
+    } finally {
+      setSaving(false)
+    }
+  }, [name, key, onCreate, onClose])
+
+  const inputCls = 'w-full bg-[var(--bg)] text-[var(--text)] text-sm rounded-[var(--radius-btn)] px-3 py-2.5 border border-[var(--border)] outline-none focus:border-[var(--brand-teal)]/50 focus:ring-2 focus:ring-[var(--brand-teal)]/15 placeholder-[var(--text-faint)] transition-all'
+
+  return (
+    <Reveal>
+      <Card padding="lg" className="mb-6 border-glow-teal">
+        <div className="flex items-center justify-between mb-5">
+          <div>
+            <h3 className="text-sm font-semibold text-[var(--text)] font-display flex items-center gap-2">
+              <FolderPlus size={15} className="text-[var(--brand-teal)]" /> New project
+            </h3>
+            <p className="text-xs text-[var(--text-faint)] mt-0.5">
+              Group repos into a project — then move repositories into it from the list below.
+            </p>
+          </div>
+          <button
+            onClick={onClose}
+            className="p-1.5 -mr-1.5 rounded-[var(--radius-badge)] text-[var(--text-faint)] hover:text-[var(--text)] hover:bg-[var(--bg-surface2)] transition-colors"
+            aria-label="Close"
+          >
+            <X size={18} />
+          </button>
+        </div>
+
+        <form onSubmit={submit} className="space-y-4">
+          <div className="grid grid-cols-1 sm:grid-cols-[1fr_auto] gap-4">
+            <FormInput label={<>Name <span className="text-[var(--bad)]">*</span></>}>
+              <input
+                autoFocus required type="text" placeholder="e.g. Billing platform"
+                className={inputCls}
+                value={name}
+                onChange={e => setName(e.target.value)}
+              />
+            </FormInput>
+            <FormInput label={<>Key <span className="text-[var(--text-faint)] font-normal normal-case">(optional)</span></>} hint="short badge, e.g. BILL">
+              <input
+                type="text" placeholder="BILL"
+                className={`${inputCls} sm:w-28 font-mono uppercase`}
+                value={key}
+                onChange={e => setKey(e.target.value)}
+              />
+            </FormInput>
+          </div>
+
+          {error && (
+            <p className="flex items-center gap-2 text-xs text-[var(--bad)] bg-[color-mix(in_srgb,var(--bad)_8%,transparent)] border border-[color-mix(in_srgb,var(--bad)_25%,transparent)] rounded-[var(--radius-btn)] px-3 py-2">
+              <AlertCircle size={13} className="shrink-0" /> {error}
+            </p>
+          )}
+
+          <div className="flex items-center gap-3 pt-1">
+            <Button type="submit" disabled={saving || !name.trim()} leftIcon={saving ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} strokeWidth={2.5} />}>
+              Create project
+            </Button>
+            <Button type="button" variant="ghost" onClick={onClose}>Cancel</Button>
+          </div>
+        </form>
+      </Card>
+    </Reveal>
+  )
+}
+
+function RepoRow({ repo, onSync, projects, onMove }) {
   const meta = platformMeta(repo.platform)
   const Icon = meta.icon
   const synced = relativeTime(repo.lastSyncedAt)
@@ -228,6 +398,9 @@ function RepoRow({ repo, onSync }) {
         <StatPip icon={CircleDot} value={repo.issueCount} label="open issues" color="var(--brand-teal)" />
         <StatPip icon={GitPullRequest} value={repo.prCount ?? repo.openPrs} label="open PRs" color="var(--brand-indigo)" />
       </div>
+
+      {/* Move to project */}
+      <MoveTo repo={repo} projects={projects} onMove={onMove} />
 
       {/* Sync */}
       <button
@@ -581,14 +754,42 @@ function ConnectSection({ onImport, onImportAll, onUsePat, justConnected }) {
 }
 
 export default function Repos() {
-  const { repos, loading, error, connectRepo, syncRepo, refetch } = useRepos()
+  const { repos, loading, error, connectRepo, syncRepo, moveRepo, refetch } = useRepos()
+  const { projects, createProject, refetch: refetchProjects } = useProjects()
   const [syncingAll, setSyncingAll] = useState(false)
-  // Search within the grouped repo list, and per-project collapse state.
+  // Search within the grouped repo list, and per-group collapse state.
   const [query, setQuery] = useState('')
-  const [openGroups, setOpenGroups] = useState({}) // { [owner]: bool }
-  const toggleGroup = useCallback((owner) => {
-    setOpenGroups(prev => ({ ...prev, [owner]: !(prev[owner] ?? true) }))
+  const [openGroups, setOpenGroups] = useState({}) // { [groupKey]: bool }
+  const toggleGroup = useCallback((key) => {
+    setOpenGroups(prev => ({ ...prev, [key]: !(prev[key] ?? true) }))
   }, [])
+
+  // New-project inline form + a transient toast (create + move feedback).
+  const [showProjectForm, setShowProjectForm] = useState(false)
+  const [toast, setToast] = useState(null) // { kind:'ok'|'err', text }
+  useEffect(() => {
+    if (!toast) return
+    const id = setTimeout(() => setToast(null), 4000)
+    return () => clearTimeout(id)
+  }, [toast])
+
+  const handleCreateProject = useCallback(async ({ name, key }) => {
+    const proj = await createProject({ name, key })
+    setOpenGroups(prev => ({ ...prev, [`p:${proj.id}`]: true }))
+    refetchProjects?.().catch(() => {})
+    setToast({ kind: 'ok', text: `Created project “${proj.name}”` })
+    return proj
+  }, [createProject, refetchProjects])
+
+  // Move a repo (optimistic in useRepos), then re-settle both lists from server.
+  const handleMoveRepo = useCallback(async (id, projectId) => {
+    try {
+      await moveRepo(id, projectId)
+      refetch?.().catch(() => {})
+    } catch (e) {
+      setToast({ kind: 'err', text: e.message ?? 'Could not move repo' })
+    }
+  }, [moveRepo, refetch])
 
   const handleSyncAll = useCallback(async () => {
     setSyncingAll(true)
@@ -647,26 +848,47 @@ export default function Repos() {
     refetch?.().catch(() => {})
   }, [connectRepo, refetch])
 
-  // A "project" = the repo's owner-org (the part before "/" in full_name). Group
-  // the connected repos by that owner — same derivation as the import picker — so
-  // each project is a collapsible header with its repos nested + counted.
-  const repoGroups = useMemo(() => {
+  // Group repos by REAL project (repo.projectId → GET /api/projects). One group per
+  // project (empty ones still render so users can move repos in), plus an
+  // "Unassigned" group for repos with projectId == null. Inside Unassigned we keep
+  // the owner-org sub-grouping as a nicety. Search filters across every group.
+  const { projectGroups, unassigned, matchCount } = useMemo(() => {
     const q = query.trim().toLowerCase()
-    const filtered = q
-      ? repos.filter(r => (r.fullName || '').toLowerCase().includes(q))
-      : repos
-    const groups = {}
-    for (const r of filtered) {
+    const match = (r) => !q || (r.fullName || '').toLowerCase().includes(q)
+    const byProject = new Map() // projectId → repo[]
+    const unassignedRepos = []
+    let matched = 0
+    for (const r of repos) {
+      if (!match(r)) continue
+      matched += 1
+      const pid = r.projectId ?? null
+      if (pid == null) { unassignedRepos.push(r); continue }
+      if (!byProject.has(pid)) byProject.set(pid, [])
+      byProject.get(pid).push(r)
+    }
+    const sortRepos = (l) => l.sort((a, b) => (a.fullName || '').localeCompare(b.fullName || ''))
+    // One group per real project (sorted by name), including empty projects.
+    const groups = [...projects]
+      .filter(p => !p.archived)
+      .sort((a, b) => (a.name || '').localeCompare(b.name || ''))
+      .map(p => ({ project: p, list: sortRepos(byProject.get(p.id) || []) }))
+
+    // Sub-group Unassigned by owner-org so nothing is hidden.
+    const owners = {}
+    for (const r of unassignedRepos) {
       const owner = r.fullName?.includes('/') ? r.fullName.split('/')[0] : '(personal)'
-      ;(groups[owner] ||= []).push(r)
+      ;(owners[owner] ||= []).push(r)
     }
-    for (const owner of Object.keys(groups)) {
-      groups[owner].sort((a, b) => (a.fullName || '').localeCompare(b.fullName || ''))
-    }
-    return Object.keys(groups)
+    const ownerGroups = Object.keys(owners)
       .sort((a, b) => a.localeCompare(b))
-      .map(owner => ({ owner, list: groups[owner] }))
-  }, [repos, query])
+      .map(owner => ({ owner, list: sortRepos(owners[owner]) }))
+
+    return {
+      projectGroups: groups,
+      unassigned: { list: sortRepos(unassignedRepos), ownerGroups },
+      matchCount: matched,
+    }
+  }, [repos, projects, query])
 
   const stats = useMemo(() => {
     const total = repos.length
@@ -675,12 +897,10 @@ export default function Repos() {
     const synced = repos.filter(r => r.lastSyncedAt).length
     const issues = repos.reduce((sum, r) => sum + (Number(r.issueCount) || 0), 0)
     const hasIssueData = repos.some(r => r.issueCount != null)
-    // A "project" = a distinct owner-org across the connected repos.
-    const projects = new Set(
-      repos.map(r => (r.fullName?.includes('/') ? r.fullName.split('/')[0] : '(personal)'))
-    ).size
-    return { total, github, gitlab, synced, issues, hasIssueData, projects }
+    return { total, github, gitlab, synced, issues, hasIssueData }
   }, [repos])
+  // A "project" = a user-created project (GET /api/projects), not an owner-org.
+  const projectCount = useMemo(() => projects.filter(p => !p.archived).length, [projects])
 
   return (
     <div className="w-full">
@@ -698,13 +918,43 @@ export default function Repos() {
               </p>
             </div>
           </div>
-          {!showForm && (
-            <Button variant="primary" onClick={() => setShowForm(true)} leftIcon={<Plus size={15} strokeWidth={2.5} />}>
-              Connect repo
-            </Button>
-          )}
+          <div className="flex items-center gap-2 shrink-0">
+            {!showProjectForm && (
+              <Button variant="primary" onClick={() => setShowProjectForm(true)} leftIcon={<FolderPlus size={15} strokeWidth={2.25} />}>
+                New project
+              </Button>
+            )}
+            {!showForm && (
+              <Button variant="outline" onClick={() => setShowForm(true)} leftIcon={<Plus size={15} strokeWidth={2.5} />}>
+                Connect repo
+              </Button>
+            )}
+          </div>
         </div>
       </Reveal>
+
+      {/* New-project inline form */}
+      {showProjectForm && (
+        <NewProjectForm onCreate={handleCreateProject} onClose={() => setShowProjectForm(false)} />
+      )}
+
+      {/* Transient create/move toast */}
+      {toast && (
+        <Reveal>
+          <div className={[
+            'flex items-center gap-2 text-xs rounded-[var(--radius-btn)] px-3 py-2.5 mb-4 border',
+            toast.kind === 'ok'
+              ? 'text-[var(--brand-teal)] bg-[var(--brand-teal)]/[0.08] border-[var(--brand-teal)]/25'
+              : 'text-[var(--bad)] bg-[color-mix(in_srgb,var(--bad)_8%,transparent)] border-[color-mix(in_srgb,var(--bad)_25%,transparent)]',
+          ].join(' ')}>
+            {toast.kind === 'ok' ? <Check size={14} className="shrink-0" /> : <AlertCircle size={14} className="shrink-0" />}
+            {toast.text}
+            <button onClick={() => setToast(null)} className="ml-auto opacity-60 hover:opacity-100" aria-label="Dismiss">
+              <X size={14} />
+            </button>
+          </div>
+        </Reveal>
+      )}
 
       {/* Redirect outcome banner */}
       {banner && (
@@ -733,8 +983,8 @@ export default function Repos() {
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
             <StatCard
               label="Projects"
-              value={stats.projects.toLocaleString()}
-              sublabel={stats.projects === 1 ? 'owner-org' : 'owner-orgs'}
+              value={projectCount.toLocaleString()}
+              sublabel={projectCount === 1 ? 'project' : 'projects'}
               accent="var(--chart-2)"
               icon={<FolderGit2 size={14} />}
             />
@@ -799,12 +1049,12 @@ export default function Repos() {
       {/* Repo list — grouped by project (owner-org) */}
       <Reveal delay={0.08}>
         <Card padding="none" className="overflow-hidden">
-          {!loading && !error && repos.length > 0 && (
+          {!loading && !error && (repos.length > 0 || projectCount > 0) && (
             <div className="px-4 py-2.5 border-b border-[var(--border)] bg-[var(--bg-surface2)]/40">
               <input
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
-                placeholder={`Search ${repos.length} repositories by name or project…`}
+                placeholder={`Search ${repos.length} repositories by name…`}
                 className="w-full px-3 py-1.5 rounded-[var(--radius-btn)] bg-[var(--bg)] border border-[var(--border)] text-xs text-[var(--text)] placeholder-[var(--text-faint)] outline-none focus:border-[var(--brand-teal)]"
               />
             </div>
@@ -837,39 +1087,45 @@ export default function Repos() {
             </div>
           )}
 
-          {!loading && !error && repos.length === 0 && (
+          {!loading && !error && repos.length === 0 && projectCount === 0 && (
             <div className="py-16 text-center px-6">
               <div className="w-12 h-12 rounded-[var(--radius-card)] flex items-center justify-center mx-auto mb-4 bg-[var(--brand-teal)]/[0.06] border border-[var(--brand-teal)]/20">
-                <GitBranch size={22} className="text-[var(--brand-teal)]" />
+                <FolderGit2 size={22} className="text-[var(--brand-teal)]" />
               </div>
-              <h3 className="text-sm font-semibold text-[var(--text)] mb-1">No repositories yet</h3>
+              <h3 className="text-sm font-semibold text-[var(--text)] mb-1">No projects yet</h3>
               <p className="text-xs text-[var(--text-faint)] max-w-xs mx-auto mb-4">
-                Connect a GitHub or GitLab repo and gitstate will derive project state from git — no ticket maintenance.
+                Create a project to organize work, or connect a repo — gitstate derives project state from git, no ticket maintenance.
               </p>
-              <Button variant="primary" onClick={() => setShowForm(true)} leftIcon={<Plus size={14} strokeWidth={2.5} />}>
-                Connect first repo
-              </Button>
+              <div className="flex items-center justify-center gap-2">
+                <Button variant="primary" onClick={() => setShowProjectForm(true)} leftIcon={<FolderPlus size={14} strokeWidth={2.25} />}>
+                  New project
+                </Button>
+                <Button variant="outline" onClick={() => setShowForm(true)} leftIcon={<Plus size={14} strokeWidth={2.5} />}>
+                  Connect repo
+                </Button>
+              </div>
             </div>
           )}
 
-          {!loading && !error && repos.length > 0 && repoGroups.length === 0 && (
+          {!loading && !error && (repos.length > 0 || projectCount > 0) && query.trim() && matchCount === 0 && (
             <p className="px-5 py-10 text-center text-xs text-[var(--text-faint)]">
               No repositories match “{query}”.
             </p>
           )}
 
-          {!loading && !error && repoGroups.length > 0 && (
+          {!loading && !error && (projectGroups.length > 0 || unassigned.list.length > 0) && (
             <RevealList staggerDelay={0.04}>
-              {repoGroups.map(({ owner, list }) => {
-                // Default-open; a project header toggles its repos. Avatar = owner's
-                // first initial in the brand gradient (no org logos available client-side).
-                const open = openGroups[owner] ?? true
+              {/* One collapsible group per REAL project (empty ones still render). */}
+              {projectGroups.map(({ project, list }) => {
+                const key = `p:${project.id}`
+                // Collapse empty projects by default (less noise); open the rest.
+                const open = openGroups[key] ?? (list.length > 0)
                 const synced = list.filter(r => r.lastSyncedAt).length
                 return (
-                  <div key={owner}>
+                  <div key={key}>
                     <button
                       type="button"
-                      onClick={() => toggleGroup(owner)}
+                      onClick={() => toggleGroup(key)}
                       aria-expanded={open}
                       className="w-full flex items-center gap-2.5 px-5 py-2.5 bg-[var(--bg-surface2)]/70 hover:bg-[var(--bg-surface2)] border-b border-[var(--border)] transition-colors text-left"
                     >
@@ -881,9 +1137,55 @@ export default function Repos() {
                         className="w-5 h-5 rounded-[5px] flex items-center justify-center shrink-0 text-[9px] font-bold text-[#0B1120] bg-gradient-to-br from-[#2DD4BF] to-[#6366F1] select-none uppercase"
                         aria-hidden="true"
                       >
-                        {owner === '(personal)' ? '@' : owner.slice(0, 2)}
+                        {(project.name || '?').slice(0, 2)}
                       </span>
-                      <span className="text-[12px] font-semibold text-[var(--text)] truncate">{owner}</span>
+                      <span className="text-[12px] font-semibold text-[var(--text)] truncate">{project.name}</span>
+                      {project.key && (
+                        <Badge color="indigo">{project.key}</Badge>
+                      )}
+                      <span className="text-[10px] font-mono text-[var(--text-faint)] rounded-full px-2 py-0.5 bg-[var(--bg)] border border-[var(--border)] tabular-nums shrink-0">
+                        {list.length} {list.length === 1 ? 'repo' : 'repos'}
+                      </span>
+                      <span className="ml-auto text-[10px] font-mono text-[var(--text-faint)] shrink-0">
+                        {list.length === 0
+                          ? 'empty'
+                          : synced === list.length ? 'all synced' : `${synced}/${list.length} synced`}
+                      </span>
+                    </button>
+                    {open && list.length === 0 && (
+                      <p className="px-5 py-4 text-[11px] text-[var(--text-faint)] border-b border-[var(--border)]">
+                        No repos yet — use “Move to” on any repository below to add it here.
+                      </p>
+                    )}
+                    {open && list.map(repo => (
+                      <RepoRow key={repo.id} repo={repo} onSync={syncRepo} projects={projects.filter(p => !p.archived)} onMove={handleMoveRepo} />
+                    ))}
+                  </div>
+                )
+              })}
+
+              {/* Unassigned — repos with no project, sub-grouped by owner-org. */}
+              {unassigned.list.length > 0 && (() => {
+                const key = 'unassigned'
+                const open = openGroups[key] ?? true
+                const list = unassigned.list
+                const synced = list.filter(r => r.lastSyncedAt).length
+                return (
+                  <div key={key}>
+                    <button
+                      type="button"
+                      onClick={() => toggleGroup(key)}
+                      aria-expanded={open}
+                      className="w-full flex items-center gap-2.5 px-5 py-2.5 bg-[var(--bg-surface2)]/70 hover:bg-[var(--bg-surface2)] border-b border-[var(--border)] transition-colors text-left"
+                    >
+                      <ChevronRight
+                        size={13}
+                        className={`text-[var(--text-faint)] shrink-0 transition-transform duration-150 ${open ? 'rotate-90' : ''}`}
+                      />
+                      <span className="w-5 h-5 rounded-[5px] flex items-center justify-center shrink-0 border border-[var(--border2)] bg-[var(--bg)]" aria-hidden="true">
+                        <Inbox size={12} className="text-[var(--text-faint)]" />
+                      </span>
+                      <span className="text-[12px] font-semibold text-[var(--text)] truncate">Unassigned</span>
                       <span className="text-[10px] font-mono text-[var(--text-faint)] rounded-full px-2 py-0.5 bg-[var(--bg)] border border-[var(--border)] tabular-nums shrink-0">
                         {list.length} {list.length === 1 ? 'repo' : 'repos'}
                       </span>
@@ -891,12 +1193,22 @@ export default function Repos() {
                         {synced === list.length ? 'all synced' : `${synced}/${list.length} synced`}
                       </span>
                     </button>
-                    {open && list.map(repo => (
-                      <RepoRow key={repo.id} repo={repo} onSync={syncRepo} />
+                    {open && unassigned.ownerGroups.map(({ owner, list: ownerList }) => (
+                      <div key={owner}>
+                        {/* Owner-org sub-header (a nicety so nothing is hidden). */}
+                        <div className="flex items-center gap-2 px-5 py-1.5 pl-9 bg-[var(--bg-surface2)]/30 border-b border-[var(--border)]">
+                          <Building2 size={11} className="text-[var(--text-faint)] shrink-0" />
+                          <span className="text-[10px] font-semibold text-[var(--text-faint)] truncate">{owner}</span>
+                          <span className="text-[10px] font-mono text-[var(--text-faint)] tabular-nums">{ownerList.length}</span>
+                        </div>
+                        {ownerList.map(repo => (
+                          <RepoRow key={repo.id} repo={repo} onSync={syncRepo} projects={projects.filter(p => !p.archived)} onMove={handleMoveRepo} />
+                        ))}
+                      </div>
                     ))}
                   </div>
                 )
-              })}
+              })()}
             </RevealList>
           )}
         </Card>

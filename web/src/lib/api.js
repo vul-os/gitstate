@@ -341,6 +341,29 @@ export function disconnectPlatform(platform) {
   return del(`/api/connect/${platform}`)
 }
 
+// ── Projects ────────────────────────────────────────────────────────────────────
+
+/** List the org's user-created projects: [{id, name, key, archived}]. */
+export function fetchProjects() {
+  return get('/api/projects')
+}
+
+/**
+ * Create a project. `key` is an optional short slug/badge.
+ * @returns {Promise<{id, name, key, archived}>}
+ */
+export function createProject({ name, key } = {}) {
+  return post('/api/projects', { name, key: key || undefined })
+}
+
+/**
+ * Move a repo into a project. Pass `projectId: null` (or "") to unassign.
+ * @returns {Promise<{ok:true, projectId:string|null}>}
+ */
+export function moveRepoToProject(repoId, projectId) {
+  return patch(`/api/repos/${repoId}/project`, { projectId: projectId || null })
+}
+
 // ── Calendar connection (Google / Microsoft) helpers ───────────────────────────
 
 /**

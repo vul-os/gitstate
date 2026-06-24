@@ -51,6 +51,21 @@ export function useRepos() {
     setTimeout(() => doFetch().catch(() => {}), 4000)
   }, [doFetch])
 
+  // Move a repo into a project (projectId null/"" → unassigned). Optimistically
+  // patches projectId so the row jumps groups immediately; reverts + rethrows on
+  // failure so the caller can surface an error and re-settle from the server.
+  const moveRepo = useCallback(async (id, projectId) => {
+    const prev = state.repos.find(r => r.id === id)?.projectId ?? null
+    const next = projectId || null
+    dispatch({ type: 'PATCH_REPO', id, patch: { projectId: next } })
+    try {
+      await api.moveRepoToProject(id, next)
+    } catch (e) {
+      dispatch({ type: 'PATCH_REPO', id, patch: { projectId: prev } })
+      throw e
+    }
+  }, [state.repos])
+
   return {
     repos: state.repos,
     loading: state.loading,
@@ -58,5 +73,6 @@ export function useRepos() {
     refetch: doFetch,
     connectRepo,
     syncRepo,
+    moveRepo,
   }
 }

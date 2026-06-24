@@ -4,6 +4,7 @@
 import { useReducer, useEffect, useCallback, useRef } from 'react'
 import { useOrg } from './useOrg.js'
 import * as api from './api.js'
+import { createProject as apiCreateProject } from './api.js'
 
 const init = { projects: [], loading: false, error: null }
 
@@ -38,8 +39,9 @@ export function useProjects() {
 
   useEffect(() => { doFetch().catch(() => {}) }, [doFetch])
 
-  const createProject = useCallback(async ({ name, description }) => {
-    const proj = await api.post('/api/projects', { name, description })
+  // Create a project. Backend takes {name, key?}; returns {id, name, key, archived}.
+  const createProject = useCallback(async ({ name, key }) => {
+    const proj = await apiCreateProject({ name, key })
     dispatch({ type: 'ADD_PROJECT', project: proj })
     return proj
   }, [])
