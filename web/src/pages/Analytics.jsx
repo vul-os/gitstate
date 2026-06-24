@@ -16,8 +16,10 @@ import {
   useSummary, useHeatmap, useCommitsOverTime, useCommitsByContributor,
   useChurnOverTime, useChurnByContributor,
   useContributors, useRepoStats, useDayCommits,
-  usePullRequests, useIssueFlow, useAgentShare, useProjects,
+  usePullRequests, useIssueFlow, useAgentShare,
 } from '../lib/useAnalytics.js'
+import { useRepos } from '../lib/useRepos.js'
+import { useProjects } from '../lib/useProjects.js'
 import { Card, Badge, StatCard } from '../components/ui/index.js'
 import { LineChart, ContributorLegend } from '../components/LineChart.jsx'
 import { Reveal } from '../components/Reveal.jsx'
@@ -1115,61 +1117,178 @@ function ContributorLeaderboard({ contributors, loading }) {
   )
 }
 
-// ── per-repo table ────────────────────────────────────────────────────────────
+// ── projects & repositories (repos grouped by their real project) ─────────────
 
-function RepoTable({ repos, loading }) {
-  const sorted = useMemo(
-    () => [...(repos || [])].sort((a, b) => (b.commits || 0) - (a.commits || 0)),
-    [repos]
-  )
+// One collapsible group: project header (name + key badge + repo count + rollup)
+// over the per-repo rows (same columns as the old RepoTable). `barMax` is the
+// global max commits so commit bars stay comparable across every group.
+function ProjectRepoGroup({ name, badge, repos, barMax }) {
+  const [open, setOpen] = useState(true)
+  const rollup = useMemo(() => repos.reduce((a, r) => ({
+    commits: a.commits + (r.commits || 0),
+    additions: a.additions + (r.additions || 0),
+    deletions: a.deletions + (r.deletions || 0),
+  }), { commits: 0, additions: 0, deletions: 0 }), [repos])
+
   return (
-    <Card padding="lg">
-      <div className="flex items-center justify-between mb-4">
-        <h2 className="text-sm font-semibold text-[var(--text)] flex items-center gap-2">
-          <span className="grid place-items-center w-7 h-7 rounded-[6px] shrink-0" style={{ color: 'var(--chart-2)', background: 'color-mix(in srgb, var(--chart-2) 14%, transparent)' }}>
-            <GitBranch size={15} />
-          </span> Repositories
-        </h2>
-        {!loading && <span className="text-xs font-mono text-[var(--text-faint)]">{sorted.length} repos</span>}
-      </div>
-      {loading ? (
-        <div className="space-y-2">
-          {Array.from({ length: 4 }).map((_, i) => <div key={i} className="h-9 rounded bg-[var(--bg-surface2)] animate-pulse" />)}
-        </div>
-      ) : sorted.length === 0 ? (
-        <div className="py-8 text-center text-sm text-[var(--text-faint)]">No repositories in this range.</div>
-      ) : (
+    <div className="rounded-[var(--radius-card)] border border-[var(--border)] overflow-hidden">
+      <button
+        type="button"
+        onClick={() => setOpen(o => !o)}
+        className="w-full flex items-center gap-2.5 px-3 py-2.5 bg-[var(--bg-surface2)] hover:bg-[var(--bg-surface3)] transition-colors text-left"
+      >
+        <ChevronDown size={14} className={`text-[var(--text-faint)] shrink-0 transition-transform ${open ? '' : '-rotate-90'}`} />
+        <Folder size={14} className="text-[var(--brand-teal)] shrink-0" />
+        <span className="text-sm font-medium text-[var(--text)] truncate">{name}</span>
+        {badge && (
+          <span className="font-mono text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded bg-[var(--bg-surface3)] text-[var(--text-faint)] shrink-0">{badge}</span>
+        )}
+        <span className="font-mono text-[10px] text-[var(--text-faint)] shrink-0">{repos.length} {repos.length === 1 ? 'repo' : 'repos'}</span>
+        <span className="flex-1" />
+        <span className="font-mono text-[11px] tabular-nums text-[var(--text-dim)] shrink-0 hidden sm:inline">{fmtNum(rollup.commits)} commits</span>
+        <span className="font-mono text-[11px] tabular-nums whitespace-nowrap shrink-0 hidden md:inline">
+          <span className="text-green-400">+{fmtNum(rollup.additions)}</span>{' '}
+          <span className="text-red-400">−{fmtNum(rollup.deletions)}</span>
+        </span>
+      </button>
+      {open && (
         <div className="overflow-x-auto">
           <table className="w-full text-xs">
             <thead>
               <tr className="border-b border-[var(--border)] text-[var(--text-faint)]">
-                <th className="text-left font-mono uppercase tracking-wider font-medium px-2 py-2">Repository</th>
-                <th className="text-right font-mono uppercase tracking-wider font-medium px-2 py-2">Commits</th>
-                <th className="text-right font-mono uppercase tracking-wider font-medium px-2 py-2">Contributors</th>
+                <th className="text-left font-mono uppercase tracking-wider font-medium px-3 py-2">Repository</th>
+                <th className="text-right font-mono uppercase tracking-wider font-medium px-2 py-2 w-[34%]">Commits</th>
+                <th className="text-right font-mono uppercase tracking-wider font-medium px-2 py-2 hidden sm:table-cell">Contributors</th>
                 <th className="text-right font-mono uppercase tracking-wider font-medium px-2 py-2">Lines</th>
-                <th className="text-right font-mono uppercase tracking-wider font-medium px-2 py-2">Last activity</th>
+                <th className="text-right font-mono uppercase tracking-wider font-medium px-2 py-2 hidden md:table-cell">Last activity</th>
               </tr>
             </thead>
             <tbody>
-              {sorted.map((r, i) => (
-                <tr key={r.repoId || r.fullName || i} className="border-b border-[var(--border)] hover:bg-[var(--bg-surface2)] transition-colors">
-                  <td className="px-2 py-2.5">
-                    <div className="flex items-center gap-2 min-w-0">
-                      <GitBranch size={13} className="text-[var(--brand-indigo)] shrink-0" />
-                      <span className="text-[var(--text-dim)] font-mono truncate">{r.fullName}</span>
-                    </div>
-                  </td>
-                  <td className="px-2 py-2.5 text-right font-mono tabular-nums text-[var(--text-dim)]">{fmtNum(r.commits)}</td>
-                  <td className="px-2 py-2.5 text-right font-mono tabular-nums text-[var(--text-muted)]">{fmtNum(r.contributors)}</td>
-                  <td className="px-2 py-2.5 text-right font-mono tabular-nums whitespace-nowrap">
-                    <span className="text-green-400">+{fmtNum(r.additions)}</span>{' '}
-                    <span className="text-red-400">−{fmtNum(r.deletions)}</span>
-                  </td>
-                  <td className="px-2 py-2.5 text-right font-mono text-[var(--text-faint)] whitespace-nowrap">{relTime(r.lastActivity)}</td>
-                </tr>
-              ))}
+              {repos.map((r, i) => {
+                const pct = barMax > 0 ? Math.round(((r.commits || 0) / barMax) * 100) : 0
+                return (
+                  <tr key={r.repoId || r.fullName || i} className="border-b border-[var(--border)] last:border-0 hover:bg-[var(--bg-surface2)] transition-colors">
+                    <td className="px-3 py-2.5">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <GitBranch size={13} className="text-[var(--brand-indigo)] shrink-0" />
+                        <span className="text-[var(--text-dim)] font-mono truncate">{r.fullName}</span>
+                      </div>
+                    </td>
+                    <td className="px-2 py-2.5">
+                      <div className="flex items-center gap-2 justify-end">
+                        <div className="flex-1 h-1.5 rounded-full bg-[var(--bg-surface3)] overflow-hidden min-w-[40px] max-w-[140px]">
+                          <div className="h-full rounded-full" style={{ width: `${pct}%`, background: 'linear-gradient(90deg,var(--chart-1),var(--chart-2))' }} />
+                        </div>
+                        <span className="font-mono tabular-nums text-[var(--text-dim)] w-10 text-right">{fmtNum(r.commits)}</span>
+                      </div>
+                    </td>
+                    <td className="px-2 py-2.5 text-right font-mono tabular-nums text-[var(--text-muted)] hidden sm:table-cell">{fmtNum(r.contributors)}</td>
+                    <td className="px-2 py-2.5 text-right font-mono tabular-nums whitespace-nowrap">
+                      <span className="text-green-400">+{fmtNum(r.additions)}</span>{' '}
+                      <span className="text-red-400">−{fmtNum(r.deletions)}</span>
+                    </td>
+                    <td className="px-2 py-2.5 text-right font-mono text-[var(--text-faint)] whitespace-nowrap hidden md:table-cell">{relTime(r.lastActivity)}</td>
+                  </tr>
+                )
+              })}
             </tbody>
           </table>
+        </div>
+      )}
+    </div>
+  )
+}
+
+/**
+ * ProjectRepoTable — full-width merge of the old Projects + Repositories tables.
+ *
+ * The analytics `repos` (from useRepoStats) carry per-repo stats but NO projectId.
+ * The real project assignment lives on the /api/repos list and project names come
+ * from /api/projects. So we build:
+ *   • fullName → projectId   (from useRepos())
+ *   • projectId → {name,key} (from useProjects())
+ * and group the analytics repos by their real project. Repos whose projectId is
+ * null or unmatched fall into an "Unassigned" group (sorted last). Other groups
+ * are sorted by total commits desc; all default-open.
+ */
+function ProjectRepoTable({ repos, loading }) {
+  const { repos: repoList } = useRepos()
+  const { projects } = useProjects()
+
+  const { groups, repoCount, projectCount, barMax } = useMemo(() => {
+    const list = repos || []
+    // fullName → projectId (real assignment from /api/repos)
+    const pidByName = new Map()
+    for (const r of repoList || []) {
+      if (r.fullName) pidByName.set(r.fullName, r.projectId ?? null)
+    }
+    // projectId → {name, key} (real projects from /api/projects)
+    const projById = new Map()
+    for (const p of projects || []) projById.set(p.id, p)
+
+    const byProject = new Map() // projectId → repo[]
+    const unassigned = []
+    for (const r of list) {
+      const pid = pidByName.get(r.fullName) ?? null
+      if (pid != null && projById.has(pid)) {
+        if (!byProject.has(pid)) byProject.set(pid, [])
+        byProject.get(pid).push(r)
+      } else {
+        unassigned.push(r)
+      }
+    }
+
+    const sumCommits = (l) => l.reduce((s, r) => s + (r.commits || 0), 0)
+    const sortRepos = (l) => [...l].sort((a, b) => (b.commits || 0) - (a.commits || 0))
+
+    const projGroups = [...byProject.entries()]
+      .map(([pid, l]) => {
+        const p = projById.get(pid)
+        return { key: pid, name: p?.name || 'Project', badge: p?.key || null, repos: sortRepos(l), total: sumCommits(l) }
+      })
+      .sort((a, b) => b.total - a.total)
+
+    const all = [...projGroups]
+    if (unassigned.length) {
+      all.push({ key: '__unassigned__', name: 'Unassigned', badge: null, repos: sortRepos(unassigned), total: sumCommits(unassigned), unassigned: true })
+    }
+
+    return {
+      groups: all,
+      repoCount: list.length,
+      projectCount: projGroups.length,
+      barMax: list.reduce((m, r) => Math.max(m, r.commits || 0), 0),
+    }
+  }, [repos, repoList, projects])
+
+  return (
+    <Card padding="lg">
+      <div className="flex items-center justify-between mb-4">
+        <div>
+          <h2 className="text-sm font-semibold text-[var(--text)] flex items-center gap-2">
+            <span className="grid place-items-center w-7 h-7 rounded-[6px] shrink-0" style={{ color: 'var(--chart-1)', background: 'color-mix(in srgb, var(--chart-1) 14%, transparent)' }}>
+              <Folder size={15} />
+            </span> Projects &amp; repositories
+          </h2>
+          <p className="text-xs text-[var(--text-faint)] mt-0.5">Repositories grouped by their project — commits, contributors, churn and last activity.</p>
+        </div>
+        {!loading && (
+          <span className="text-xs font-mono text-[var(--text-faint)] whitespace-nowrap">
+            {repoCount} {repoCount === 1 ? 'repo' : 'repos'} · {projectCount} {projectCount === 1 ? 'project' : 'projects'}
+          </span>
+        )}
+      </div>
+      {loading ? (
+        <div className="space-y-2">
+          {Array.from({ length: 4 }).map((_, i) => <div key={i} className="h-11 rounded bg-[var(--bg-surface2)] animate-pulse" />)}
+        </div>
+      ) : groups.length === 0 ? (
+        <div className="py-8 text-center text-sm text-[var(--text-faint)]">No repositories in this range.</div>
+      ) : (
+        <div className="space-y-2.5">
+          {groups.map(g => (
+            <ProjectRepoGroup key={g.key} name={g.name} badge={g.badge} repos={g.repos} barMax={barMax} />
+          ))}
         </div>
       )}
     </Card>
@@ -1440,73 +1559,6 @@ function AgentSharePanel({ filters }) {
   )
 }
 
-// ── per-project table ─────────────────────────────────────────────────────────
-
-function ProjectTable({ filters }) {
-  const { data: projects, loading } = useProjects(filters)
-  const sorted = useMemo(
-    () => [...(projects || [])].sort((a, b) => (b.commits || 0) - (a.commits || 0)),
-    [projects]
-  )
-  return (
-    <Card padding="lg">
-      <div className="flex items-center justify-between mb-4">
-        <div>
-          <h2 className="text-sm font-semibold text-[var(--text)] flex items-center gap-2">
-            <span className="grid place-items-center w-7 h-7 rounded-[6px] shrink-0" style={{ color: 'var(--chart-1)', background: 'color-mix(in srgb, var(--chart-1) 14%, transparent)' }}>
-              <Folder size={15} />
-            </span> Projects
-          </h2>
-          <p className="text-xs text-[var(--text-faint)] mt-0.5">Commits, contributors, churn, and issue health per project.</p>
-        </div>
-        {!loading && <span className="text-xs font-mono text-[var(--text-faint)]">{sorted.length} projects</span>}
-      </div>
-      {loading ? (
-        <div className="space-y-2">
-          {Array.from({ length: 4 }).map((_, i) => <div key={i} className="h-9 rounded bg-[var(--bg-surface2)] animate-pulse" />)}
-        </div>
-      ) : sorted.length === 0 ? (
-        <div className="py-8 text-center text-sm text-[var(--text-faint)]">No projects in this range.</div>
-      ) : (
-        <div className="overflow-x-auto">
-          <table className="w-full text-xs">
-            <thead>
-              <tr className="border-b border-[var(--border)] text-[var(--text-faint)]">
-                <th className="text-left font-mono uppercase tracking-wider font-medium px-2 py-2">Project</th>
-                <th className="text-right font-mono uppercase tracking-wider font-medium px-2 py-2">Commits</th>
-                <th className="text-right font-mono uppercase tracking-wider font-medium px-2 py-2 hidden sm:table-cell">Contributors</th>
-                <th className="text-right font-mono uppercase tracking-wider font-medium px-2 py-2">Open</th>
-                <th className="text-right font-mono uppercase tracking-wider font-medium px-2 py-2">Done</th>
-                <th className="text-right font-mono uppercase tracking-wider font-medium px-2 py-2 hidden md:table-cell">Lines</th>
-              </tr>
-            </thead>
-            <tbody>
-              {sorted.map((p, i) => (
-                <tr key={p.projectId || p.name || i} className="border-b border-[var(--border)] hover:bg-[var(--bg-surface2)] transition-colors">
-                  <td className="px-2 py-2.5">
-                    <div className="flex items-center gap-2 min-w-0">
-                      <Folder size={13} className="text-[var(--brand-teal)] shrink-0" />
-                      <span className="text-[var(--text-dim)] font-medium truncate">{p.name}</span>
-                    </div>
-                  </td>
-                  <td className="px-2 py-2.5 text-right font-mono tabular-nums text-[var(--text-dim)]">{fmtNum(p.commits)}</td>
-                  <td className="px-2 py-2.5 text-right font-mono tabular-nums text-[var(--text-muted)] hidden sm:table-cell">{fmtNum(p.contributors)}</td>
-                  <td className="px-2 py-2.5 text-right font-mono tabular-nums text-[var(--warn)]">{fmtNum(p.openIssues)}</td>
-                  <td className="px-2 py-2.5 text-right font-mono tabular-nums text-[var(--ok)]">{fmtNum(p.doneIssues)}</td>
-                  <td className="px-2 py-2.5 text-right font-mono tabular-nums whitespace-nowrap hidden md:table-cell">
-                    <span className="text-green-400">+{fmtNum(p.additions)}</span>{' '}
-                    <span className="text-red-400">−{fmtNum(p.deletions)}</span>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-    </Card>
-  )
-}
-
 // ── section heading ───────────────────────────────────────────────────────────
 
 function SectionHeading({ icon, children, hint }) {
@@ -1636,12 +1688,8 @@ export default function Analytics() {
       <div id="leaderboard" />
       <Reveal delay={0.05} inView><ContributorLeaderboard contributors={contributors} loading={contribLoading} /></Reveal>
 
-      <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 items-start">
-        {/* Projects */}
-        <Reveal delay={0.05} inView><ProjectTable filters={filters} /></Reveal>
-        {/* Repos */}
-        <Reveal delay={0.08} inView><RepoTable repos={repos} loading={repoLoading} /></Reveal>
-      </div>
+      {/* Repositories grouped by their real project (full-width) */}
+      <Reveal delay={0.05} inView><ProjectRepoTable repos={repos} loading={repoLoading} /></Reveal>
     </div>
   )
 }
