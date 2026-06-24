@@ -1,59 +1,126 @@
 /**
- * Pricing page — "The Ledger" aesthetic, premium tier.
+ * Pricing — the public marketing pricing page ("The Ledger" aesthetic).
  *
- * Per-builder / stakeholders-free model + an interactive cost calculator,
- * a comparison matrix and FAQ. Prices displayed via useCurrency().format(usd);
- * plans are billed in USD and charged in the user's currency at checkout.
+ * Story: pay per builder, stakeholders free forever, managed AI at standard
+ * provider rate (no per-seat AI tax) — or BYOK. Five tiers (Free / Starter /
+ * Pro / Scale / Enterprise) read LIVE from GET /api/plans via usePlans(); every
+ * price is formatted through useCurrency() so USD + the converted local amount
+ * track the currency selector. A monthly/annual toggle and a managed↔BYOK toggle
+ * drive the cards; an interactive cost estimator turns the ladder into real
+ * numbers; a full feature matrix and an FAQ + CTA band close it out.
  *
- * No nav / no footer — MarketingLayout provides the shell.
+ * No nav / no footer — MarketingLayout provides the shell (with the shared
+ * ThemeToggle + CurrencySelector). The hero re-surfaces the CurrencySelector so
+ * buyers can switch currency without scrolling back up.
  */
-
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import {
-  Users, Eye, Sparkles, ArrowRight, Plus, HelpCircle, Mail, KeyRound,
-  GitBranch, ShieldCheck, Scale, Infinity as InfinityIcon,
+  Sparkles, ArrowRight, Plus, HelpCircle, Mail, KeyRound,
+  GitBranch, ShieldCheck, Scale, Infinity as InfinityIcon, Calculator,
 } from 'lucide-react'
 import {
-  Card, Button, Badge, GradientText, Section, Container, Glow, Stat,
+  Card, Button, Badge, GradientText, Section, Container, Glow,
 } from '../components/ui'
-import { Reveal, RevealList } from '../components/Reveal.jsx'
+import { Reveal } from '../components/Reveal.jsx'
+import { CurrencySelector } from '../components/CurrencySelector.jsx'
 import { useCurrency } from '../lib/currency.jsx'
-import { usePlans, FALLBACK_PLANS } from '../lib/usePlans.js'
-import { PlanCard, CompareTable } from '../components/pricing/index.jsx'
+import { usePlans } from '../lib/usePlans.js'
+import { LADDER, LADDER_FALLBACK, RECOMMENDED_KEY } from '../components/pricing/planData.js'
+import PlanCards from '../components/pricing/PlanCards.jsx'
+import CostEstimator from '../components/pricing/CostEstimator.jsx'
+import PricingMatrix from '../components/pricing/PricingMatrix.jsx'
 import AIModels from '../components/pricing/AIModels.jsx'
 import CompetitorCalculator from '../components/compare/CompetitorCalculator.jsx'
 
-const RECOMMENDED_KEY = 'team'
+// ── Billing toggle ─────────────────────────────────────────────────────────────
+function BillingToggle({ value, onChange }) {
+  return (
+    <div className="inline-flex items-center p-1 rounded-full border border-[var(--border2)] bg-[var(--bg-surface)]/70 backdrop-blur-sm">
+      {[
+        { key: 'monthly', label: 'Monthly' },
+        { key: 'annual', label: 'Annual' },
+      ].map(({ key, label }) => {
+        const active = value === key
+        return (
+          <button
+            key={key}
+            onClick={() => onChange(key)}
+            className={[
+              'relative inline-flex items-center gap-2 px-4 py-1.5 rounded-full text-sm font-medium transition-all duration-200 cursor-pointer',
+              active ? 'text-[#0B1120]' : 'text-[var(--text-muted)] hover:text-[var(--text)]',
+            ].join(' ')}
+            style={active ? { background: 'linear-gradient(135deg, #2DD4BF, #6366F1)' } : undefined}
+          >
+            {label}
+            {key === 'annual' && (
+              <span
+                className={[
+                  'text-[10px] font-mono font-semibold px-1.5 py-0.5 rounded-full',
+                  active ? 'bg-[#0B1120]/15 text-[#0B1120]' : 'bg-[#2DD4BF]/12 text-[#2DD4BF]',
+                ].join(' ')}
+              >
+                2 mo free
+              </span>
+            )}
+          </button>
+        )
+      })}
+    </div>
+  )
+}
 
-// ── FAQ ──────────────────────────────────────────────────────────────────────
+// ── Mode toggle (managed AI / BYOK) ────────────────────────────────────────────
+function ModeToggle({ value, onChange }) {
+  const opts = [
+    { key: 'managed', label: 'Managed AI', Icon: Sparkles },
+    { key: 'byok', label: 'BYOK', Icon: KeyRound },
+  ]
+  return (
+    <div className="inline-flex p-1 rounded-full border border-[var(--border)] bg-[var(--bg-surface)]/70 backdrop-blur-sm">
+      {opts.map(({ key, label, Icon }) => {
+        const active = value === key
+        return (
+          <button
+            key={key}
+            onClick={() => onChange(key)}
+            className={[
+              'inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-medium transition-all duration-200 cursor-pointer',
+              active ? 'text-[var(--text)] bg-[var(--bg-surface3)] border border-[var(--border2)]' : 'text-[var(--text-muted)] hover:text-[var(--text)] border border-transparent',
+            ].join(' ')}
+          >
+            <Icon size={12} strokeWidth={2.2} className={active ? 'text-[#2DD4BF]' : ''} /> {label}
+          </button>
+        )
+      })}
+    </div>
+  )
+}
+
+// ── FAQ ────────────────────────────────────────────────────────────────────────
 const FAQ_ITEMS = [
   {
     q: 'What exactly is a "builder"?',
-    a: 'A builder is any team member who writes code, runs AI agents, manages repositories, or configures integrations — they consume a paid seat. Product managers, designers, executives, and clients who only read dashboards, cycle-time reports, and PR timelines are stakeholders — always free and unlimited on every plan.',
+    a: 'A builder is anyone who writes code, runs AI agents, manages repositories, or configures integrations — they consume a paid seat. Product managers, designers, executives, and clients who only read dashboards, cycle-time reports, and PR timelines are stakeholders — always free and unlimited on every plan, including Free.',
   },
   {
-    q: 'How does managed AI pricing work?',
-    a: 'There is no per-seat AI fee. Team and Business plans include a monthly managed-AI credit per builder ($3 and $6 respectively), pooled across your team to cover AI code insights, automated summaries, and agent runs. Once you pass the included credit, you simply pay each model at its standard provider rate — nothing added per seat. Prefer to pay your provider directly? Enable BYOK (bring your own key) and route AI calls straight to Anthropic, OpenAI, or Gemini.',
+    q: 'How does managed-AI pricing work? (AI at cost +5%)',
+    a: 'There is no per-seat AI fee. Each paid plan includes a monthly managed-AI credit per builder (Starter $1, Pro $5, Scale $20), pooled across your team. Past the credit you pay each model at its provider rate plus a small 5% handling margin — nothing added per seat. Prefer to pay your provider directly? Enable BYOK and route AI calls straight to Anthropic, OpenAI, or Gemini for a lower per-builder price.',
   },
   {
-    q: 'Why billed in USD but charged in my local currency?',
-    a: 'gitstate prices all plans in USD so pricing is consistent and predictable wherever you are. At checkout your card is charged in your local currency (ZAR, GBP, EUR, …) at the live exchange rate from your payment processor. The prices shown here are indicative; your bank statement reflects the local-currency amount.',
+    q: 'Can I be billed in ZAR (or another currency)?',
+    a: 'Yes. gitstate anchors prices in USD so they stay consistent worldwide, but at checkout your card is charged in your local currency — ZAR, GBP, EUR, and more — at the live exchange rate from your payment processor. Use the currency selector to preview indicative local prices anywhere on this page.',
   },
   {
-    q: 'Can I self-host gitstate?',
-    a: 'Yes. gitstate is open-source and self-hosting is free forever. You provide the infrastructure; there are no seat limits or feature gates on self-hosted deployments. The cloud plans fund ongoing development and add managed infra, support, and AI features on top.',
+    q: 'Can I cancel anytime?',
+    a: 'Always. There are no contracts or seat minimums on self-serve plans. Cancel whenever you like and you keep access until the end of the period you have already paid for. Upgrades are immediate and prorated; downgrades take effect at the next cycle.',
   },
   {
-    q: 'When should I use BYOK instead of managed AI credits?',
-    a: 'Managed AI already runs at each model\'s standard rate, so there is nothing to "save" on the rate itself. BYOK makes sense if you have existing API agreements or committed-use discounts with Anthropic, OpenAI, or another provider and would rather pay them directly — it also drops your per-builder seat price. The cost calculator above shows your BYOK savings in real time.',
-  },
-  {
-    q: 'Can I change plans mid-cycle?',
-    a: 'Yes. Upgrades take effect immediately and are prorated. Downgrades take effect at the next billing cycle, so you keep full access until the end of the period you already paid for.',
+    q: 'Who owns my data?',
+    a: 'You do. gitstate reads your git history — it never becomes the source of truth. Export everything at any time, and on Enterprise self-host the whole thing on your own infrastructure so your data never leaves your perimeter. Cancelling never holds your data hostage.',
   },
   {
     q: 'Is there a free trial for paid plans?',
-    a: 'Every paid plan starts with a 14-day free trial — no credit card required. If you exceed the Free plan limits during the trial you will be prompted to confirm a payment method; otherwise you auto-revert to Free.',
+    a: 'Every paid plan starts with a 14-day free trial — no credit card required. Exceed the Free limits during the trial and we will prompt you to add a payment method; otherwise you auto-revert to the Free plan.',
   },
 ]
 
@@ -74,10 +141,7 @@ function FaqItem({ q, a, defaultOpen = false }) {
           className={`shrink-0 text-[var(--text-faint)] group-hover:text-[#2DD4BF] transition-all duration-300 ${open ? 'rotate-[135deg]' : ''}`}
         />
       </button>
-      <div
-        className="grid transition-all duration-300 ease-out"
-        style={{ gridTemplateRows: open ? '1fr' : '0fr' }}
-      >
+      <div className="grid transition-all duration-300 ease-out" style={{ gridTemplateRows: open ? '1fr' : '0fr' }}>
         <div className="overflow-hidden">
           <p className="text-sm text-[var(--text-muted)] leading-relaxed pb-4 pr-6">{a}</p>
         </div>
@@ -86,55 +150,74 @@ function FaqItem({ q, a, defaultOpen = false }) {
   )
 }
 
-// ── Trust signals row ──────────────────────────────────────────────────────────
+// ── Trust signals ──────────────────────────────────────────────────────────────
 const SIGNALS = [
-  { icon: GitBranch, label: 'Open source · self-host free' },
-  { icon: ShieldCheck, label: 'SSO + audit logs on Business+' },
+  { icon: GitBranch, label: 'Open core · self-host free' },
+  { icon: ShieldCheck, label: 'SSO + audit on Scale' },
   { icon: KeyRound, label: 'BYOK — bring your own LLM key' },
   { icon: InfinityIcon, label: 'Unlimited free stakeholders' },
 ]
 
-// ── Main export ────────────────────────────────────────────────────────────────
+// ── Main export ──────────────────────────────────────────────────────────────
 export default function Pricing() {
   const { format, currency } = useCurrency()
-  const { plans, loading, error } = usePlans()
+  const { plans: livePlans, loading, error } = usePlans()
+  const [billing, setBilling] = useState('monthly')
+  const [mode, setMode] = useState('managed')
 
-  // Columns for the comparison matrix — all 4 tiers
-  const compareCols = (plans.length ? plans : FALLBACK_PLANS)
-    .map(p => ({ key: p.key, name: p.name }))
+  // Normalize to the canonical ladder order; fall back to the seeded ladder if
+  // the API returned the stale/legacy set or nothing.
+  const plans = useMemo(() => {
+    const byKey = new Map((livePlans ?? []).map(p => [p.key, p]))
+    const ordered = LADDER.map(k => byKey.get(k)).filter(Boolean)
+    return ordered.length === LADDER.length ? ordered : LADDER_FALLBACK
+  }, [livePlans])
 
   return (
     <div className="min-h-screen bg-[var(--bg)]">
       {/* ── Hero ── */}
       <Section py="2xl" className="relative overflow-hidden grain">
         <div className="absolute inset-0 ambient-brand pointer-events-none" />
-        <Glow variant="brand" size={760} className="-top-20 left-1/2 opacity-70" />
-        <Glow variant="indigo" size={420} className="top-1/2 right-0 opacity-30" />
+        <Glow variant="brand" size={820} className="-top-24 left-1/2 opacity-70" />
+        <Glow variant="indigo" size={460} className="top-1/2 right-0 opacity-30" />
         <Container size="lg" className="relative z-10 text-center">
           <Reveal>
             <div className="inline-flex items-center gap-2 mb-6 px-3 py-1 rounded-full border border-[var(--border2)] bg-[var(--bg-surface)]/60 backdrop-blur-sm">
               <span className="w-1.5 h-1.5 rounded-full bg-[#2DD4BF] shadow-[0_0_8px_#2DD4BF]" />
-              <span className="text-xs font-mono text-[var(--text-muted)]">Pay per builder · stakeholders free forever</span>
+              <span className="text-xs font-mono text-[var(--text-muted)]">Pay per builder · stakeholders free · AI at cost +5%</span>
             </div>
           </Reveal>
           <Reveal delay={0.08}>
-            <GradientText as="h1" className="font-display text-5xl md:text-6xl font-semibold leading-[1.05] mb-5">
-              Simple, honest pricing
-            </GradientText>
+            <h1 className="font-display text-5xl md:text-6xl font-semibold leading-[1.05] tracking-[-0.02em] text-[var(--text)] mb-5">
+              Pricing that bills the{' '}
+              <GradientText as="span" className="font-display text-5xl md:text-6xl font-semibold leading-[1.05] tracking-[-0.02em]">
+                people who build
+              </GradientText>
+            </h1>
           </Reveal>
           <Reveal delay={0.16}>
-            <p className="text-[var(--text-muted)] text-lg max-w-xl mx-auto mb-3">
-              Pay for the people who build. Everyone else reads for free.
+            <p className="text-[var(--text-muted)] text-lg max-w-xl mx-auto mb-2">
+              One price per builder. Everyone who only reads dashboards — PMs, execs, clients — is a free
+              stakeholder. AI runs at the model&apos;s standard rate plus 5%, or bring your own key.
             </p>
           </Reveal>
           <Reveal delay={0.22}>
-            <p className="text-xs font-mono text-[var(--text-faint)]">
-              Billed in USD · charged in {currency.code} at checkout · 14-day trial on paid plans
+            <p className="text-xs font-mono text-[var(--text-faint)] mb-9">
+              Anchored in USD · charged in {currency.code} at checkout · 14-day trial · cancel anytime
             </p>
           </Reveal>
 
+          {/* toggles + currency */}
+          <Reveal delay={0.28}>
+            <div className="flex flex-wrap items-center justify-center gap-3">
+              <BillingToggle value={billing} onChange={setBilling} />
+              <ModeToggle value={mode} onChange={setMode} />
+              <CurrencySelector />
+            </div>
+          </Reveal>
+
           {/* trust signals */}
-          <Reveal delay={0.3}>
+          <Reveal delay={0.36}>
             <div className="flex flex-wrap items-center justify-center gap-x-6 gap-y-2 mt-9">
               {SIGNALS.map(({ icon: Icon, label }) => (
                 <span key={label} className="inline-flex items-center gap-2 text-xs text-[var(--text-muted)]">
@@ -157,12 +240,12 @@ export default function Pricing() {
           )}
 
           {loading ? (
-            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-5">
-              {Array.from({ length: 4 }).map((_, i) => (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-5">
+              {Array.from({ length: 5 }).map((_, i) => (
                 <Card key={i} padding="lg" className="animate-pulse">
-                  <div className="h-9 w-9 rounded-[var(--radius-badge)] bg-[var(--bg-surface2)] mb-4" />
+                  <div className="h-10 w-10 rounded-[var(--radius-badge)] bg-[var(--bg-surface2)] mb-4" />
                   <div className="h-5 w-24 rounded bg-[var(--bg-surface2)] mb-3" />
-                  <div className="h-9 w-20 rounded bg-[var(--bg-surface2)] mb-6" />
+                  <div className="h-10 w-20 rounded bg-[var(--bg-surface2)] mb-6" />
                   <div className="h-9 w-full rounded-[var(--radius-btn)] bg-[var(--bg-surface2)] mb-5" />
                   {Array.from({ length: 4 }).map((_, j) => (
                     <div key={j} className="h-3 w-full rounded bg-[var(--bg-surface2)] mb-2.5" />
@@ -171,92 +254,56 @@ export default function Pricing() {
               ))}
             </div>
           ) : (
-            <RevealList
-              className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-5 items-stretch"
-              staggerDelay={0.06}
-              inView
-            >
-              {plans.map(plan => (
-                <PlanCard
-                  key={plan.key}
-                  plan={plan}
-                  recommended={plan.key === RECOMMENDED_KEY}
-                  format={format}
-                />
-              ))}
-            </RevealList>
+            <Reveal inView>
+              <PlanCards plans={plans} billing={billing} mode={mode} format={format} />
+            </Reveal>
           )}
 
           <Reveal inView delay={0.1}>
-            <p className="text-center text-[11px] font-mono text-[var(--text-faint)] mt-8">
-              Prices shown in {currency.code} at indicative display rates · billed in USD · charged in {currency.code} at the live rate at checkout.
+            <p className="text-center text-[11px] font-mono text-[var(--text-faint)] mt-9">
+              Prices shown in {currency.code} at indicative display rates · anchored in USD · charged in {currency.code} at the live rate at checkout.
             </p>
           </Reveal>
         </Container>
       </Section>
 
-      {/* ── Builder / stakeholder wedge explainer ── */}
-      <Section py="md">
-        <Container size="lg">
-          <Reveal inView>
-            <div
-              className="relative overflow-hidden rounded-[var(--radius-card)] border border-[#2DD4BF]/20 p-7 md:p-9"
-              style={{ background: 'linear-gradient(135deg, rgba(45,212,191,0.05) 0%, rgba(99,102,241,0.05) 100%)' }}
-            >
-              <Glow variant="indigo" size={360} className="bottom-0 right-0 opacity-30" />
-              <div className="relative z-10 grid grid-cols-1 md:grid-cols-3 gap-6 md:gap-9">
-                <div className="md:col-span-2">
-                  <h2 className="font-display text-xl md:text-2xl font-semibold text-[var(--text)] mb-3">
-                    The builder / stakeholder model
-                  </h2>
-                  <p className="text-sm text-[var(--text-muted)] leading-relaxed mb-5">
-                    gitstate is priced on the people who <em className="text-[var(--text-dim)] not-italic font-medium">create</em>,
-                    not the people who <em className="text-[var(--text-dim)] not-italic font-medium">observe</em>.
-                    Builders push code, run AI agents, and configure integrations — they consume a seat.
-                    Stakeholders (PMs, execs, designers, clients) read dashboards, cycle-time reports, and
-                    PR timelines — always free, always unlimited, on every plan.
-                  </p>
-                  <div className="flex flex-col sm:flex-row gap-4">
-                    <div className="flex-1 rounded-[var(--radius-badge)] border border-[#2DD4BF]/25 bg-[#2DD4BF]/[0.06] px-4 py-3">
-                      <div className="flex items-center gap-2 mb-1.5">
-                        <Users size={14} className="text-[#2DD4BF]" />
-                        <span className="text-xs font-mono uppercase tracking-wider text-[#2DD4BF]">Builders → paid seats</span>
-                      </div>
-                      <p className="text-xs text-[var(--text-muted)]">Engineers · DevOps · platform · anyone who ships.</p>
-                    </div>
-                    <div className="flex-1 rounded-[var(--radius-badge)] border border-[#6366F1]/25 bg-[#6366F1]/[0.06] px-4 py-3">
-                      <div className="flex items-center gap-2 mb-1.5">
-                        <Eye size={14} className="text-[#818cf8]" />
-                        <span className="text-xs font-mono uppercase tracking-wider text-[#818cf8]">Stakeholders → free</span>
-                      </div>
-                      <p className="text-xs text-[var(--text-muted)]">PMs · execs · designers · clients. Read-only, unlimited.</p>
-                    </div>
-                  </div>
-                </div>
-                <div className="flex flex-col gap-5 justify-center md:border-l md:border-[var(--border)] md:pl-9">
-                  <Stat label="Avg builders / team" value="4–8" sublabel="rest are free stakeholders" />
-                  <Stat label="Stakeholder cost" value="$0" sublabel="on every plan, forever" />
-                </div>
-              </div>
-            </div>
-          </Reveal>
-        </Container>
-      </Section>
-
-      {/* ── Managed AI — models & per-token pass-through pricing ── */}
+      {/* ── Interactive cost estimator ── */}
       <Section py="lg">
         <Container size="lg">
           <Reveal inView>
             <div className="mb-8 text-center">
               <Badge color="teal" className="mb-3 inline-flex items-center gap-1">
-                <Sparkles size={11} /> managed AI · at cost
+                <Calculator size={11} /> interactive · live numbers
+              </Badge>
+              <h2 className="font-display text-2xl md:text-3xl font-semibold text-[var(--text)] mb-2">
+                See your real monthly cost
+              </h2>
+              <p className="text-sm text-[var(--text-muted)] max-w-lg mx-auto">
+                Drag the builder count — every tier&apos;s monthly total updates live in {currency.code},
+                straight from the published ladder. Stakeholders stay free at every shape.
+              </p>
+            </div>
+          </Reveal>
+          <Reveal inView delay={0.1}>
+            {!loading && <CostEstimator plans={plans} format={format} />}
+          </Reveal>
+        </Container>
+      </Section>
+
+      {/* ── Managed AI — models & pass-through pricing ── */}
+      <Section py="lg">
+        <Container size="lg">
+          <Reveal inView>
+            <div className="mb-8 text-center">
+              <Badge color="teal" className="mb-3 inline-flex items-center gap-1">
+                <Sparkles size={11} /> managed AI · at cost +5%
               </Badge>
               <h2 className="font-display text-2xl md:text-3xl font-semibold text-[var(--text)] mb-2">
                 Run any model at its standard rate
               </h2>
               <p className="text-sm text-[var(--text-muted)] max-w-lg mx-auto">
                 No per-seat AI tax. AI is included up to your monthly credit, then metered at the model&apos;s
-                standard rate — or bring your own key and pay your provider directly.
+                standard rate plus 5% — or bring your own key and pay your provider directly.
               </p>
             </div>
           </Reveal>
@@ -266,26 +313,25 @@ export default function Pricing() {
         </Container>
       </Section>
 
-      {/* ── The cost calculator — single, honest, head-to-head ── */}
+      {/* ── Head-to-head competitor calculator ── */}
       <Section py="lg">
         <Container size="lg">
           <Reveal inView>
             <div className="mb-8 text-center">
               <Badge color="indigo" className="mb-3 inline-flex items-center gap-1">
-                <Scale size={11} /> interactive · honest comparison
+                <Scale size={11} /> honest comparison
               </Badge>
               <h2 className="font-display text-2xl md:text-3xl font-semibold text-[var(--text)] mb-2">
-                Compare your real monthly cost
+                Compare against the tools you&apos;d replace
               </h2>
               <p className="text-sm text-[var(--text-muted)] max-w-lg mx-auto">
-                Drag the sliders. We compute every tool&apos;s real monthly bill and rank by actual cost — no thumb
-                on the scale. gitstate lands cheapest at every team shape: builders bundle AI at {format(6)}, BYOK
-                drops to {format(3)}, and stakeholders are always free.
+                Drag the sliders. We compute every tool&apos;s real monthly bill and rank by actual cost —
+                builders bundle AI, BYOK drops it further, and stakeholders are always free.
               </p>
             </div>
           </Reveal>
           <Reveal inView delay={0.1}>
-            {!loading && <CompetitorCalculator plans={plans} planKey={RECOMMENDED_KEY} />}
+            {!loading && <CompetitorCalculator plans={livePlans} planKey={RECOMMENDED_KEY} />}
           </Reveal>
         </Container>
       </Section>
@@ -296,15 +342,15 @@ export default function Pricing() {
           <Reveal inView>
             <div className="mb-8 text-center">
               <h2 className="font-display text-2xl md:text-3xl font-semibold text-[var(--text)] mb-2">
-                Compare every plan
+                Every feature, every tier
               </h2>
               <p className="text-sm text-[var(--text-muted)]">
-                Full feature matrix — per-builder pricing, included LLM credits, and enterprise options.
+                The full matrix — per-builder pricing, included AI credits, platform, security &amp; support.
               </p>
             </div>
           </Reveal>
           <Reveal inView delay={0.08}>
-            <CompareTable columns={compareCols} recommendedKey={RECOMMENDED_KEY} />
+            <PricingMatrix plans={plans} format={format} />
           </Reveal>
         </Container>
       </Section>
@@ -354,14 +400,14 @@ export default function Pricing() {
               <Glow variant="indigo" size={420} className="bottom-0 right-1/4 opacity-40" />
               <div className="relative z-10">
                 <span className="inline-flex items-center gap-1.5 mb-5 px-3 py-1 rounded-full border border-[#2DD4BF]/25 bg-[#2DD4BF]/[0.06] text-xs font-mono text-[#2DD4BF]">
-                  <Sparkles size={12} /> Free forever plan · ≤ 2 builders
+                  <Sparkles size={12} /> Free forever · up to 2 builders
                 </span>
                 <GradientText as="h2" className="font-display text-3xl md:text-4xl font-semibold mb-4 leading-tight">
-                  Start for free today
+                  Start free today
                 </GradientText>
                 <p className="text-[var(--text-muted)] mb-8 max-w-md mx-auto">
                   No credit card. No seat minimum. Git is already your ledger — gitstate just reads it.
-                  Stakeholders always free, builders pay per seat.
+                  Stakeholders always free, builders pay per seat, cancel anytime.
                 </p>
                 <div className="flex flex-wrap items-center justify-center gap-3">
                   <Button variant="primary" size="lg" rightIcon={<ArrowRight size={16} />}>
