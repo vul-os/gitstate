@@ -21,7 +21,12 @@ import * as api from './api.js'
 // ever observe that 404/403, we persist a sticky "disabled" verdict in
 // localStorage so every subsequent visit/reload short-circuits with zero billing
 // requests — no repeated console noise on the Billing page.
-const BILLING_DISABLED_KEY = 'gs-billing-config'
+// NOTE: the key is versioned (-v2). A prior bug let a *free-plan* subscription
+// 404 wrongly mark billing "disabled" and persist it stickily, blanking the whole
+// Billing page on reload. Bumping the key invalidates those poisoned verdicts so
+// the flag is re-derived from /api/config; only a genuine config-level "billing
+// off" sticks now.
+const BILLING_DISABLED_KEY = 'gs-billing-config-v2'
 
 let _billingFlag = null            // null = unknown, true/false once resolved
 let _billingFlagPromise = null
@@ -90,7 +95,15 @@ function makeReducer() {
   }
 }
 
-function makeFetcher(path) {
+// `notFoundIsEmpty`: some endpoints return 404 as a *legitimate empty result*
+// rather than "billing disabled". The subscription endpoint 404s when the org has
+// no subscription (i.e. it's on the implicit Free plan) — that is NOT a signal
+// that billing is off, so we must NOT mark billing disabled or short-circuit the
+// whole page. We can rely on this because every billing fetch first gates on the
+// public billing flag (/api/config); if billing were genuinely disabled the
+// request would never fire. So any runtime 404 from such an endpoint means
+// "free / empty", surfaced as data:null with disabled:false.
+function makeFetcher(path, { notFoundIsEmpty = false } = {}) {
   return function useFetcher(orgId) {
     const [state, dispatch] = useReducer(makeReducer(), initState)
     const genRef = useRef(0)
@@ -112,6 +125,14 @@ function makeFetcher(path) {
         if (genRef.current !== gen) return
         dispatch({ type: 'FETCH_DONE', data })
       } catch (e) {
+        // Free-plan / empty: a 404 here means "no subscription", not "billing
+        // off". Surface it as an empty success — keep billing enabled so plans,
+        // usage meters and the ladder still render against the Free plan.
+        if (notFoundIsEmpty && e.status === 404) {
+          if (genRef.current !== gen) return
+          dispatch({ type: 'FETCH_DONE', data: null })
+          return
+        }
         if (e.status === 404 || e.status === 403) {
           // Billing endpoint reports disabled → make it sticky so future loads
           // short-circuit before firing any /api/billing/* request.
@@ -144,7 +165,10 @@ export function usePlans() {
 
 export function useSubscription() {
   const { activeOrgId } = useOrg()
-  const fetcher = makeFetcher('/api/billing/subscription')
+  // A 404 here = no subscription = the org is on the implicit Free plan. Treat it
+  // as an empty result (data:null), NOT as "billing disabled" — otherwise a normal
+  // free-plan org would poison the sticky billing flag and blank out the whole page.
+  const fetcher = makeFetcher('/api/billing/subscription', { notFoundIsEmpty: true })
   return fetcher(activeOrgId)
 }
 
