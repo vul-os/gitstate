@@ -345,9 +345,11 @@ function ContributorRow({
   onRename, onLink, onInvite, onToggleExclude, onSplit, onSetDefault, busy,
 }) {
   // An identity is the current default when it supplies the canonical name/email.
+  // Compared case-insensitively (identity values are lowercased; primary_email may not be).
+  const lc = (s) => (s || '').toLowerCase()
   const isDefaultIdentity = (idn) =>
-    (idn.kind === 'email' && !!c.primaryEmail && idn.value === c.primaryEmail) ||
-    (idn.kind === 'login' && !c.primaryEmail && (idn.nameSeen || idn.value) === c.displayName)
+    (idn.kind === 'email' && !!c.primaryEmail && lc(idn.value) === lc(c.primaryEmail)) ||
+    (idn.kind === 'login' && !c.primaryEmail && lc(idn.nameSeen || idn.value) === lc(c.displayName))
   const muted = c.excluded
   const canSplit = (c.identities?.length ?? 0) > 1
   const stats = c.stats ?? {}
@@ -575,8 +577,18 @@ export default function People() {
     setActionError(null)
     setBusyKey('default', `${id}:${idn.value}`)
     try {
-      const body = { displayName: idn.nameSeen || idn.value }
-      if (idn.kind === 'email') body.primaryEmail = idn.value
+      const body = {}
+      if (idn.kind === 'email') {
+        // Make this email the canonical/default. Update the display name only when
+        // the identity actually carries a name — never clobber it with a raw email.
+        body.primaryEmail = idn.value
+        if (idn.nameSeen) body.displayName = idn.nameSeen
+      } else {
+        // A login becomes canonical: use its name + clear the email default so the
+        // login's isDefault check (which requires no primary_email) lights up.
+        body.displayName = idn.nameSeen || idn.value
+        body.primaryEmail = ''
+      }
       await patch(id, body)
     } catch (e) { setActionError(e?.message ?? 'Set-default failed') }
     finally { setBusyKey('default', null) }
