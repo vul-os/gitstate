@@ -1,0 +1,15 @@
+{
+  "name": "gitstate",
+  "short_name": "gitstate",
+  "description": "The ledger for your team's git activity.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0B1120",
+  "theme_color": "#0B1120",
+  "icons": [
+    { "src": "/favicon.svg", "type": "image/svg+xml", "sizes": "any" },
+    { "src": "/icon-192.png", "type": "image/png", "sizes": "192x192" },
+    { "src": "/icon-512.png", "type": "image/png", "sizes": "512x512" },
+    { "src": "/icon-512.png", "type": "image/png", "sizes": "512x512", "purpose": "maskable" }
+  ]
+}
