@@ -21,7 +21,7 @@ the invoice, directly from git. Built for a world where agents write the code an
 
 <br>
 
-<img src="docs/screenshots/landing-dark.png" alt="gitstate" width="860">
+<img src="docs/screenshots/eng-health.png" alt="gitstate — DORA delivery, review health, and change-failure derived from git" width="860">
 
 </div>
 
