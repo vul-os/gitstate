@@ -1,0 +1,49 @@
+[package]
+name = "gitstate-sync"
+# NOT workspace-inherited: this crate is deliberately `exclude`d from the root
+# workspace (see the root Cargo.toml's `[workspace].exclude` comment), which
+# means Cargo does not treat it as a workspace member and any
+# `<field>.workspace = true` inheritance fails ("failed to find a workspace
+# root") when this manifest is built on its own via `--manifest-path`. Values
+# below are copied from `[workspace.package]` / `[workspace.dependencies]` in
+# the root Cargo.toml and must be kept in sync with it by hand.
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/vul-os/gitstate"
+rust-version = "1.85"
+description = "gitstate's peer-to-peer CRDT sync of contexts + categories (optional feature `sync-dmtap`)"
+
+[dependencies]
+# The domain lives in gitstate-core (SyncOp, the CRDT op envelope, the Store and
+# SyncEngine traits, Context/Category). A plain path dependency: gitstate-core
+# is a normal library crate, so building this crate standalone pulls only it and
+# a handful of pure-Rust helpers — no envoir checkout required for the default
+# build.
+gitstate-core = { path = "../gitstate-core" }
+async-trait = "0.1"
+serde_json = "1"
+thiserror = "2"
+
+# The shared DMTAP Sync transport. Optional and default-off, mirroring
+# SlipScan's `slipscan-sync` seam: a fresh `git clone && cargo build` of
+# gitstate alone must never require an `envoir` checkout beside it, and must
+# never even reach out to fetch it. That is why gitstate-sync is `exclude`d from
+# the root workspace (being merely `optional` is not enough — Cargo resolves
+# every optional dependency's source into the lockfile for a whole workspace
+# regardless of active features). Enable with:
+#   cargo build --manifest-path crates/gitstate-sync/Cargo.toml --features sync-dmtap
+dmtap-sync = { git = "https://github.com/vul-os/envoir", rev = "12526123cb37e459df5717c2ce243bbecbf5ac23", optional = true }
+
+[features]
+default = []
+# Additive DMTAP Sync transport. Enabling it changes NO behaviour of the rest of
+# gitstate (nothing else in the workspace depends on this crate); it only wires
+# the `dmtap-sync` transport into `transport.rs`.
+sync-dmtap = ["dep:dmtap-sync"]
+
+[lints.rust]
+unsafe_code = "deny"
+
+[lints.clippy]
+uninlined_format_args = "allow"

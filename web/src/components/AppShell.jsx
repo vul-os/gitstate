@@ -1,26 +1,10 @@
-import { Outlet, Navigate } from 'react-router-dom'
-import { createContext, useContext, useState, useRef, useEffect, lazy, Suspense } from 'react'
+import { Outlet } from 'react-router-dom'
+import { createContext, useContext, useState, useRef, useEffect } from 'react'
 import { Sidebar } from './Sidebar.jsx'
 import { TopBar } from './TopBar.jsx'
-import { useAuth } from '../lib/useAuth.js'
 import { useFocusTrap } from '../lib/useFocusTrap.js'
 
-// The AI chat rail is only mounted when the user opens it, so keep it out of
-// the eager shell bundle and load its chunk on first open.
-const ChatPanel = lazy(() =>
-  import('./chat/ChatPanel.jsx').then((m) => ({ default: m.ChatPanel })),
-)
-
-const ChatCtx = createContext(null)
 const NavCtx = createContext(null)
-
-/** Access the chat panel open/close state from anywhere in the shell. */
-// eslint-disable-next-line react-refresh/only-export-components
-export function useChatPanel() {
-  const ctx = useContext(ChatCtx)
-  if (!ctx) throw new Error('useChatPanel must be used inside AppShell')
-  return ctx
-}
 
 /** Access the mobile nav-drawer open/close state (used by TopBar hamburger). */
 // eslint-disable-next-line react-refresh/only-export-components
@@ -31,27 +15,19 @@ export function useNavDrawer() {
 }
 
 /**
- * App shell — sidebar + (top bar + content row).
+ * App shell — sidebar + (top bar + content).
  *
- * Layout is responsive:
- *   - Desktop (≥lg): the Sidebar is a fixed in-flow rail; main content fills the
- *     rest, with an optional right-hand AI chat rail.
+ * Local-first: there is no auth gate. The daemon is the single source of data;
+ * the shell just frames the local navigation.
+ *
+ *   - Desktop (≥lg): the Sidebar is a fixed in-flow rail; main content fills the rest.
  *   - Mobile / tablet (<lg): the Sidebar collapses to an off-canvas drawer that
- *     the TopBar hamburger toggles. The drawer overlays the content, traps focus,
- *     and closes on Escape / scrim click / navigation. Main content is full-width
- *     and the chat panel becomes a full-screen overlay.
- *
- * Chat & nav-drawer open/closed state are lifted here so they persist across
- * navigation and the TopBar buttons can toggle them.
- * Redirects to /login if not authenticated.
+ *     the TopBar hamburger toggles, traps focus, and closes on Escape / scrim click.
  */
 export function AppShell() {
-  const { isAuthed } = useAuth()
-  const [chatOpen, setChatOpen] = useState(false)
   const [navOpen, setNavOpen] = useState(false)
   const drawerRef = useRef(null)
 
-  // Trap focus inside the mobile drawer while it's open.
   useFocusTrap(drawerRef, navOpen, () => setNavOpen(false))
 
   // Lock body scroll while the off-canvas drawer is open on small screens.
@@ -59,19 +35,8 @@ export function AppShell() {
     if (!navOpen) return
     const prev = document.body.style.overflow
     document.body.style.overflow = 'hidden'
-    return () => {
-      document.body.style.overflow = prev
-    }
+    return () => { document.body.style.overflow = prev }
   }, [navOpen])
-
-  if (!isAuthed) return <Navigate to="/login" replace />
-
-  const chat = {
-    chatOpen,
-    openChat: () => setChatOpen(true),
-    closeChat: () => setChatOpen(false),
-    toggleChat: () => setChatOpen(v => !v),
-  }
 
   const nav = {
     navOpen,
@@ -82,7 +47,6 @@ export function AppShell() {
 
   return (
     <NavCtx.Provider value={nav}>
-    <ChatCtx.Provider value={chat}>
       <a
         href="#main-content"
         className="sr-only focus:not-sr-only focus:fixed focus:top-3 focus:left-3 focus:z-[100] focus:px-4 focus:py-2 focus:rounded-[var(--radius-btn)] focus:bg-[var(--bg-surface)] focus:text-[var(--text)] focus:border focus:border-[var(--brand-teal)] focus:shadow-[var(--shadow-float)] focus:outline-none"
@@ -126,23 +90,13 @@ export function AppShell() {
 
         <div className="flex flex-col flex-1 min-w-0">
           <TopBar />
-          <div className="flex flex-1 min-h-0">
-            <main id="main-content" tabIndex={-1} className="flex-1 min-w-0 overflow-y-auto">
-              <div className="mx-auto w-full max-w-[1400px] px-4 py-5 sm:px-6 sm:py-6 lg:px-8 lg:py-8">
-                <Outlet />
-              </div>
-            </main>
-            {chatOpen && (
-              <aside className="fixed inset-0 z-50 w-full h-screen lg:static lg:inset-auto lg:z-auto lg:w-[380px] lg:h-[calc(100vh-3.5rem)] shrink-0 border-l border-[var(--border)] bg-[var(--bg-surface)] flex flex-col lg:sticky lg:top-14">
-                <Suspense fallback={null}>
-                  <ChatPanel onClose={chat.closeChat} />
-                </Suspense>
-              </aside>
-            )}
-          </div>
+          <main id="main-content" tabIndex={-1} className="flex-1 min-w-0 overflow-y-auto">
+            <div className="mx-auto w-full max-w-[1400px] px-4 py-5 sm:px-6 sm:py-6 lg:px-8 lg:py-8">
+              <Outlet />
+            </div>
+          </main>
         </div>
       </div>
-    </ChatCtx.Provider>
     </NavCtx.Provider>
   )
 }

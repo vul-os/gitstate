@@ -1,0 +1,24 @@
+[package]
+name = "gitstate-git"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "gitstate git derivation engine: git2-rs history/blame/SZZ/diff → project state, effort, and six-dimension contributions"
+
+[dependencies]
+gitstate-core = { workspace = true }
+git2 = { workspace = true }
+regex = { workspace = true }
+time = { workspace = true }
+
+[target.'cfg(target_os = "macos")'.build-dependencies]
+# Compiles the iconv-name shim next to the vendored libgit2 (see build.rs).
+cc = "1"
+
+[dev-dependencies]
+tempfile = "3"
+
+[lints]
+workspace = true

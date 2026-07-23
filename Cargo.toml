@@ -1,0 +1,66 @@
+[workspace]
+resolver = "2"
+members = ["crates/*"]
+# gitstate-sync carries an optional dependency on envoir's `dmtap-sync` (see
+# crates/gitstate-sync/Cargo.toml). Cargo resolves EVERY optional dependency's
+# source into the lockfile for the whole workspace regardless of which
+# features are active — verified empirically for the sibling SlipScan crate:
+# even with the feature off and an already-committed Cargo.lock, a plain
+# `cargo build` still shells out to update the envoir git remote and the
+# crates.io index. `default-members` does not prevent this; only `exclude`
+# does, because it removes the crate from workspace dependency resolution
+# entirely. So gitstate-sync is excluded here to keep a bare
+# `git clone && cargo build` of gitstate free of any dependency on envoir.
+# Build it on its own, with the mapping enabled, via:
+#   cargo build --manifest-path crates/gitstate-sync/Cargo.toml --features sync-dmtap
+exclude = ["crates/gitstate-sync"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/vul-os/gitstate"
+rust-version = "1.85"
+
+[workspace.dependencies]
+gitstate-core = { path = "crates/gitstate-core" }
+gitstate-git = { path = "crates/gitstate-git" }
+gitstate-forge = { path = "crates/gitstate-forge" }
+gitstate-classify = { path = "crates/gitstate-classify" }
+gitstate-store = { path = "crates/gitstate-store" }
+gitstate-daemon = { path = "crates/gitstate-daemon" }
+gitstate-cli = { path = "crates/gitstate-cli" }
+# gitstate-sync is intentionally NOT a workspace dependency here: it is
+# excluded from the workspace (see [workspace].exclude above) so that a
+# default build never touches envoir, and nothing else in gitstate depends on
+# it. Build it standalone; see that exclusion's comment.
+
+anyhow = "1"
+async-trait = "0.1"
+axum = "0.8"
+clap = { version = "4", features = ["derive", "env"] }
+dirs = "6"
+ed25519-dalek = "2"
+git2 = { version = "0.19", default-features = false }
+hex = "0.4"
+regex = "1"
+reqwest = { version = "0.12", default-features = false, features = [
+    "rustls-tls",
+    "json",
+    "blocking",
+] }
+rusqlite = { version = "0.32", features = ["bundled"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+thiserror = "2"
+time = { version = "0.3", features = ["formatting", "parsing", "macros", "serde", "serde-well-known"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "net"] }
+tower = { version = "0.5", features = ["util"] }
+uuid = { version = "1", features = ["v7", "serde"] }
+
+[workspace.lints.rust]
+unsafe_code = "deny"
+
+[workspace.lints.clippy]
+uninlined_format_args = "allow"

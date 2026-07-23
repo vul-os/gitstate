@@ -1,0 +1,30 @@
+[package]
+name = "gitstate-desktop"
+version = "0.1.0"
+description = "gitstate — local-first project state, effort, and contribution from your git + forge"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+
+# Kept out of the repo-root workspace (root members are crates/* only). The
+# domain + daemon are wired in as plain path dependencies; the desktop shell
+# simply starts the same daemon the headless CLI runs and points the webview at
+# it, so one API surface serves both modes.
+[workspace]
+
+[lib]
+name = "gitstate_desktop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# The in-process daemon: axum server + JSON API over the domain crates.
+gitstate-daemon = { path = "../../../crates/gitstate-daemon" }
+gitstate-core = { path = "../../../crates/gitstate-core" }
+# The daemon spawns its serve loop with `tokio::spawn`; a multi-thread runtime
+# keeps it progressing after the setup call returns.
+tokio = { version = "1", features = ["rt", "rt-multi-thread"] }

@@ -1,224 +1,269 @@
 <div align="center">
 
-<img src="assets/logo.svg" alt="gitstate" height="72">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/logo-dark.svg">
+  <img src="assets/logo.svg" alt="gitstate" height="72">
+</picture>
 
 # gitstate
 
-### The project tracker nobody updates by hand.
+### Derive true project state from YOUR git — on your own machine.
 
-gitstate reads your repositories and **derives** true project state, effort, and — for billing teams —
-the invoice, directly from git. Built for a world where agents write the code and humans supervise.
-
-<br>
-
-[![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](./LICENSE)
-[![EE: Commercial](https://img.shields.io/badge/ee%2F-commercial-6b46c1.svg)](./ee/LICENSE)
-[![Go 1.25](https://img.shields.io/badge/Go-1.25-00ADD8.svg?logo=go&logoColor=white)](https://go.dev)
-[![React 19](https://img.shields.io/badge/React-19-149ECA.svg?logo=react&logoColor=white)](https://react.dev)
-[![Postgres + RLS](https://img.shields.io/badge/Postgres-RLS-4169E1.svg?logo=postgresql&logoColor=white)](https://www.postgresql.org)
-[![Made with Vite](https://img.shields.io/badge/built%20with-Vite-646CFF.svg?logo=vite&logoColor=white)](https://vitejs.dev)
-[![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](./CONTRIBUTING.md)
+gitstate reads your repositories and **derives** project state, effort, contribution, and
+classification directly from git and your forge. No tickets to maintain, no numbers to invent.
+It runs **locally**: a Rust core over plain SQLite, wrapped in a Tauri desktop app — no SaaS
+backend, no multi-tenant server, no cloud account. What you run is what you own.
 
 <br>
 
-<img src="docs/screenshots/eng-health.png" alt="gitstate — DORA delivery, review health, and change-failure derived from git" width="860">
+<!-- Plain-text badges on purpose: rendering this README triggers no external
+     image fetches — the same no-default-network-calls ethos as the app. -->
+<sub>
+<a href="LICENSE-MIT">MIT</a> OR <a href="LICENSE-APACHE">Apache-2.0</a>
+&nbsp;·&nbsp; Rust 1.85+
+&nbsp;·&nbsp; Tauri 2
+&nbsp;·&nbsp; React + Vite
+&nbsp;·&nbsp; SQLite
+&nbsp;·&nbsp; local-first
+&nbsp;·&nbsp; P2P (CRDT)
+&nbsp;·&nbsp; no cloud
+</sub>
+
+<br><br>
+
+[Quick start](#quick-start) ·
+[What it is](#what-is-gitstate) ·
+[How it works](#how-it-works) ·
+[Architecture](#architecture) ·
+[Classification &amp; decentralization](#classification--decentralization) ·
+[Docs](docs/) ·
+[Roadmap](ROADMAP.md)
 
 </div>
 
 ---
 
-## Why it exists
+## What is gitstate?
 
-Every current tool — Jira, Linear, ClickUp, ZenHub — is a **manually-maintained fiction** sitting next
-to git. People re-type into tickets what they already did in the repo. The result is unreliable *by
-construction*:
+Every project-tracking tool — Jira, Linear, ClickUp, ZenHub — is a **manually-maintained fiction**
+sitting next to git. People re-type into tickets what they already did in the repo. The result is
+unreliable *by construction*: estimates are off ~30% (and have been for 40 years), velocity is gamed
+the moment it's a target, and timesheets are reconstructed from memory on Friday.
 
-- **Estimates** are off by ~30% on average — and have been for **40 years**.
-- **Velocity** becomes a vanity metric the moment it's a target (Goodhart's Law); points get inflated.
-- **Billable hours** are reconstructed from memory on Friday, leaking 15–25% of revenue.
+**Git is the real ledger.** gitstate stops asking humans to invent numbers — it observes work from
+git and the forge — and makes whatever fiction remains *explicit*.
 
-These aren't bugs in the tools. They're what happens when you ask a human to *invent* a number.
-**Git is the real ledger.** gitstate stops asking — it observes work from git — and makes whatever
-fiction remains *explicit*.
+The difference from the old gitstate (and from every incumbent): **there is no central server.** A
+Rust core over a plain SQLite file, wrapped in a Tauri desktop app. No account, no cloud, no
+telemetry. It talks to GitHub/GitLab from **your** machine using **your** `gh`/`glab` login,
+classifies with **your** local LLM (or a deterministic fallback), stores everything in a local
+database, and shares saved working sets and categories **peer-to-peer** — never through a hub.
 
-### Five disciplines constrain everything
+### Three disciplines constrain everything
 
 > If a feature would force a human to invent a number, it doesn't ship.
 
 | Discipline | What it means |
 |---|---|
 | **Derived, not entered** | State comes from git — merged = done, PR open = in progress. Nobody maintains tickets. |
-| **Measure work, not workers** | Contribution is shown as *texture across dimensions* (including review), never a single score, never a bonus formula. |
-| **Evidence-based, gaps visible** | Effort and billing are backed by git; what git can't see (meetings, research) is *flagged for a human to fill*, never invented. |
-| **Free stakeholders** | Billing is per *builder*; clients and viewers are free. |
-| **Agent-native** | Agent runs are first-class units; humans are the oversight layer. |
+| **Measure work, not workers** | Contribution is shown as *texture across six dimensions* (including review), never a single rank, never a bonus formula. |
+| **Evidence-based, gaps visible** | Effort comes from an LLM reading the *shape* of a change (difficulty, not line count); what git can't see is flagged, never invented. |
 
-The full rationale lives in [`decisions.md`](./decisions.md) and the in-app [The Wedge](internal/docs/content/the-wedge.md) doc.
+### The six dimensions
+
+Contribution is derived as six normalized dimensions — the gitstate essence — computed within the
+repo cohort so seniors, reviewers, and maintainers are never zeroed:
+
+| Dimension | Derived from |
+|---|---|
+| **Shipped** | merged PRs, closed issues |
+| **Review** | reviews performed on others' work |
+| **Effort** | Σ judged diff-difficulty (LLM reads the change; falls back to a deterministic heuristic) |
+| **Quality** | inverted from reverts caused, bug introductions (SZZ), and cycle time |
+| **Ownership** | areas of the codebase authored/maintained |
+| **Durability** | surviving lines ÷ authored lines (git blame) |
+
+Agent identities (Claude Code, Dependabot, …) are **first-class**: every contribution carries an
+`agent_pct`, so autonomous work is counted honestly rather than hidden. The composite is a *texture
+value*, displayed as evidence — never a leaderboard.
 
 ---
 
-## Capabilities
+## How it works
 
-|  |  |
-|---|---|
-| ![Dashboard](docs/screenshots/dashboard.png) | ![Board](docs/screenshots/board.png) |
-| **Dashboard — state derived from git.** Project status, cycle time, and burndown computed from the repo, not typed into a ticket. | **Board — two truth-modes, one board.** Dev work is *derived* from git (merged = done); non-dev work is tracked manually — shown honestly, never blended. |
-| ![Cycle time](docs/screenshots/cycle-time.png) | ![Involvement](docs/screenshots/involvement.png) |
-| **Cycle time — DORA lead times.** First-commit-to-merge *is* the cycle time. No story-point inputs as the source of truth. | **Involvement — texture, not a score.** Contribution across dimensions (features, review load, ownership, spread) so seniors and mentors aren't zeroed. Never a ranking. |
-| ![Repos](docs/screenshots/repos.png) | ![Billing](docs/screenshots/billing.png) |
-| **Repos — GitHub + GitLab.** Two-way issue/PR sync into one unified board, with **auto-progress**: open PR → in progress, merged PR → done. | **Billing (EE) — evidence invoices.** Backed by git activity; gaps git can't see are flagged for a human to confirm. Billed in **USD**, charged in **ZAR** at capture-time FX. |
+Everything runs on your machine. The only network endpoints in the picture are ones **you**
+configured — your forge (`gh`/`glab` or a token) and, optionally, your local LLM. A plain scan of a
+local repo makes **zero** network calls.
 
-<details>
-<summary><b>More: capacity, members, repos, pricing & compare</b></summary>
+```mermaid
+flowchart LR
+    subgraph machine["your machine"]
+        direction LR
+        git["your git repos<br/>(git2-rs: walk, diff, blame, SZZ)"]
+        forge["gh / glab CLI<br/>(PRs, issues, reviews)"]
+        core["gitstate core + daemon<br/>(derive state · effort · contribution)"]
+        db[("SQLite<br/>contexts · categories · caches")]
+        llm["local LLM (llmux /<br/>OpenAI-compatible) — optional"]
+        app["Tauri desktop app<br/>(React UI over the daemon)"]
+        git --> core
+        forge --> core
+        core <--> db
+        core <-.->|"classify (opt-in)"| llm
+        app <-->|"HTTP :7473"| core
+    end
+```
 
-<br>
+The desktop app and the headless daemon serve the **same** JSON API — the Tauri shell just boots the
+daemon in-process on a local port and points the React UI at it. Run it headless (`gitstate serve`)
+as an always-on peer, or as a desktop app; same core either way.
 
-| Capacity & PTO | Members |
-|---|---|
-| ![Capacity](docs/screenshots/capacity.png) | ![Members](docs/screenshots/members.png) |
-| Availability-aware planning: capacity = availability − approved leave. | Roles incl. free **stakeholder** seats; org-scoped via row-level security. |
+Between machines there is no hub. The only things that cross the network are **saved contexts** (a
+working set of repos, PRs, notes, tags) and **categories**, synced **peer-to-peer as CRDTs** — so two
+peers converge with no authority in the middle. Your commits, diffs, and code never leave your box.
 
-| Pricing | Compare |
-|---|---|
-| ![Pricing](docs/screenshots/pricing.png) | ![Compare](docs/screenshots/compare.png) |
-| Per-builder, currency-aware plan ladder (Free → Enterprise). | The structural difference vs. the hand-entered incumbents. |
+```mermaid
+flowchart TB
+    a["Alice's node<br/>(desktop or headless peer)"]
+    b["Ben's node"]
+    c["Chris's node"]
+    a <-->|"contexts + categories<br/>(CRDT ops, signed transport)"| b
+    b <-->|"CRDT ops"| c
+    a <-->|"CRDT ops"| c
+```
 
-</details>
+---
 
-**Also inside:** LLM **diff-difficulty** sizing (judges the *change*, not line counts) · **NL → report**
-(natural-language queries over a SELECT-only, RLS-safe path) · agent-run tracking · server-rendered
-super-admin console (HTML + htmx + realtime SSE, every cross-org access audited).
+## Quick start
+
+> **Status: transform in progress.** gitstate is being rebuilt from a multi-tenant Go+Postgres SaaS
+> into this standalone local-first desktop app. The Rust workspace (`crates/*`), the Tauri shell
+> (`apps/desktop`), and the repointed React UI (`web/`) are landing now; the legacy Go server under
+> `internal/` and `cmd/` is **kept in-tree, untouched**, for a staged port (see
+> [docs/MIGRATION-NOTES.md](docs/MIGRATION-NOTES.md)). Check [PROGRESS.md](PROGRESS.md) for what is
+> wired today.
+
+### Prerequisites
+
+- **Rust** stable (1.85+) and **Node** 20+ (for the desktop/web build).
+- **`gh`** and/or **`glab`** on your `PATH`, logged in (`gh auth login`) — or a forge token in the
+  environment (`GITSTATE_GH_TOKEN` / `GH_TOKEN`, `GITSTATE_GLAB_TOKEN` / `GITLAB_TOKEN`). No forge
+  login is needed to scan a purely local repo.
+- *(Optional)* a local LLM endpoint for classification and effort judging
+  (`VULOS_LLMUX_URL` or `OPENAI_BASE_URL`). With none configured, gitstate uses a deterministic
+  heuristic — everything still works, offline.
+
+### Build from source
+
+```bash
+git clone https://github.com/vul-os/gitstate
+cd gitstate
+
+# Core library + CLI + headless daemon (no P2P deps pulled in)
+cargo build --workspace
+cargo run -p gitstate-cli -- --help
+
+# Desktop app (starts the daemon in-process, loads the React UI)
+cd apps/desktop && npm install && npm run tauri dev
+```
+
+`cargo build` never touches the P2P sync crate — `gitstate-sync` is **excluded** from the default
+workspace and lives behind an optional `sync-dmtap` feature, so a bare build has no network stack.
+
+### Try it (CLI)
+
+```bash
+# Register a repo and derive its state (git only — no forge, no network)
+gitstate repo add ~/code/my-project
+gitstate repo scan <repo_id> --no-forge
+gitstate state <repo_id>
+
+# Pull PRs/issues/reviews via your gh/glab login, then derive contributions
+gitstate repo scan <repo_id>
+gitstate contributions <repo_id>          # the six-dimension texture table
+gitstate classify <repo_id>               # local LLM if configured, else heuristic
+
+# Save a working set and share it P2P (sync built with --features sync-dmtap)
+gitstate context create --name "Q3 refactor" --repo <repo_id> --pr vul-os/gitstate#42 --tag refactor
+gitstate context list
+
+# Run as an always-on headless peer serving the same API + UI
+gitstate serve            # binds 127.0.0.1:7473 (GITSTATE_ADDR / GITSTATE_PORT)
+gitstate data path        # where your local database lives
+```
+
+Full CLI reference: [docs/GETTING-STARTED.md](docs/GETTING-STARTED.md). Forge setup (gh/glab and
+tokens): [docs/FORGE-SETUP.md](docs/FORGE-SETUP.md).
 
 ---
 
 ## Architecture
 
-A single Go binary plus a React frontend, backed by Postgres with row-level security for tenant isolation.
+A Rust Cargo workspace modeled on its sibling products (`slipscan`, `ofisi`): pure-domain crates in
+the middle, I/O crates at the edges, one daemon that serves both the desktop shell and headless peers.
 
-| Layer | Tech | Notes |
-|---|---|---|
-| **Backend** | Go 1.25, single static binary | Great concurrency for repo sync + LLM fan-out; cheap to run |
-| **Frontend** | React 19 + Vite + Tailwind (JSX, no TSX) | Standalone in dev, embedded in the binary for prod |
-| **Admin** | Server-rendered HTML (`html/template` + htmx + SSE) | The super-admin "super pages"; not part of the SPA |
-| **Database** | Postgres (Neon) | **Row-level security** enforces multi-tenant isolation |
-| **Auth** | Internal JWT + rotating refresh | Optional Google / Microsoft OAuth (config-gated) |
-| **Data access** | pgx + hand-written SQL (no heavy ORM) | Predictable, queryable, reviewable |
-| **Billing (EE)** | Paystack | Billed in USD, charged in ZAR at capture-time FX |
-| **Deploy** | fly.io primary; Docker, compose, systemd, bare binary | No lock-in |
+| Crate | Role |
+|---|---|
+| **gitstate-core** | Pure domain — types (`Repo`, `Commit`, `Contribution`, `ProjectState`, `Context`, `Category`, `Taxonomy`, …) and the four traits (`ForgeClient`, `Classifier`, `Store`, `SyncEngine`). No I/O. |
+| **gitstate-git** | git2-rs derivation engine — walk history, diff, blame survival, SZZ bug-intro, and the six-dimension contribution math. |
+| **gitstate-forge** | GitHub + GitLab via shelling `gh`/`glab` (REST/GraphQL fallback with a token) — PRs, issues, reviews. |
+| **gitstate-classify** | Classifier — local LLM (llmux / any OpenAI-compatible endpoint) + a signed taxonomy + local personalization, with a deterministic heuristic fallback. |
+| **gitstate-store** | rusqlite persistence — contexts, categories, derived caches, the CRDT op log. |
+| **gitstate-daemon** | axum HTTP server — serves `web/dist` (SPA) **and** the JSON API. The headless always-on peer. |
+| **gitstate-cli** | clap CLI (`serve`, `repo`, `state`, `contributions`, `classify`, `effort`, `context`, `category`, `taxonomy`, `sync`, `data`). |
+| **gitstate-sync** | P2P CRDT sync of contexts + categories. **Excluded from the default workspace**; behind an optional `sync-dmtap` feature so a plain `cargo build` never pulls P2P deps. |
+| **apps/desktop** | Tauri shell. Boots the daemon on an ephemeral local port and loads the **same** React app the headless mode serves — the UI is not forked. |
+| **web/** | The kept React frontend, repointed at the daemon's JSON API (§ [web API contract](docs/ARCHITECTURE.md)); the old multi-tenant auth/org/billing surfaces are removed. |
 
-**Open core + Enterprise, one repo (GitLab model).** The core is AGPL-3.0. The `ee/` directory
-(Paystack billing, cross-org admin) compiles only with `-tags ee`; the default OSS build links no-op
-stubs in its place and is fully self-hostable. Full package map: [`internal/docs/content/architecture.md`](internal/docs/content/architecture.md).
-
-```
-Recoverer → Logger → RateLimit(300/min/IP) → CORS → AuthContext → mux
-```
-
-Org-scoped routes additionally wrap `RequireAuth` → `OrgScope` (active org from the `X-Org-ID` header)
-and run reads inside `db.WithOrg(ctx, orgID, fn)`, which opens a tx and runs `SET LOCAL app.current_org`
-before any query — so isolation is enforced by the **database**, not just app code (proven by
-`internal/store/rls_test.go`).
+Full contract: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ---
 
-## Quickstart
+## Classification &amp; decentralization
 
-**Prerequisites:** Go 1.25+, Node 20+, a Postgres database (local or [Neon](https://neon.com)), and
-`git` on the `PATH` (the git engine shells out to it).
+gitstate classifies work items (features, bugfixes, refactors, security, agent-authored changes, …)
+and judges effort. Two decisions keep this honest **and** decentralized:
 
-```bash
-git clone <repo> gitstate && cd gitstate
+- **Personal categorization is local-only.** Classification runs against **your** LLM endpoint
+  (llmux or any OpenAI-compatible URL) or a deterministic heuristic — never a gitstate-hosted model.
+  Corrections you make train a **local personalization** store: each box learns its own conventions.
+  Nothing about your work is pooled.
 
-# 1. Configure — one shared env for backend + frontend
-cp .env.example .env.dev          # point DATABASE_URL at your Postgres; set JWT_SIGNING_KEY etc.
+- **Label alignment travels as a signed data file, not a service.** So that peers agree on what
+  `feature.api` or `bugfix` *means*, gitstate ships a **versioned, content-addressed, ed25519-signed
+  taxonomy** — verified against a pinned key, **fail-closed** (a bad signature falls back to
+  local-only categories, never silently trusts). It's data you can inspect, not an endpoint you call.
+  See [docs/CLASSIFICATION-AND-TAXONOMY.md](docs/CLASSIFICATION-AND-TAXONOMY.md).
 
-# 2. Database (forward-only migrations) + an optional demo org
-go run ./cmd/migrate up
-go run ./cmd/seed                 # demo login: demo@gitstate.dev / demo1234
-
-# 3. Run everything (Go API on :8080 + Vite on :5173)
-cd web && npm install && npm run dev:full
-```
-
-Open **http://localhost:5173** and sign in.
-
-> One `.env.dev` holds both backend secrets (unprefixed) and frontend-public vars (`VITE_*`); Vite only
-> ever exposes the `VITE_` half. Set `ANTHROPIC_API_KEY` to enable LLM diff-difficulty and NL→report.
-
-### Single binary / Docker / fly
-
-```bash
-make build         # build the web app, embed it, build the OSS binary  → ./gitstate (API + UI on :8080)
-make build-ee      # Enterprise Edition (Paystack billing + cross-org admin, -tags ee)
-docker compose up  # app (+ optional local Postgres via the `local-db` profile)
-# fly.io: see deploy/fly.toml
-```
+**What is deliberately NOT built.** Cross-population features — trending, "others tagged this",
+"similar repos" — need a view of strangers you'll never meet, so they don't belong in a git tool that
+runs on your machine. That surface is left as a **dormant, optional coordinator seam** and nothing
+more. There is no anti-spam/sybil tier (a tax on that unbuilt discovery layer) and no pooled
+fine-tuning (replaced by local personalization). The rule: *only "needs a view of strangers"
+belongs to an optional coordinator; everything a git tool is for is local + P2P.* Rationale in
+[decisions.md](decisions.md).
 
 ---
 
 ## Docs
 
-The docs ship **in the app** at [`/docs`](http://localhost:5173/docs) and live as markdown in
-[`internal/docs/content/`](internal/docs/content/). Start here:
-
-- [Overview](internal/docs/content/overview.md) · [The Wedge](internal/docs/content/the-wedge.md) · [Concepts](internal/docs/content/concepts.md)
-- [Quickstart](internal/docs/content/quickstart.md) · [Self-hosting](internal/docs/content/self-hosting.md) · [Configuration](internal/docs/content/configuration.md)
-- [Connecting repos](internal/docs/content/connecting-repos.md) · [Derived state](internal/docs/content/derived-state.md) · [Effort & estimation](internal/docs/content/effort-and-estimation.md)
-- [Metrics & reporting](internal/docs/content/metrics-and-reporting.md) · [Capacity & planning](internal/docs/content/capacity-and-planning.md) · [Billing](internal/docs/content/billing.md)
-- [Architecture](internal/docs/content/architecture.md) · [Security](internal/docs/content/security.md) · [API reference](internal/docs/content/api-reference.md) · [CLI & tools](internal/docs/content/cli-and-tools.md) · [FAQ](internal/docs/content/faq.md)
-
----
-
-## Migrations
-
-Forward-only, Supabase-style — `migrations/YYYYMMDD_NNN_name.sql` (no up/down; a rollback is a new
-forward migration). Checksums detect edited-after-apply.
-
-```bash
-go run ./cmd/migrate new <name>   # scaffold
-go run ./cmd/migrate up           # apply pending
-go run ./cmd/migrate status       # applied + pending
-go run ./cmd/migrate reset        # drop & re-apply (dev only; refused on prod)
-```
+- [Getting started](docs/GETTING-STARTED.md) — install, first scan, the full CLI.
+- [Architecture](docs/ARCHITECTURE.md) — crates, the daemon API, the web contract, the SQLite schema.
+- [Classification &amp; taxonomy](docs/CLASSIFICATION-AND-TAXONOMY.md) — local LLM, the signed taxonomy, personalization.
+- [P2P contexts](docs/P2P-CONTEXTS.md) — saved working sets, the CRDT merge model, sharing.
+- [Forge setup](docs/FORGE-SETUP.md) — `gh`/`glab` and token configuration.
+- [Migration notes](docs/MIGRATION-NOTES.md) — why the legacy Go server is still in-tree, and the staged port.
+- [Security model](docs/security.md) · [Roadmap](ROADMAP.md) · [Decisions](decisions.md) · [Changelog](CHANGELOG.md)
 
 ---
 
-## Billing viability
+## License &amp; contributing
 
-`go run ./cmd/billsim` simulates the pricing model (cohorts, conversion, churn, FX, LLM COGS) and
-prints a profitability table. Headline at defaults:
+gitstate is licensed **MIT OR Apache-2.0** — at your option (see [LICENSE-MIT](LICENSE-MIT) and
+[LICENSE-APACHE](LICENSE-APACHE)), matching every sibling in the vulos suite. The former AGPL-3.0
+license and the `ee/` commercial Enterprise tier were **removed** in the transform to a standalone
+local-first app (there is no multi-tenant service to fence off).
 
-| Cohort | Gross margin |
-|---|---|
-| 100 orgs | **−34%** (loss-making) |
-| 1,000 orgs | **+56.6%** |
-| 10,000 orgs | **+60.5%** |
+Want to hack on it? See [CONTRIBUTING.md](CONTRIBUTING.md). Found a vulnerability? See
+[SECURITY.md](SECURITY.md).
 
-**LLM inference cost is the decisive lever** — the simulator flags any tier it pushes underwater.
-
----
-
-## Project status — an honesty note
-
-gitstate is an ambitious, **agent-built** codebase (orchestrated build, parallel agents on disjoint
-packages; see [`PROGRESS.md`](./PROGRESS.md)). What's solid:
-
-- ✅ Both build tags compile (`go build ./...` and `go build -tags ee ./...`), `go vet` + tests pass.
-- ✅ The web app builds and lints; the single binary serves the embedded SPA.
-- ✅ Runs against **real Postgres**; **RLS is tested** (cross-org reads return zero rows).
-- ✅ `migrate`, `seed`, and `billsim` run; the demo org boots end-to-end.
-
-What it is **not**: production-hardened out of the box. Going live needs real credentials (DB, JWT
-signing key, OAuth/Paystack/LLM keys), and a security and code review pass appropriate to your risk.
-
----
-
-## License & contributing
-
-- Everything outside `ee/` — **AGPL-3.0** (see [`LICENSE`](./LICENSE)).
-- `ee/` (Enterprise Edition: Paystack billing, cross-org admin) — **commercial** (see [`ee/LICENSE`](./ee/LICENSE)).
-
-Want to hack on it? See [`CONTRIBUTING.md`](./CONTRIBUTING.md). Found a vulnerability? See
-[`SECURITY.md`](./SECURITY.md) and the [security model](internal/docs/content/security.md).
-
-<div align="center"><sub>Git is the real ledger. Stop typing it twice.</sub></div>
+<div align="center"><sub>Git is the real ledger. Stop typing it twice — and keep it on your own machine.</sub></div>

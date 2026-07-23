@@ -1,0 +1,83 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  rust:
+    name: Rust (fmt, clippy, test)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Format
+        run: cargo fmt --all --check
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Build
+        run: cargo build --workspace
+      - name: Test
+        run: cargo test --workspace
+      # gitstate-sync is intentionally excluded from the default workspace
+      # (see [workspace].exclude in Cargo.toml) so a plain `cargo build` never
+      # pulls in P2P / dmtap deps. Assert that invariant holds in CI.
+      - name: Assert sync crate is excluded from the workspace
+        run: |
+          if cargo metadata --no-deps --format-version 1 \
+              | grep -q '"name":"gitstate-sync"'; then
+            echo "::error::gitstate-sync must be excluded from the default workspace"
+            exit 1
+          fi
+          echo "ok: gitstate-sync is not a default-workspace member"
+
+  rust-sync:
+    name: Rust (sync crate, standalone)
+    runs-on: ubuntu-latest
+    # The P2P CRDT crate is excluded from the workspace and gated behind the
+    # optional `sync-dmtap` feature. Build it on its own so it stays green
+    # without ever touching a bare `cargo build`.
+    defaults:
+      run:
+        working-directory: crates/gitstate-sync
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build (default)
+        run: cargo build
+      - name: Build (sync-dmtap feature)
+        run: cargo build --features sync-dmtap
+      - name: Test
+        run: cargo test
+
+  frontend:
+    name: Frontend (lint, build)
+    runs-on: ubuntu-latest
+    # The React app is repointed to the daemon JSON API in parallel with the
+    # Rust foundation; do not fail the whole pipeline while web/ is still being
+    # adapted from the old SaaS surfaces.
+    continue-on-error: true
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Install
+        run: npm ci
+      - name: Lint
+        run: npm run lint
+      - name: Build
+        run: npm run build

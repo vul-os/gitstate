@@ -8,7 +8,7 @@
     "build": "vite build",
     "lint": "eslint .",
     "preview": "vite preview",
-    "dev:api": "cd .. && go run ./cmd/gitstate",
+    "dev:api": "cd .. && cargo run -p gitstate-cli -- serve",
     "dev:full": "concurrently -k -n api,web -c blue,green \"npm:dev:api\" \"npm:dev\"",
     "shots": "node scripts/screenshots.mjs",
     "test:e2e": "node tests/runner.mjs",

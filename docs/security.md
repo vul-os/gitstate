@@ -1,140 +1,97 @@
-# gitstate — Security Model
+# Security model (local-first)
 
-This document describes the security properties enforced by the gitstate platform and
-the residual risks that must be addressed before a production deployment.
+gitstate is a **standalone, local-first** application: a Rust core over a local SQLite database,
+wrapped in a Tauri desktop app or run as a headless daemon. There is **no multi-tenant server, no
+hosted account, and no cloud data store**. This reshapes the threat model entirely — the SaaS-era
+boundaries (tenant isolation, session tokens, payment webhooks, cross-org admin) are gone, replaced by
+a much smaller surface centered on *keeping your data on your machine*.
 
----
-
-## 1. Multi-tenant Isolation — RLS Tenancy Boundary (S1)
-
-**Mechanism.** Every org-scoped table (`repos`, `projects`, `issues`, `pull_requests`,
-`commits`, …) has PostgreSQL Row-Level Security enabled with the policy:
-
-```sql
-CREATE POLICY org_isolation ON <table>
-  USING  (org_id = current_org())
-  WITH CHECK (org_id = current_org());
-```
-
-`current_org()` reads `current_setting('app.current_org', true)::uuid`. The setting
-is injected by `db.WithOrg(ctx, orgID, fn)` which opens a transaction and executes
-`SET LOCAL app.current_org = $1` before running `fn`. `SET LOCAL` is scoped to the
-transaction so it cannot bleed across requests.
-
-**Proof.** `internal/store/rls_test.go::TestRLSCrossOrgIsolation` creates two orgs and
-one project each, then asserts that reading under org A's RLS context returns zero of
-org B's rows. Run with a live database via `go test ./internal/store/ -run RLS`.
-
-**Invariant.** No org-scoped query may run outside a `WithOrg` block. Application-level
-bugs cannot produce cross-org reads because the database layer enforces isolation
-independently.
+> The legacy Go server's security properties (RLS tenancy, JWT auth, Paystack webhook verification,
+> at-rest token encryption) are documented at the end of this file for provenance. That server is
+> **kept in-tree** for a staged port ([MIGRATION-NOTES.md](MIGRATION-NOTES.md)) but is **not** part of
+> the standalone app's runtime.
 
 ---
 
-## 2. Super-Admin Audit Path (S2)
+## 1. No default network calls
 
-**Mechanism.** Cross-org access is available only to super-admins via the EE admin
-interface (`ee/admin`). Every cross-org operation must call `store.WriteAudit` before
-performing work:
+A scan of a local repository touches only your disk (`gitstate repo scan <id> --no-forge` makes **zero**
+network calls). Network access happens **only** for actions you explicitly initiate:
 
-```go
-store.WriteAudit(ctx, pool, actorID, orgID, "super_admin.view_org", orgID, meta)
-```
+- Reading your forge (only when you scan with forge enabled), using **your** `gh`/`glab` login or a
+  token you placed in the environment — see [FORGE-SETUP.md](FORGE-SETUP.md).
+- Classifying against an **LLM endpoint you configured** (`VULOS_LLMUX_URL` / `OPENAI_BASE_URL`). With
+  none set, classification uses a local deterministic heuristic and stays offline.
+- Peer-to-peer sync of contexts/categories — and only if you built with the `sync-dmtap` feature. A
+  plain `cargo build` doesn't even compile the P2P stack.
 
-`WriteAudit` writes to the `audit_log` table (platform table, not org-scoped, not
-subject to RLS). The table records: `actor_id`, `org_id`, `action`, `target`, `meta`
-(JSONB), and `created_at`.
+The daemon binds `127.0.0.1` by default.
 
-**Principle.** Super-admin access is never ambient — there is no "god mode" session that
-bypasses RLS silently. Each org touched generates an explicit audit entry.
+## 2. Your credentials stay yours
 
----
+gitstate registers no OAuth application and brokers no tokens. Forge access reuses the credentials
+already on your machine (the `gh`/`glab` session, or a PAT you export). LLM keys are read from the
+environment and used only against the endpoint you set. gitstate persists no forge or LLM secret to
+its database.
 
-## 3. Secret Hygiene — Env Only, Never Committed (S3)
+## 3. Code never leaves the box
 
-**Mechanism.**
-- All secrets (JWT signing key, Paystack API/webhook keys, OAuth client secrets,
-  `TOKEN_ENC_KEY`) live in environment variables.
-- `.env` / `.env.dev` are listed in `.gitignore` and are never committed.
-- `.env.example` documents every variable with safe placeholder values.
-- `config.yaml` (committed) holds only non-secret structure and flags; it contains no
-  credentials.
+gitstate stores **aggregates, not source**:
 
-**Relevant env vars:**
+- Commit records keep the **first line** of the message only, plus counts (additions, deletions,
+  files) — never file contents or diffs.
+- Effort judging operates on a `DiffSummary` (counts, languages, touched paths) — the *shape* of a
+  change, not its text.
+- Derived caches (project state, contributions, work items, classifications) are **local** and never
+  synced.
 
-| Variable | Purpose |
-|---|---|
-| `DATABASE_URL` | Neon/Postgres connection string |
-| `JWT_SIGNING_KEY` | HS256 access token signing key |
-| `PAYSTACK_SECRET_KEY` | Paystack API key (EE only) |
-| `PAYSTACK_WEBHOOK_SECRET` | Paystack webhook HMAC key (EE only) |
-| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | Google OAuth (optional) |
-| `MICROSOFT_CLIENT_ID` / `MICROSOFT_CLIENT_SECRET` | Microsoft OAuth (optional) |
-| `TOKEN_ENC_KEY` | AES-256-GCM key material for at-rest repo token encryption |
-| `ANTHROPIC_API_KEY` | LLM provider key (optional) |
+What can be shared peer-to-peer is limited to **contexts** (saved working sets: repos, PR refs, notes,
+tags) and **categories**. Your commits, diffs, and contribution data are never published.
 
----
+## 4. Signed taxonomy, fail-closed
 
-## 4. Webhook Verification (S4)
+The shared category taxonomy is an ed25519-signed, content-addressed data file. `verify()` recomputes
+the content hash, checks the **pinned** public key (`GITSTATE_TAXONOMY_PUBKEY` or the compiled-in
+`DEFAULT_TAXONOMY_PUBKEY`), and verifies the signature. On any mismatch → `Error::TaxonomyUntrusted`,
+and gitstate refuses to serve taxonomy-sourced categories, falling back to local-only categories. It
+never silently trusts an unverified taxonomy. (Full detail: [CLASSIFICATION-AND-TAXONOMY.md](CLASSIFICATION-AND-TAXONOMY.md).)
 
-**Mechanism.** Paystack webhook events are verified in `ee/billing/paystack.go` using
-HMAC-SHA512 over the raw request body, compared constant-time against the
-`X-Paystack-Signature` header. Requests that fail verification are rejected with 401
-before any processing occurs.
+> The taxonomy currently ships with a **development** signing key; production must re-sign with the
+> offline release key ([decisions.md](../decisions.md) T5).
 
-**Idempotency.** Processed event IDs are stored in `paystack_events`; duplicate deliveries
-are detected and no-opped, preventing double-charges.
+## 5. P2P is opt-in and hub-less
 
----
+CRDT sync is a separate, **excluded** crate behind the `sync-dmtap` feature. It carries only
+context/category ops over a signed transport on the shared vulos/DMTAP substrate — no central hub, no
+code or metrics in the payload.
 
-## 5. Rate Limiting (F3)
+## 6. Local data at rest
 
-**Mechanism.** `internal/middleware/RateLimit(perMin int)` provides a token-bucket rate
-limiter per client IP (in-memory, mutex-guarded, periodic idle-bucket cleanup).
+Your database is a plain SQLite file under the resolved data directory (`gitstate data path`,
+overridable with `GITSTATE_DATA_DIR`). It is protected by your operating system's file permissions and
+whatever disk encryption you run; gitstate adds no separate encryption layer over it. Because it holds
+only aggregates (not source), and lives solely on your machine, the blast radius of the file is your
+own device. Back it up by copying the folder.
 
-- General API routes: configure a reasonable limit (e.g. 120 req/min) in the router.
-- Authentication endpoints (`/auth/login`, `/auth/signup`, `/auth/refresh`): use
-  `middleware.AuthRateLimit()` (10 req/min) to slow brute-force credential attacks.
+## Residual items for the standalone app
 
-**Note.** The current implementation is in-process. For multi-region fly.io deployments
-(multiple VMs) replace with a shared Redis-backed rate limiter so limits are enforced
-globally, not per-instance.
-
----
-
-## 6. At-Rest Token Encryption (F3/W3)
-
-**Background.** Repo access tokens (GitHub/GitLab PATs) were previously not persisted
-(PROGRESS.md W3 note). They are now optionally stored in `repos.token_encrypted` (bytea,
-added by migration `20260618_003_repo_tokens.sql`) using AES-256-GCM.
-
-**Mechanism (`internal/crypto`).**
-- Key derived from `TOKEN_ENC_KEY` env var via SHA-256 → 32-byte AES key.
-- `Encrypt(plaintext, key)` → nonce (12 bytes) || ciphertext+GCM tag.
-- `Decrypt(ciphertext, key)` → plaintext (authenticated; tampered bytes return an error).
-- Pure stdlib: `crypto/aes`, `crypto/cipher`, `crypto/rand`, `crypto/sha256`.
-
-**Store layer.** `store.SetRepoToken` / `store.GetRepoToken` persist / retrieve the raw
-encrypted bytes inside an org-scoped transaction (RLS enforced). Encryption/decryption
-is the caller's responsibility (separation of concerns: the store does not know about keys).
+- [ ] **CORS tightening** — the daemon allows `localhost` origins; confirm no broader origin is
+      accepted in any build.
+- [ ] **Forge CLI argument hygiene** — ensure repo slugs/refs passed to `gh`/`glab` are validated so a
+      crafted slug can't inject flags.
+- [ ] **LLM endpoint egress** — document that a user-configured LLM URL receives work-item titles/bodies
+      and diff shapes; keep it a conscious, configured choice.
+- [ ] **Taxonomy release key** — replace the development signing key before any signed distribution.
+- [ ] **Sync transport review** — a security pass on the `sync-dmtap` transport before it ships enabled.
 
 ---
 
-## 7. Residual TODOs (open items before hardened production)
+## Appendix — legacy SaaS security (provenance only)
 
-- [ ] **Multi-region rate limiting** — replace in-memory limiter with Redis-backed store
-      when running more than one fly.io VM.
-- [ ] **`TOKEN_ENC_KEY` rotation** — implement ciphertext re-encryption procedure when the
-      key must be rotated (current implementation is single-key; no key version header).
-- [ ] **RLS on `audit_log`** — currently unscoped (intentional for super-admin). Consider
-      a read policy limiting non-super-admins to their own org's rows.
-- [ ] **Super-admin authentication hardening** — add MFA requirement and short-lived
-      session tokens for super-admin sessions in `ee/admin`.
-- [ ] **Content-Security-Policy header** — add CSP, X-Frame-Options, and related headers
-      in the middleware chain for the admin HTML pages.
-- [ ] **Dependency audit** — run `govulncheck ./...` as a CI step; pin all Go module
-      checksums in `go.sum`.
-- [ ] **Webhook replay window** — add a timestamp check on Paystack webhook events to
-      reject replayed events older than N minutes.
-- [ ] **Org invite token entropy** — confirm invite token length is ≥ 128 bits of entropy
-      before the feature is exposed in production.
+The pre-transform Go server, still in-tree under `internal/`/`cmd/`/`migrations/`, enforced:
+multi-tenant isolation via PostgreSQL Row-Level Security (`SET LOCAL app.current_org` per request tx,
+proven by `internal/store/rls_test.go` returning zero cross-org rows); audited super-admin access
+(`audit_log`, never ambient); env-only secrets; Paystack webhook HMAC-SHA512 verification with
+idempotency; per-IP rate limiting; and AES-256-GCM at-rest encryption of repo tokens. These properties
+apply to the legacy code during the staged port and are being retired as each domain is ported to
+Rust; they are **not** part of the local-first app described above.

@@ -33,6 +33,10 @@ config.yaml
 internal/web/embed/*
 !internal/web/embed/.gitkeep
 
+# Rust
+/target
+target/
+
 # Editor / OS
 .vscode/*
 !.vscode/extensions.json
@@ -47,3 +51,11 @@ internal/web/embed/*
 # stray command binaries built into repo root
 /gittrack
 /gitstate-mcp
+/migrate
+/seed
+/seedgit
+
+# Local SQLite databases
+*.db
+*.sqlite
+*.sqlite3

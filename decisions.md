@@ -1,99 +1,133 @@
-# gitstate — Architecture & Product Decisions
+# gitstate — Architecture &amp; Product Decisions
 
-Decisions are grounded in the wedge (see [`roadmap.md` §0](./roadmap.md)). Format: **Decision →
-Why → Consequence**. Agents: when a choice isn't covered here, choose the option that best serves
-*derived-not-entered*, *measure-work-not-workers*, and *evidence-with-visible-gaps* — then append a
-new entry.
+Format: **Decision → Why → Consequence**. When a choice isn't covered here, pick the option that best
+serves *derived-not-entered*, *measure-work-not-workers*, and *evidence-with-visible-gaps* — and,
+since the transform, *local-first over hosted* — then append a new entry.
 
-## Product
+The transform decisions (T-series) supersede the earlier SaaS architecture decisions (A-series,
+retained below for provenance). Where a T-entry and an A-entry conflict, the T-entry wins.
 
-**P1. Two truth-modes, one board.** Dev work's source of truth is **git** (derived state); non-dev
-work's source of truth is **the tool** (manual). → Honest: we only claim "derived truth" where it's
-real. We never infer marketing/design "contribution" from git. → Non-dev tasks are first-class native
-records; dev issues are projections of git reality.
+---
 
-**P2. Involvement, never a score.** Per-person/per-project contribution is shown as **texture across
-multiple dimensions** (features shipped, **review load**, ownership, spread, active/dormant) — never a
-single number, never a bonus formula. → Review/ownership are counted so seniors/mentors aren't zeroed.
-→ "Who is *relevant*" (routing) is supported; "who is *worth most*" (ranking) is deliberately not.
+## Transform decisions (local-first, P2P) — current
 
-**P3. Estimates are evidence, not guesses.** Effort comes from **LLM reading the diff** (difficulty),
-not lines/commits. Forecasts are calibrated from observed cycle time. → No story-point input field as
-the source of truth. → Every estimate links to its git evidence.
+**T1. Standalone local-first desktop app, not a SaaS.** gitstate is delivered as a Rust core over
+plain SQLite, wrapped in a Tauri desktop app, plus a headless daemon that is the always-on peer. →
+No multi-tenant server, no Postgres, no billing cloud, no account. → The product essence (derive
+state/effort/contribution/classification from git + forge) is unchanged; only *where it runs* flips —
+onto the user's machine.
 
-**P4. Evidence billing with visible gaps.** Invoices are backed by git activity; work git can't see
-(meetings/research) is **flagged for a human to add**, never auto-invented. → Defensible to clients.
-→ We will *under*-count rather than fabricate.
+**T2. One daemon serves both desktop and headless.** `gitstate-daemon` (axum) serves `web/dist` as an
+SPA *and* the JSON API. The Tauri shell boots this same daemon on an ephemeral local port; the React
+UI points at it. → The UI is never forked into the desktop app; there is exactly one API surface. →
+`gitstate serve` (headless peer) and the desktop app are the same core with different front doors.
 
-**P5. Agent-native from day one.** `agent_runs` is a first-class unit (goal, diff, tests, accept/reject,
-cost). Humans tracked as the *oversight* layer (span, intervention rate, review catch-rate) — to
-*inform*, not formula-rank. → Survives the shift to agent-written code; incumbents' ticket model doesn't.
+**T3. Forge access is local, using the user's own credentials.** GitHub/GitLab are read by shelling
+the user's `gh`/`glab` CLI (REST/GraphQL only as a token fallback when the CLI is absent). → No
+gitstate-hosted forge broker, no stored OAuth apps, no tenant tokens. → A plain scan of a local repo
+makes zero network calls; forge scans use only the credentials already on the box.
 
-**P6. Free stakeholders.** Billing is per **builder**; stakeholders/clients/viewers are free. → The
-seat-tax-killer; structurally un-matchable by per-seat incumbents. → `org_members.role = stakeholder`
-never counts toward seat billing.
+**T4. Classification is local-only.** Work-item classification and effort judging run against the
+user's LLM endpoint (llmux / any OpenAI-compatible URL via env) or a deterministic heuristic when
+none is configured. → Better privacy, no cloud dependency, works offline. → Corrections train a
+**local personalization** store (T6); nothing about the user's work is pooled.
 
-## Architecture
+**T5. Label alignment is a signed data file, not a service.** So peers agree on what a category
+*means*, gitstate ships a versioned, content-addressed, **ed25519-signed taxonomy** as embedded data,
+overridable via `GITSTATE_TAXONOMY_PATH`. `verify()` recomputes the content hash, checks the pinned
+public key, and verifies the signature — **fail-closed**: a bad signature falls back to local-only
+categories and never silently trusts. → Cross-peer agreement without a running registry. → The dev
+key ships in-repo (noted below); production re-signs with the release key.
 
-**A1. Go backend, single binary.** → Best OSS self-host story; strong concurrency for repo sync + LLM
-fan-out; cheap to run (margin). → Web build embedded into the binary for prod (`embed`).
+**T6. Personalization replaces pooled fine-tuning.** Each box learns its own conventions from the
+user's classification feedback and re-ranks future suggestions locally. → No feedback ever leaves the
+machine; there is no shared model to poison or leak into. → `record_feedback` + a local prior; no
+network path exists.
 
-**A2. Postgres (Neon) + RLS for tenancy.** Every org-scoped table has `org_id` and an RLS policy
-`org_id = current_setting('app.current_org')::uuid`. Request middleware does `SET LOCAL app.current_org`
-inside the tx. → Isolation enforced in the DB, not just app code. → Super-admin uses a separate audited
-service path, not ambient bypass.
+**T7. Only "needs a view of strangers you'll never meet" belongs to a coordinator.** Cross-population
+features — trending, "similar repos", "others tagged this" — are the *only* things that require
+seeing beyond your own peers, so they are **not built**; a dormant optional coordinator seam is left
+and nothing more. → No anti-spam/sybil tier (a tax on the unbuilt discovery layer) and no pooled
+feedback. → Everything a git tool is actually for stays local + P2P.
 
-**A3. pgx + hand-written SQL (no heavy ORM).** → Predictable, queryable (the reporting wedge wants real
-SQL), reviewable by OSS contributors. → `internal/store` holds queries; `sqlc` optional later.
+**T8. Contexts and categories sync peer-to-peer as CRDTs.** The sharable unit is a **context** (a
+saved working set: repos, PR refs, notes, tags); categories are shared too. Both are CRDTs (LWW
+scalars + OR-Sets over a hybrid logical clock), merged over the shared vulos/DMTAP sync substrate —
+never a bespoke stack, never a central hub. → Two peers converge with no authority in the middle;
+derived caches (commits, contributions, project state) are *local* and never synced. → Local edits
+and remote merges share one op-application path.
 
-**A4. Forward-only migrations.** `YYYYMMDD_NNN_name.sql`, no up/down. `reset` = drop+reapply (dev only,
-refused on prod). → Matches Supabase ergonomics the team wanted; rollbacks are new forward migrations.
-→ Checksums detect edited-after-apply.
+**T9. The P2P crate is excluded from the default build.** `gitstate-sync` is excluded from the
+workspace and lives behind an optional `sync-dmtap` feature (exactly as `slipscan-sync`). → A plain
+`cargo build` pulls no P2P/network deps; the local app is fully usable without sync. → Sync is opt-in
+at build time.
 
-**A5. JWT access + rotating refresh tokens.** Short-lived access (15m) signed HS256/EdDSA; refresh
-(30d) stored hashed, **rotated on use**, reuse-detection revokes the family. → Stateless API, revocable
-sessions. → `refresh_tokens` table with `family_id`, `replaced_by`.
+**T10. Relicense to MIT OR Apache-2.0; drop the EE tier.** The suite standard is MIT OR Apache-2.0
+(every sibling — slipscan, ofisi, wede — matches). With no multi-tenant service, the open-core AGPL +
+commercial `ee/` split is obsolete. → Root carries `LICENSE-MIT` + `LICENSE-APACHE`; the AGPL
+`LICENSE` and `ee/` are removed (history preserved). → No build tags, no runtime license check.
 
-**A6. OAuth is config-gated.** Google/Microsoft enabled only if client id/secret present in config; the
-login page renders only the providers that are configured. → Self-hosters opt in; no dead buttons. →
-`config.auth.providers.{google,microsoft}.enabled` derived from secret presence.
+**T11. The legacy Go server stays in-tree for a staged port.** `internal/`, `cmd/`, `migrations/`,
+`go.mod`, `go.sum` are kept **byte-for-byte** as the reference we port from — DORA metrics,
+effort/estimation, involvement, evidence-invoice (reframed as an optional *local* report), NL→report.
+→ Nothing is lost in the pivot; each domain is ported to Rust and only then is its Go source removed.
+→ The Rust SQLite migrations live inside `crates/gitstate-store/migrations/`, never at repo root, to
+avoid colliding with the kept Go `migrations/`.
 
-**A7. Open core + EE in one repo (GitLab model).** Core = **AGPL-3.0**. `ee/` = commercial license,
-behind Go build tag `ee` and a runtime license check. Billing/Paystack and cross-org super-admin live
-in `ee/`. → OSS users self-host fully (incl. their own billing-less use); paid features are clearly
-fenced. → Default build excludes `ee`; cloud build includes it.
+**T12. Billing is not rebuilt as a service.** The legacy evidence-invoice (git-backed lines, gaps
+flagged for a human) was genuinely useful; the *collection* half (Paystack, USD→ZAR, multi-tenant
+charging) was SaaS scaffolding. → If ported, invoicing returns only as an **optional, local** report
+generator. → No payment provider, no exchange-rate service, no charging path.
 
-**A8. Bill USD, charge ZAR.** Prices are defined in **USD** (the global anchor); Paystack charges in
-**ZAR** using a cached exchange rate captured **at charge time** and stored on the invoice. → Protects
-margin against FX drift; invoice shows both currencies + the rate used. → `exchange_rates` cached with
-TTL + provider fallback; never charge on a stale-beyond-TTL rate without refresh.
+> **Dev taxonomy key.** The taxonomy signature currently uses a **development** ed25519 keypair
+> generated during the transform; the public key is pinned as `DEFAULT_TAXONOMY_PUBKEY` in
+> `gitstate-core` and the embedded `default_taxonomy.json` is signed with the matching private key.
+> This proves the fail-closed verify path end-to-end. **Production must re-sign the default taxonomy
+> with the offline release key** and update the pinned constant before any signed distribution.
 
-**A9. Admin as server-rendered HTML.** Super-admin "super pages" are Go `html/template` + htmx + SSE for
-realtime — not part of the React app. → Smaller attack surface, no API token in a browser SPA for
-god-mode, fast to build, works without the frontend. → Lives in `internal/admin` (+ `ee/admin`).
+---
 
-**A10. Shared root env, VITE_ prefix split.** One `.env`/`.env.dev` at root holds backend secrets
-(unprefixed) and frontend-public vars (`VITE_`). Vite `envDir` points at root; it only exposes `VITE_*`.
-→ One file to manage; secrets never leak to the bundle (Vite ignores unprefixed). → `.env.example`
-documents both halves.
+## Product disciplines (unchanged by the transform)
 
-**A11. Config = file + env overlay.** `config.yaml` (committed example) for structure/flags; secrets via
-env. Env wins. → Twelve-factor friendly, but readable structured config for self-hosters.
+**P1. Derived, not entered.** Dev work's source of truth is git — merged = done, PR open = in
+progress. → We only claim "derived truth" where it's real; we never infer contribution from thin air.
 
-**A12. Deploy: fly.io first, portable everywhere.** `deploy/fly.toml` primary; multi-stage `Dockerfile`
-(build web + go, embed, scratch/distroless final), `docker-compose.yml` (app + optional local PG),
-systemd unit, bare-binary docs. → Neon as managed PG; compose offers local PG for pure self-host. →
-"other ways to deploy" satisfied without lock-in.
+**P2. Involvement, never a score.** Contribution is **texture across six dimensions** (shipped,
+review, effort, quality, ownership, durability) — never a single rank, never a bonus formula. → Review
+and ownership are counted so seniors/reviewers/maintainers aren't zeroed. The composite is displayed
+as evidence-texture, never a leaderboard.
 
-## Security
+**P3. Estimates are evidence, not guesses.** Effort comes from an LLM reading the *shape* of the
+change (difficulty 1–13), not lines or commits; a deterministic heuristic stands in when no LLM is
+configured. → No story-point input field as the source of truth; every estimate links to its git
+evidence.
 
-**S1. RLS is the tenancy boundary.** App bugs must not cross orgs because the DB won't allow it. Tests
-assert cross-org reads return zero rows.
+**P4. Evidence with visible gaps.** What git can see is derived; what it can't (meetings, research) is
+flagged for a human to fill, never auto-invented. → We under-count rather than fabricate.
 
-**S2. Super-admin is audited, never ambient.** Cross-org access goes through `ee/admin` with an
-`audit_log` entry per org touched; the service role is separate from request-scoped roles.
+**P5. Agent-native from day one.** Agent identities (Claude Code, Dependabot, …) are first-class:
+every contribution carries an `agent_pct` and commits are split human/agent. → Survives the shift to
+agent-written code; autonomous work is counted honestly, not hidden.
 
-**S3. Secrets only in env, never committed.** `.env*` (except `.example`) gitignored. Paystack/OAuth/JWT
-keys never in `config.yaml`.
+---
 
-**S4. Webhooks verified.** Paystack webhooks verified by signature; idempotent via `paystack_events`.
+## Legacy SaaS architecture (A-series) — superseded, kept for provenance
+
+These describe the pre-transform multi-tenant Go+Postgres stack still present in-tree under
+`internal/`, `cmd/`, and `migrations/`. They are **superseded** by the T-series for the standalone
+app; they remain accurate for the legacy code during the staged port.
+
+- **A1. Go backend, single binary.** Strong concurrency for repo sync + LLM fan-out; web build
+  embedded via `embed`. *(Superseded by T1/T2: the new core is Rust; the Go server is reference-only.)*
+- **A2. Postgres (Neon) + RLS for tenancy.** `SET LOCAL app.current_org` inside each request tx.
+  *(Superseded by T1: single-user local app has no tenancy; storage is SQLite.)*
+- **A3. pgx + hand-written SQL.** Predictable, queryable, reviewable. *(Legacy only; Rust uses rusqlite.)*
+- **A4. Forward-only migrations.** `YYYYMMDD_NNN_name.sql`, no up/down, checksums. *(The Rust store
+  keeps forward-only migrations, but under `crates/gitstate-store/migrations/` — T11.)*
+- **A5. JWT access + rotating refresh tokens.** *(Superseded by T1: no auth in a single-user local app.)*
+- **A6. OAuth config-gated.** *(Superseded by T3: forge access uses the user's own `gh`/`glab`.)*
+- **A7. Open core + EE (GitLab model), AGPL core.** *(Superseded by T10: MIT OR Apache-2.0, no EE.)*
+- **A8. Bill USD, charge ZAR (Paystack).** *(Superseded by T12: no billing service.)*
+- **A9. Server-rendered super-admin HTML.** *(Superseded by T1: no cross-org admin in a local app.)*
+- **A10–A12. Shared root env / config file+env / fly.io deploy.** *(Superseded by T1: the app resolves
+  a local data dir and needs no deploy target; the daemon binds `127.0.0.1` by default.)*

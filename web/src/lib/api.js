@@ -1,671 +1,222 @@
 /**
- * gitstate API client
- * Token storage, refresh-token rotation with 401 retry, auth helpers.
- * Org scoping: X-Org-ID header is injected on all /api/* requests (not /auth/*).
+ * gitstate API client (local-first).
+ *
+ * Talks to the gitstate daemon (`gitstated`) — the same axum server whether the
+ * app runs headless (daemon serves the SPA same-origin) or inside the Tauri
+ * shell (daemon on an ephemeral 127.0.0.1 port, injected before first paint).
+ *
+ * There is NO auth, NO org scoping, NO tokens — this is a single-user local app.
+ * Every network call in the app funnels through this module; no component calls
+ * `fetch` directly.
  */
 
-const BASE = import.meta.env.VITE_API_BASE_URL ?? ''
+// ── Base URL resolution (synchronous, once at module load) ─────────────────────
 
-// ── Org storage ───────────────────────────────────────────────────────────────
-
-const ACTIVE_ORG_KEY = 'gs_active_org'
-
-/** Returns the stored active org id, or null. */
-export function getActiveOrgId() {
-  return localStorage.getItem(ACTIVE_ORG_KEY) ?? null
-}
-
-// ── Token storage ─────────────────────────────────────────────────────────────
-
-const ACCESS_KEY = 'gs_access_token'
-const REFRESH_KEY = 'gs_refresh_token'
-
-export function getToken() {
-  return localStorage.getItem(ACCESS_KEY)
-}
-
-export function getRefreshToken() {
-  return localStorage.getItem(REFRESH_KEY)
-}
-
-export function setToken(token) {
-  if (token) {
-    localStorage.setItem(ACCESS_KEY, token)
-  } else {
-    localStorage.removeItem(ACCESS_KEY)
+export function resolveBaseUrl() {
+  // 1. Tauri: the shell injected the daemon origin (window.__GITSTATE_API__)
+  //    via an init script before the webview loaded.
+  if (typeof window !== 'undefined' && window.__GITSTATE_API__) {
+    return window.__GITSTATE_API__
   }
+  // 2. Headless / browser served by the daemon (or vite dev with a proxy):
+  //    same-origin — empty prefix, relative paths.
+  return ''
 }
 
-export function setRefreshToken(token) {
-  if (token) {
-    localStorage.setItem(REFRESH_KEY, token)
-  } else {
-    localStorage.removeItem(REFRESH_KEY)
-  }
-}
+const BASE = resolveBaseUrl()
+const url = (p) => `${BASE}${p}`
 
-/** Persist both tokens at once (login / signup / refresh). */
-export function setTokenPair(accessToken, refreshToken) {
-  setToken(accessToken)
-  setRefreshToken(refreshToken)
-}
-
-export function clearTokens() {
-  localStorage.removeItem(ACCESS_KEY)
-  localStorage.removeItem(REFRESH_KEY)
-}
-
-// ── Error type ────────────────────────────────────────────────────────────────
+// ── Error type ─────────────────────────────────────────────────────────────────
 
 export class ApiError extends Error {
   /**
    * @param {number} status
    * @param {string} message
+   * @param {string|null} code   snake_case error code from the daemon
    * @param {unknown} body
    */
-  constructor(status, message, body = null) {
+  constructor(status, message, code = null, body = null) {
     super(message)
     this.name = 'ApiError'
     this.status = status
+    this.code = code
     this.body = body
   }
 }
 
-// ── Refresh state ─────────────────────────────────────────────────────────────
+// ── Core request ───────────────────────────────────────────────────────────────
 
-// Singleton promise to avoid multiple concurrent refresh calls
-let refreshingPromise = null
-
-/** Called when refresh fails — clears tokens and triggers redirect. */
-function onAuthFailure() {
-  clearTokens()
-  // Soft navigation so the app re-renders and AppShell redirects to /login
-  window.location.replace('/login')
-}
-
-/** Attempt to refresh the token pair. Returns new accessToken or throws. */
-async function doRefresh() {
-  const refreshToken = getRefreshToken()
-  if (!refreshToken) throw new ApiError(401, 'No refresh token')
-
-  const res = await fetch(`${BASE}/auth/refresh`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ refreshToken }),
-  })
-
-  if (!res.ok) {
-    let errBody = null
-    try { errBody = await res.json() } catch { /* ignore */ }
-    throw new ApiError(res.status, 'Refresh failed', errBody)
-  }
-
-  const data = await res.json()
-  // Persist rotated pair
-  setTokenPair(data.accessToken, data.refreshToken)
-  return data.accessToken
-}
-
-// ── Core fetch ────────────────────────────────────────────────────────────────
-
-/**
- * Internal raw request — no auto-retry.
- * @param {string} method
- * @param {string} path
- * @param {unknown} body
- * @param {object} options
- * @param {string|null} overrideToken  - Use this token instead of stored one (after refresh).
- */
-async function rawRequest(method, path, body, options = {}, overrideToken = null) {
-  const headers = {
-    'Content-Type': 'application/json',
-    ...options.headers,
-  }
-
-  const token = overrideToken ?? getToken()
-  if (token) {
-    headers['Authorization'] = `Bearer ${token}`
-  }
-
-  // Inject active org on all /api/* paths (not /auth/*)
-  if (path.startsWith('/api/')) {
-    const orgId = getActiveOrgId()
-    if (orgId) {
-      headers['X-Org-ID'] = orgId
-    }
-  }
-
-  const res = await fetch(`${BASE}${path}`, {
-    method,
-    headers,
-    body: body != null ? JSON.stringify(body) : undefined,
-    signal: options.signal,
-  })
-
-  return res
-}
-
-/**
- * Parse a response, throwing ApiError on non-2xx.
- */
 async function parseResponse(res) {
-  if (!res.ok) {
-    let errBody = null
-    try { errBody = await res.json() } catch { /* ignore */ }
-    const msg =
-      (errBody && (errBody.error || errBody.message)) ||
-      `HTTP ${res.status}`
-    throw new ApiError(res.status, msg, errBody)
-  }
-
   if (res.status === 204) return null
-
   const ct = res.headers.get('Content-Type') ?? ''
-  if (ct.includes('application/json')) {
-    return res.json()
+  const isJson = ct.includes('application/json')
+
+  if (!res.ok) {
+    let body = null
+    let message = `HTTP ${res.status}`
+    let code = null
+    if (isJson) {
+      try {
+        body = await res.json()
+        // Daemon error envelope: { error, code }
+        message = body?.error || body?.message || message
+        code = body?.code ?? null
+      } catch { /* ignore parse errors */ }
+    }
+    throw new ApiError(res.status, message, code, body)
   }
+
+  if (isJson) return res.json()
   return res.text()
 }
 
-/**
- * Main request function with 401 → refresh → retry logic.
- */
 async function request(method, path, body, options = {}) {
-  // First attempt
-  let res = await rawRequest(method, path, body, options)
+  const headers = { ...(options.headers || {}) }
+  if (body != null) headers['Content-Type'] = 'application/json'
 
-  if (res.status === 401) {
-    // Try to refresh exactly once
-    try {
-      if (!refreshingPromise) {
-        refreshingPromise = doRefresh().finally(() => {
-          refreshingPromise = null
-        })
-      }
-      const newAccessToken = await refreshingPromise
-
-      // Retry the original request with the new token
-      res = await rawRequest(method, path, body, options, newAccessToken)
-    } catch {
-      onAuthFailure()
-      throw new ApiError(401, 'Session expired. Please sign in again.')
-    }
+  let res
+  try {
+    res = await fetch(url(path), {
+      method,
+      headers,
+      body: body != null ? JSON.stringify(body) : undefined,
+      signal: options.signal,
+    })
+  } catch (err) {
+    // Network / daemon-unreachable — surface a typed error the UI can render.
+    throw new ApiError(0, 'Cannot reach the gitstate daemon.', 'daemon_unreachable', { cause: String(err) })
   }
-
   return parseResponse(res)
 }
 
-// ── Public helpers ────────────────────────────────────────────────────────────
+export function get(path, options) { return request('GET', path, null, options) }
+export function post(path, body, options) { return request('POST', path, body, options) }
+export function patch(path, body, options) { return request('PATCH', path, body, options) }
+export function del(path, options) { return request('DELETE', path, null, options) }
 
-export function get(path, options) {
-  return request('GET', path, null, options)
+// Build a query string from a plain object, skipping null/undefined/'' values.
+function qs(params) {
+  if (!params) return ''
+  const usp = new URLSearchParams()
+  for (const [k, v] of Object.entries(params)) {
+    if (v == null || v === '') continue
+    usp.set(k, String(v))
+  }
+  const s = usp.toString()
+  return s ? `?${s}` : ''
 }
 
-export function post(path, body, options) {
-  return request('POST', path, body, options)
-}
+// ── Typed calls (daemon HTTP API, spec §3 / web contract §7) ───────────────────
 
-export function put(path, body, options) {
-  return request('PUT', path, body, options)
-}
+/** GET /health — daemon liveness + capabilities. */
+export function health() { return get('/health') }
 
-export function patch(path, body, options) {
-  return request('PATCH', path, body, options)
-}
+// Repos --------------------------------------------------------------------------
 
-export function del(path, options) {
-  return request('DELETE', path, null, options)
-}
-
-// ── Auth helpers ──────────────────────────────────────────────────────────────
+/** GET /api/repos — every registered repo. */
+export function listRepos() { return get('/api/repos') }
 
 /**
- * Sign up a new account. Stores both tokens.
- * @returns {Promise<{ accessToken: string, refreshToken: string, user: object }>}
+ * POST /api/repos — register a repo by local `path` OR by `remote_url`.
+ * @param {{ path?: string, remote_url?: string }} body
  */
-export async function signup(email, name, password) {
-  const res = await fetch(`${BASE}/auth/signup`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email, name, password }),
+export function addRepo(body) { return post('/api/repos', body) }
+
+/** DELETE /api/repos/:id */
+export function deleteRepo(id) { return del(`/api/repos/${encodeURIComponent(id)}`) }
+
+/**
+ * POST /api/repos/:id/scan — walk git (and optionally the forge) to derive state.
+ * @param {string} id
+ * @param {{ with_forge?: boolean, since?: string }} [opts]
+ */
+export function scanRepo(id, opts = {}) {
+  return post(`/api/repos/${encodeURIComponent(id)}/scan`, {
+    with_forge: opts.with_forge ?? true,
+    ...(opts.since ? { since: opts.since } : {}),
   })
-  const data = await parseResponse(res)
-  if (data?.accessToken) setTokenPair(data.accessToken, data.refreshToken)
-  return data
 }
 
-/**
- * Sign in with email + password. Stores both tokens.
- * @returns {Promise<{ accessToken: string, refreshToken: string, user: object }>}
- */
-export async function login(email, password) {
-  const res = await fetch(`${BASE}/auth/login`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email, password }),
-  })
-  const data = await parseResponse(res)
-  if (data?.accessToken) setTokenPair(data.accessToken, data.refreshToken)
-  return data
+/** GET /api/repos/:id/project-state */
+export function projectState(id) {
+  return get(`/api/repos/${encodeURIComponent(id)}/project-state`)
 }
 
+/** GET /api/repos/:id/contributions?from=&to= */
+export function contributions(id, { from, to } = {}) {
+  return get(`/api/repos/${encodeURIComponent(id)}/contributions${qs({ from, to })}`)
+}
+
+/** GET /api/repos/:id/work-items?kind=&state= */
+export function workItems(id, { kind, state } = {}) {
+  return get(`/api/repos/${encodeURIComponent(id)}/work-items${qs({ kind, state })}`)
+}
+
+/** GET /api/contributors — merged identities across all repos. */
+export function contributors() { return get('/api/contributors') }
+
+// Contexts (CRDT-backed saved working sets) --------------------------------------
+
+export function listContexts() { return get('/api/contexts') }
+export function getContext(id) { return get(`/api/contexts/${encodeURIComponent(id)}`) }
+export function createContext(body) { return post('/api/contexts', body) }
+export function patchContext(id, patchBody) { return patch(`/api/contexts/${encodeURIComponent(id)}`, patchBody) }
+export function deleteContext(id) { return del(`/api/contexts/${encodeURIComponent(id)}`) }
+
+// Categories (CRDT-backed) -------------------------------------------------------
+
+export function listCategories() { return get('/api/categories') }
+export function createCategory(body) { return post('/api/categories', body) }
+export function patchCategory(id, body) { return patch(`/api/categories/${encodeURIComponent(id)}`, body) }
+export function deleteCategory(id) { return del(`/api/categories/${encodeURIComponent(id)}`) }
+
+// Classification + effort --------------------------------------------------------
+
+/** POST /api/classify — classify work items (all uncategorized when item_ids omitted). */
+export function classify({ repo_id, item_ids } = {}) {
+  return post('/api/classify', { repo_id, ...(item_ids ? { item_ids } : {}) })
+}
+
+/** POST /api/classify/feedback — record the user's chosen category (local learning). */
+export function classifyFeedback({ item_id, category_key }) {
+  return post('/api/classify/feedback', { item_id, category_key })
+}
+
+/** POST /api/effort — judge diff-difficulty for work items. */
+export function effort({ repo_id, item_ids } = {}) {
+  return post('/api/effort', { repo_id, ...(item_ids ? { item_ids } : {}) })
+}
+
+// Taxonomy + sync ----------------------------------------------------------------
+
+/** GET /api/taxonomy — the full signed taxonomy document. */
+export function taxonomy() { return get('/api/taxonomy') }
+
+/** POST /api/taxonomy/verify — verify a taxonomy doc's signature. */
+export function verifyTaxonomy(doc) { return post('/api/taxonomy/verify', doc) }
+
+/** GET /api/sync/status — P2P sync state ({ enabled:false, … } when off). */
+export function syncStatus() { return get('/api/sync/status') }
+
+// ── External links ──────────────────────────────────────────────────────────────
+
 /**
- * Sign out. Calls /auth/logout with the refresh token, then clears local tokens.
- * Swallows network errors (tokens are cleared regardless).
+ * Open a forge / PR / docs link. In the Tauri shell this routes through the
+ * `open_external` command so the OS browser handles it; headless falls back to
+ * a normal new-tab window.open.
  */
-export async function logout() {
-  const refreshToken = getRefreshToken()
-  if (refreshToken) {
+export function openExternal(target) {
+  if (!target) return
+  const invoke =
+    typeof window !== 'undefined' &&
+    (window.__TAURI_INTERNALS__?.invoke || window.__TAURI__?.core?.invoke)
+  if (invoke) {
     try {
-      await fetch(`${BASE}/auth/logout`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ refreshToken }),
-      })
-    } catch {
-      // Network down — still clear local tokens
-    }
+      invoke('open_external', { url: target })
+      return
+    } catch { /* fall through to window.open */ }
   }
-  clearTokens()
-}
-
-// ── Platform connection (OAuth-app) helpers ────────────────────────────────────
-
-/**
- * Build the top-level navigation URL that starts the GitHub/GitLab OAuth-app
- * connect flow. The /start endpoint self-authenticates from these query params
- * because a browser navigation can't send Bearer/X-Org-ID headers.
- * @param {string} platform 'github' | 'gitlab'
- * @returns {string|null} the URL, or null if not authenticated / no active org
- */
-export function connectStartUrl(platform) {
-  const token = getToken()
-  const orgId = getActiveOrgId()
-  if (!token || !orgId) return null
-  const qs = new URLSearchParams({ token, org: orgId })
-  return `${BASE}/api/connect/${platform}/start?${qs.toString()}`
-}
-
-/**
- * The GitHub App install URL — the production-grade data path. Used instead of the
- * OAuth connect/start when the server advertises the App is enabled (status.appEnabled).
- */
-export function githubAppInstallUrl() {
-  const token = getToken()
-  const orgId = getActiveOrgId()
-  if (!token || !orgId) return null
-  const qs = new URLSearchParams({ token, org: orgId })
-  return `${BASE}/api/connect/github/app/install?${qs.toString()}`
-}
-
-/**
- * The authenticated user's profile: {id, email, name, avatarUrl, emailIsPlaceholder}.
- * emailIsPlaceholder is true when login came from an OAuth account whose email was
- * hidden (a `@users.noreply.*` address) — Settings prompts for a real contact email.
- */
-export function fetchProfile() {
-  return get('/api/profile')
-}
-
-/** Update the authenticated user's display name and/or contact email. */
-export function patchProfile(body) {
-  return patch('/api/profile', body)
-}
-
-/** Fetch the org's connection status: [{platform, connected, login, configured}]. */
-export function fetchConnectStatus() {
-  return get('/api/connect/status')
-}
-
-/** List repos available to the stored connection token for a platform. */
-export function fetchConnectRepos(platform) {
-  return get(`/api/connect/${platform}/repos`)
-}
-
-/** Trigger a sequential background re-sync of EVERY repo in the active org. */
-export function syncAllRepos() {
-  return post('/api/repos/sync-all', {})
-}
-
-/**
- * Bulk-import a batch of repos as a BACKEND background job (survives the browser
- * closing). Returns 202 immediately; the server imports + syncs each sequentially.
- * Poll GET /api/repos to watch them appear.
- */
-export function importRepos(platform, fullNames) {
-  return post('/api/repos/import', { platform, fullNames })
-}
-
-/** Disconnect a platform (deletes the stored encrypted token). */
-export function disconnectPlatform(platform) {
-  return del(`/api/connect/${platform}`)
-}
-
-/** Disconnect a repo and DELETE all its synced data (commits/PRs/issues/analytics). */
-export function disconnectRepo(repoId) {
-  return del(`/api/repos/${repoId}`)
-}
-
-// ── Projects ────────────────────────────────────────────────────────────────────
-
-/** List the org's user-created projects: [{id, name, key, archived}]. */
-export function fetchProjects() {
-  return get('/api/projects')
-}
-
-/**
- * Create a project. `key` is an optional short slug/badge.
- * @returns {Promise<{id, name, key, archived}>}
- */
-export function createProject({ name, key } = {}) {
-  return post('/api/projects', { name, key: key || undefined })
-}
-
-/**
- * Move a repo into a project. Pass `projectId: null` (or "") to unassign.
- * @returns {Promise<{ok:true, projectId:string|null}>}
- */
-export function moveRepoToProject(repoId, projectId) {
-  return patch(`/api/repos/${repoId}/project`, { projectId: projectId || null })
-}
-
-// ── Calendar connection (Google / Microsoft) helpers ───────────────────────────
-
-/**
- * Build the top-level navigation URL that starts the Google/Microsoft calendar
- * connect flow. The /start endpoint self-authenticates from these query params
- * because a browser navigation can't send Bearer/X-Org-ID headers.
- * @param {string} provider 'google' | 'microsoft'
- * @returns {string|null} the URL, or null if not authenticated / no active org
- */
-export function calendarStartUrl(provider) {
-  const token = getToken()
-  const orgId = getActiveOrgId()
-  if (!token || !orgId) return null
-  const qs = new URLSearchParams({ token, org: orgId })
-  return `${BASE}/api/calendar/${provider}/start?${qs.toString()}`
-}
-
-/** Fetch the member's calendar status: [{provider, connected, configured, email, pushLeave, pullBusy}]. */
-export function fetchCalendarStatus() {
-  return get('/api/calendar/status')
-}
-
-/** Toggle pushLeave/pullBusy on a calendar connection. */
-export function patchCalendar(provider, body) {
-  return patch(`/api/calendar/${provider}`, body)
-}
-
-/** Disconnect a calendar provider (deletes the stored encrypted tokens). */
-export function disconnectCalendar(provider) {
-  return del(`/api/calendar/${provider}`)
-}
-
-// ── Accounting connection (Xero / QuickBooks) helpers ───────────────────────────
-
-/**
- * Build the top-level navigation URL that starts the Xero/QuickBooks OAuth
- * connect flow. The /start endpoint self-authenticates from these query params
- * because a browser navigation can't send Bearer/X-Org-ID headers.
- * @param {string} provider 'xero' | 'quickbooks'
- * @returns {string|null} the URL, or null if not authenticated / no active org
- */
-export function accountingStartUrl(provider) {
-  const token = getToken()
-  const orgId = getActiveOrgId()
-  if (!token || !orgId) return null
-  const qs = new URLSearchParams({ token, org: orgId })
-  return `${BASE}/api/accounting/${provider}/start?${qs.toString()}`
-}
-
-/** Fetch the org's accounting status: [{provider, configured, connected, externalName}]. */
-export function fetchAccountingStatus() {
-  return get('/api/accounting/status')
-}
-
-/** Disconnect an accounting provider (deletes the stored encrypted tokens). */
-export function disconnectAccounting(provider) {
-  return del(`/api/accounting/${provider}`)
-}
-
-/**
- * Push an invoice to a connected accounting provider.
- * Hits POST /api/invoices/{id}/push/{provider} (provider in the path); the body
- * still carries `provider` so the legacy POST /api/invoices/{id}/push route also
- * works if the server hasn't adopted the path form yet.
- * @returns {Promise<{provider, externalId, externalUrl}>}
- */
-export function pushInvoice(invoiceId, provider) {
-  return post(`/api/invoices/${invoiceId}/push/${encodeURIComponent(provider)}`, { provider })
-}
-
-/**
- * Generate a draft invoice from git-derived effort.
- * POST /api/invoices/from-git → draft invoice with `source:"git"` lines + evidence.
- * @param {{ clientName?:string, clientId?:string, from:string, to:string,
- *           repoIds?:string[], projectIds?:string[], rateCents:number,
- *           rateBasis?:"effort"|"hours", preview?:boolean }} body
- */
-export function generateInvoiceFromGit(body) {
-  return post('/api/invoices/from-git', body)
-}
-
-/** Pull busy windows from connected calendars into availability for a period. */
-export function syncCalendar(body) {
-  return post('/api/calendar/sync', body ?? {})
-}
-
-/**
- * Download a billing invoice as a branded PDF (GET /api/invoices/{id}/pdf).
- * Streams the attachment and triggers a browser save. Returns nothing; throws
- * ApiError on a non-2xx response.
- */
-export async function downloadInvoicePdf(invoiceId) {
-  const headers = {}
-  const token = getToken()
-  if (token) headers['Authorization'] = `Bearer ${token}`
-  const orgId = getActiveOrgId()
-  if (orgId) headers['X-Org-ID'] = orgId
-
-  const res = await fetch(`${BASE}/api/invoices/${invoiceId}/pdf`, { headers })
-  if (!res.ok) {
-    let msg = `HTTP ${res.status}`
-    try { const j = await res.json(); msg = j.error || j.message || msg } catch { /* ignore */ }
-    throw new ApiError(res.status, msg)
-  }
-  const blob = await res.blob()
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = `gitstate-invoice-${invoiceId}.pdf`
-  document.body.appendChild(a)
-  a.click()
-  a.remove()
-  URL.revokeObjectURL(url)
-}
-
-/**
- * Fetch public config — used by login page to discover enabled OAuth providers.
- * Shape: { publicUrl, auth: { password, providers: { google, microsoft } }, billing: { chargeCurrency } }
- * @returns {Promise<object>}
- */
-export function fetchConfig() {
-  return get('/api/config')
-}
-
-// ── Contributors / identity management ──────────────────────────────────────────
-//
-// Git history names people by raw email + login, so one human shows up as many
-// "identities". gitstate auto-clusters those into canonical contributors, which
-// can then be linked to org members, invited, excluded, merged or split.
-//
-// Contributor shape:
-//   { id, displayName, primaryEmail, excluded, isBot, userId, memberName,
-//     memberEmail, invitedAt, status:'linked'|'invited'|'uninvited',
-//     identities:[{ kind:'email'|'login', value, nameSeen }],
-//     stats:{ commits, prs, reviews } }
-
-/** List the org's canonical contributors with their identities + stats. */
-export function fetchContributors() {
-  return get('/api/contributors')
-}
-
-/**
- * Re-run auto-clustering over raw git identities.
- * @returns {Promise<{contributors:number, identities:number, merged:number}>}
- */
-export function detectContributors() {
-  return post('/api/contributors/detect', {})
-}
-
-/** Patch a contributor: { displayName?, primaryEmail?, excluded?, isBot? }. */
-export function patchContributor(id, body) {
-  return patch(`/api/contributors/${id}`, body)
-}
-
-/** Merge contributor `id` into `intoId` (its identities move to the survivor). */
-export function mergeContributors(id, intoId) {
-  return post(`/api/contributors/${id}/merge`, { intoId })
-}
-
-/** Split a single identity `value` out of a contributor into its own person. */
-export function splitIdentity(id, value) {
-  return post(`/api/contributors/${id}/split`, { value })
-}
-
-/** Link a contributor to an existing org member (by user id). */
-export function linkContributor(id, userId) {
-  return post(`/api/contributors/${id}/link`, { userId })
-}
-
-/** Invite a contributor as a member; optional email overrides the primary one. */
-export function inviteContributor(id, email) {
-  return post(`/api/contributors/${id}/invite`, email ? { email } : {})
-}
-
-/** Start a wallet top-up: returns { authorization_url, reference, ... } from Paystack. */
-export function topupWallet(amountCents) {
-  return post('/api/billing/wallet/topup', { amountCents })
-}
-
-// ── Managed-AI model catalog ────────────────────────────────────────────────────
-//
-// Public, unauthenticated price list for the managed-AI passthrough. Each model:
-//   { provider: "anthropic"|"openai"|"google", id, displayName, contextTokens,
-//     inputUsdPerMTok, outputUsdPerMTok,          // provider's published rate
-//     ourInputUsdPerMTok, ourOutputUsdPerMTok }   // our rate = base × 1.05
-//
-// Used by the public /models page. Falls back to a curated list (in
-// components/pricing/modelData.js) when the endpoint is unavailable so the page
-// renders offline.
-
-/** Fetch the public managed-AI model price list. GET /api/models → array (see shape above). */
-export function fetchModels() {
-  // Public route — no auth/org headers needed, but request() is harmless without a token.
-  return get('/api/models')
-}
-
-// ── Agentic chat (SSE streaming) ────────────────────────────────────────────────
-//
-// POST /api/chat is a Server-Sent-Events stream delivered over a POST body, so it
-// can't use EventSource (which is GET-only). We read the response as a stream and
-// parse frames ourselves. Each frame is:
-//     event: <type>\n
-//     data: <one-line JSON>\n
-//     \n
-// Event types: token | tool_call | tool_result | action | done | error.
-//
-// When the gateway is disabled the endpoint returns 503 — surfaced as ApiError so
-// the UI can show a friendly "AI chat isn't enabled" state.
-
-/**
- * Open a chat SSE stream. Calls `onEvent({ type, data })` for each parsed frame.
- * Resolves when the stream ends. Honours an AbortSignal (the stop button).
- *
- * @param {{ messages: {role:string, content:string}[], model: string }} body
- * @param {(evt: { type: string, data: any }) => void} onEvent
- * @param {{ signal?: AbortSignal }} [options]
- */
-export async function streamChat(body, onEvent, options = {}) {
-  const headers = {
-    'Content-Type': 'application/json',
-    Accept: 'text/event-stream',
-  }
-  const token = getToken()
-  if (token) headers['Authorization'] = `Bearer ${token}`
-  const orgId = getActiveOrgId()
-  if (orgId) headers['X-Org-ID'] = orgId
-
-  const res = await fetch(`${BASE}/api/chat`, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify(body),
-    signal: options.signal,
-  })
-
-  if (!res.ok || !res.body) {
-    let errBody = null
-    try { errBody = await res.json() } catch { /* ignore */ }
-    const msg =
-      (errBody && (errBody.error || errBody.message)) ||
-      (res.status === 503
-        ? 'AI chat isn’t enabled on this server.'
-        : `HTTP ${res.status}`)
-    throw new ApiError(res.status, msg, errBody)
-  }
-
-  const reader = res.body.getReader()
-  const decoder = new TextDecoder()
-  let buffer = ''
-
-  // Parse one SSE block ("event:" + "data:" lines separated by a blank line).
-  const dispatch = (block) => {
-    let type = 'message'
-    const dataLines = []
-    for (const line of block.split('\n')) {
-      if (line.startsWith('event:')) type = line.slice(6).trim()
-      else if (line.startsWith('data:')) dataLines.push(line.slice(5).replace(/^ /, ''))
-      // ignore comments (":") and other fields (id:, retry:)
-    }
-    if (dataLines.length === 0) return
-    const raw = dataLines.join('\n')
-    let data
-    try { data = JSON.parse(raw) } catch { data = { raw } }
-    onEvent({ type, data })
-  }
-
-  for (;;) {
-    const { value, done } = await reader.read()
-    if (done) break
-    buffer += decoder.decode(value, { stream: true })
-    // Split on blank line (frame boundary). Tolerate \r\n.
-    let idx
-    while ((idx = buffer.search(/\r?\n\r?\n/)) !== -1) {
-      const block = buffer.slice(0, idx)
-      buffer = buffer.slice(idx + buffer.slice(idx).match(/^\r?\n\r?\n/)[0].length)
-      if (block.trim()) dispatch(block)
-    }
-  }
-  // Flush any trailing frame without a final blank line.
-  if (buffer.trim()) dispatch(buffer)
-}
-
-/**
- * Execute an assistant-proposed action against its own endpoint, using the user's
- * session. The action descriptor comes from an `action` SSE event:
- *   { type, label, endpoint, method, payload, confirm }
- * Returns the parsed response (e.g. a Paystack checkout object for plan_upgrade).
- */
-export function runChatAction(action) {
-  const method = (action?.method || 'POST').toUpperCase()
-  const path = action?.endpoint
-  if (!path) throw new ApiError(400, 'Action has no endpoint')
-  const payload = action?.payload ?? {}
-  switch (method) {
-    case 'GET':    return get(path)
-    case 'PUT':    return put(path, payload)
-    case 'PATCH':  return patch(path, payload)
-    case 'DELETE': return del(path)
-    default:       return post(path, payload)
+  if (typeof window !== 'undefined') {
+    window.open(target, '_blank', 'noopener,noreferrer')
   }
 }

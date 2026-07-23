@@ -1,76 +1,22 @@
-import { useState, useCallback } from 'react'
+/**
+ * Local-first "auth" provider.
+ *
+ * gitstate is now a single-user desktop / headless app — there is no sign-in,
+ * no tokens, no org. This provider exists only so the shell keeps a stable
+ * `useAuth()` shape (isAuthed is always true). Kept intentionally tiny; the old
+ * multi-tenant JWT/refresh machinery was removed with the SaaS backend.
+ */
 import { AuthCtx } from './useAuth.js'
-import { OrgProvider } from './org.jsx'
-import {
-  getToken,
-  setTokenPair as storeTokenPair,
-  clearTokens,
-  logout as apiLogout,
-} from './api.js'
 
-function parseJwt(token) {
-  try {
-    const payload = token.split('.')[1]
-    return JSON.parse(atob(payload.replace(/-/g, '+').replace(/_/g, '/')))
-  } catch {
-    return null
-  }
-}
-
-function userFromToken(token) {
-  if (!token) return null
-  const claims = parseJwt(token)
-  if (!claims) return null
-  return {
-    id: claims.user_id ?? claims.sub ?? null,
-    orgId: claims.org_id ?? null,
-    role: claims.role ?? null,
-    email: claims.email ?? null,
-    name: claims.name ?? null,
-  }
-}
+const LOCAL_USER = { id: 'local', name: 'You', email: '' }
 
 export function AuthProvider({ children }) {
-  const [accessToken, setAccessToken] = useState(() => getToken())
-  const user = userFromToken(accessToken)
-
-  /**
-   * Store a full token pair and update React state so the app reflects the new auth status.
-   * Called after login / signup / refresh.
-   */
-  const setToken = useCallback((accessTok, refreshTok) => {
-    storeTokenPair(accessTok, refreshTok ?? null)
-    setAccessToken(accessTok ?? null)
-  }, [])
-
-  /**
-   * Sign out: call the API (fire-and-forget), then clear all local tokens.
-   */
-  const logout = useCallback(async () => {
-    try {
-      await apiLogout()
-    } catch {
-      // If the API call fails, we still clear local state
-      clearTokens()
-    }
-    setAccessToken(null)
-  }, [])
-
-  const isAuthed = !!accessToken
-
-  return (
-    <AuthCtx.Provider
-      value={{
-        token: accessToken,
-        user,
-        setToken,
-        logout,
-        isAuthed,
-      }}
-    >
-      <OrgProvider isAuthed={isAuthed}>
-        {children}
-      </OrgProvider>
-    </AuthCtx.Provider>
-  )
+  const value = {
+    user: LOCAL_USER,
+    isAuthed: true,
+    // No-ops kept so any stray caller doesn't throw.
+    setToken: () => {},
+    logout: () => {},
+  }
+  return <AuthCtx.Provider value={value}>{children}</AuthCtx.Provider>
 }

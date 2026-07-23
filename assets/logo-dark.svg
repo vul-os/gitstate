@@ -1,0 +1,25 @@
+<svg width="280" height="72" viewBox="0 0 280 72" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="gitstate">
+  <defs>
+    <linearGradient id="gs" x1="8" y1="8" x2="64" y2="64" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#2DD4BF"/>
+      <stop offset="1" stop-color="#6366F1"/>
+    </linearGradient>
+  </defs>
+  <!-- mark: a git branch graph whose nodes flow into a derived "done" state -->
+  <g>
+    <rect x="4" y="4" width="64" height="64" rx="16" fill="#0B1120"/>
+    <!-- trunk -->
+    <path d="M22 52 V20" stroke="url(#gs)" stroke-width="4" stroke-linecap="round"/>
+    <!-- branch out and merge back (work that lands) -->
+    <path d="M22 34 C22 26 30 26 38 26 C46 26 50 30 50 38 C50 46 46 50 38 50 C30 50 22 50 22 42"
+          stroke="url(#gs)" stroke-width="4" fill="none" stroke-linecap="round"/>
+    <!-- commit nodes -->
+    <circle cx="22" cy="20" r="5" fill="#0B1120" stroke="url(#gs)" stroke-width="4"/>
+    <circle cx="22" cy="52" r="5" fill="#0B1120" stroke="url(#gs)" stroke-width="4"/>
+    <!-- derived/done node: filled with a check -->
+    <circle cx="50" cy="38" r="9" fill="url(#gs)"/>
+    <path d="M46 38 l3 3 l5 -6" stroke="#0B1120" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+  </g>
+  <!-- wordmark (dark backgrounds): light "git" + teal "state" -->
+  <text x="84" y="46" font-family="ui-monospace, 'SF Mono', Menlo, monospace" font-size="30" font-weight="700" fill="#E2E8F0">git<tspan fill="#2DD4BF">state</tspan></text>
+</svg>

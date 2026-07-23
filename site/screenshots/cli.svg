@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 560" width="1000" height="560" role="img" aria-label="gitstate command-line interface — a terminal showing gitstate repo scan and gitstate state deriving project state from git plus forge, the same daemon that powers the desktop app running headless">
+  <defs>
+    <linearGradient id="bg5" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#0C0C0E"/><stop offset="1" stop-color="#09090B"/></linearGradient>
+    <style>text{font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;fill:#D4D4D8;font-size:14px;white-space:pre}.g{fill:#71717A}.a{fill:#2DD4BF}.y{fill:#f59e0b}.w{fill:#FAFAFA}.p{fill:#a78bfa}</style>
+  </defs>
+  <rect width="1000" height="560" rx="14" fill="url(#bg5)"/>
+  <rect x="0.5" y="0.5" width="999" height="559" rx="14" fill="none" stroke="#ffffff" stroke-opacity="0.1"/>
+  <circle cx="26" cy="24" r="6" fill="#26262b"/><circle cx="46" cy="24" r="6" fill="#26262b"/><circle cx="66" cy="24" r="6" fill="#26262b"/>
+  <text x="500" y="28" text-anchor="middle" class="g" font-size="12.5" font-family="Inter,sans-serif">gitstate — headless</text>
+
+  <g transform="translate(30,72)">
+    <text y="0"><tspan class="a">$</tspan> <tspan class="w">gitstate repo add .</tspan></text>
+    <text y="26" class="g">  added vul-os/gitstate  (local · /Users/you/code/gitstate)</text>
+
+    <text y="60"><tspan class="a">$</tspan> <tspan class="w">gitstate repo scan --all</tspan></text>
+    <text y="86" class="g">  walking history … 12,904 commits · 41 contributors</text>
+    <text y="108" class="g">  forge (gh) … 121 PRs · 97 issues · 340 reviews</text>
+    <text y="130" class="g">  blame survival … 4,000 files capped · SZZ 1,500 fixes</text>
+    <text y="152"><tspan class="a">  ✓</tspan> <tspan class="g">head 8c1e2ad · derived in 3.4s</tspan></text>
+
+    <text y="186"><tspan class="a">$</tspan> <tspan class="w">gitstate state vul-os/gitstate</tspan></text>
+    <text y="212" class="g">  ┌ project state ── derived from git + forge ─────────────</text>
+    <text y="234">  cycle time p50   <tspan class="w">41.2h</tspan>   p90 <tspan class="w">190h</tspan>    change-failure <tspan class="y">7%</tspan></text>
+    <text y="256">  PRs   <tspan class="w">120</tspan> merged   <tspan class="a">3</tspan> open   <tspan class="g">1 draft</tspan></text>
+    <text y="278">  issues <tspan class="w">88</tspan> closed   <tspan class="a">9</tspan> open      in-progress <tspan class="w">3</tspan> · done <tspan class="w">208</tspan></text>
+    <text y="300" class="g">  └────────────────────────────────────────────────────────</text>
+
+    <text y="334"><tspan class="a">$</tspan> <tspan class="w">gitstate classify vul-os/gitstate --items 412,409</tspan></text>
+    <text y="360">  #412  <tspan class="a">feature.api</tspan>  .91   streaming diff endpoint</text>
+    <text y="382">  #409  <tspan class="y">bugfix</tspan>       .82   fixes blame cap overflow</text>
+
+    <text y="416"><tspan class="a">$</tspan> <tspan class="w">gitstate serve</tspan></text>
+    <text y="442" class="g">  gitstated on http://127.0.0.1:7473 · serving web/dist</text>
+    <text y="464"><tspan class="a">  ✓</tspan> <tspan class="g">same API the desktop app talks to · sync: off</tspan></text>
+    <text y="490"><tspan class="a">$</tspan> <tspan class="w">▊</tspan></text>
+  </g>
+</svg>

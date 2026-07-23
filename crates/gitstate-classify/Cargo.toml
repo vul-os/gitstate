@@ -1,0 +1,21 @@
+[package]
+name = "gitstate-classify"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "gitstate classification: local LLM (llmux/OpenAI-compatible) + deterministic heuristic fallback + signed-taxonomy loader + local personalization"
+
+[dependencies]
+gitstate-core = { workspace = true }
+async-trait = { workspace = true }
+reqwest = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }
+
+[lints]
+workspace = true

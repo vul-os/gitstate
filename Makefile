@@ -1,82 +1,93 @@
-# Makefile — gitstate development & build tasks
+# Makefile — gitstate development & build tasks (local-first desktop app)
 #
-# Prerequisites: Go 1.25+, Node 22+ (npm), Docker + Compose.
+# gitstate is a Rust Cargo workspace (crates/*) + a React web UI (web/) + a
+# Tauri desktop shell (apps/desktop). It runs on your machine: no server, no
+# Postgres, no billing cloud. The Go code under internal/ and cmd/ is kept
+# in-tree for a staged port and is NOT built here.
+#
+# Prerequisites: Rust 1.85+ (cargo), Node 22+ (npm). Tauri targets additionally
+# need the platform webview + toolchain (see tauri.app/start/prerequisites).
 #
 # Quick start (dev):
-#   make dev          — start the Go server (uses .env / .env.dev config)
-#   cd web && npm run dev   — start Vite dev server on :5173
-#
-# Build & ship:
-#   make web          — compile frontend → internal/web/embed/
-#   make build        — OSS binary (no ee tag)
-#   make build-ee     — cloud binary (with -tags ee)
-#   make docker       — build the Docker image (multi-stage, EE)
+#   make dev            — run daemon (:7473) + Vite dev server (:5173) together
+# Headless:
+#   make build && ./target/release/gitstate serve
+# Desktop:
+#   make desktop        — build the Tauri app (bundles web/ + the daemon)
 
-.PHONY: dev web build build-ee migrate seed docker
+.PHONY: help dev dev-api dev-web build build-web build-cli run serve \
+        test lint fmt fmt-check clippy sync sync-dmtap desktop desktop-dev clean
 
 # ─── Config ──────────────────────────────────────────────────────────────────
 
-BINARY   := gitstate
-MIGRATE  := migrate
-CMD_SRV  := ./cmd/gitstate
-CMD_MIG  := ./cmd/migrate
-WEB_SRC  := web
-WEB_DIST := $(WEB_SRC)/dist
-EMBED    := internal/web/embed
-LDFLAGS  := -trimpath -ldflags="-s -w"
+WEB      := web
+DESKTOP  := apps/desktop
+SYNC_MANIFEST := crates/gitstate-sync/Cargo.toml
+
+help: ## Show this help.
+	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
+	  | awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2}'
 
 # ─── dev ─────────────────────────────────────────────────────────────────────
 
-## dev: run the Go server in development mode (reloads config from .env).
-## The Vite dev server (cd web && npm run dev) handles the frontend separately.
-dev:
-	go run $(CMD_SRV)
+dev: ## Run daemon + Vite dev server together (needs `npx concurrently` or two shells).
+	@echo "→ starting gitstated (:7473) and vite (:5173)"
+	@$(MAKE) -j2 dev-api dev-web
 
-# ─── web ─────────────────────────────────────────────────────────────────────
+dev-api: ## Run the headless daemon in dev (serves the JSON API on :7473).
+	cargo run -p gitstate-cli -- serve
 
-## web: build the React/Vite frontend and copy the output into the Go embed dir.
-## Run this before `make build` / `make build-ee` to get the SPA bundled into
-## the binary.
-web:
-	cd $(WEB_SRC) && npm ci --prefer-offline && npm run build
-	@echo "→ copying dist to embed dir"
-	@mkdir -p $(EMBED)
-	@cp -r $(WEB_DIST)/. $(EMBED)/
-	@echo "✓ web embed ready"
+dev-web: ## Run the Vite dev server (proxies /api + /health to :7473).
+	cd $(WEB) && npm install && npm run dev
 
 # ─── build ───────────────────────────────────────────────────────────────────
 
-## build: compile the OSS binary (no EE features).
-## Run `make web` first if you want the SPA embedded.
-build:
-	CGO_ENABLED=0 go build $(LDFLAGS) -o $(BINARY) $(CMD_SRV)
-	CGO_ENABLED=0 go build $(LDFLAGS) -o $(MIGRATE) $(CMD_MIG)
-	@echo "✓ $(BINARY) + $(MIGRATE) built (OSS)"
+build: build-web build-cli ## Build the web app and the release binaries.
+	@echo "✓ gitstate (release) + web/dist ready"
 
-## build-ee: compile the EE/cloud binary (Paystack billing + cross-org admin).
-## Use this for the fly.io / Docker cloud deployment.
-build-ee:
-	CGO_ENABLED=0 go build -tags ee $(LDFLAGS) -o $(BINARY) $(CMD_SRV)
-	CGO_ENABLED=0 go build $(LDFLAGS) -o $(MIGRATE) $(CMD_MIG)
-	@echo "✓ $(BINARY) + $(MIGRATE) built (EE)"
+build-web: ## Build the React app into web/dist (served by the daemon + Tauri).
+	cd $(WEB) && npm install && npm run build
 
-# ─── migrate ─────────────────────────────────────────────────────────────────
+build-cli: ## Build the release binaries: `gitstate` (CLI) + `gitstated` (daemon).
+	cargo build --release -p gitstate-cli -p gitstate-daemon
 
-## migrate: run pending migrations against DATABASE_URL (reads .env automatically).
-migrate:
-	go run $(CMD_MIG) up
+run: serve ## Alias for `serve`.
+serve: ## Run the headless daemon (release) serving web/dist + the API.
+	cargo run --release -p gitstate-cli -- serve
 
-## seed: full demo seed — synthetic org/history (cmd/seed) THEN the real git
-## analysis (cmd/seedgit) that populates blame-survival / SZZ / test-coupling, so
-## the Contribution durability/quality and Eng-Health change-failure dimensions
-## have real data out of the box. Run both; seedgit MUST follow seed.
-seed:
-	go run ./cmd/seed
-	go run ./cmd/seedgit
+# ─── quality ─────────────────────────────────────────────────────────────────
 
-# ─── docker ──────────────────────────────────────────────────────────────────
+test: ## Run the workspace test suite (sync crate is excluded — see `make sync`).
+	cargo test --workspace
 
-## docker: build the production Docker image (multi-stage, EE, distroless final).
-docker:
-	docker build -t gitstate:latest .
-	@echo "✓ gitstate:latest built"
+lint: clippy ## Alias for clippy.
+clippy: ## Clippy over the default workspace.
+	cargo clippy --workspace --all-targets
+
+fmt: ## Format all Rust code.
+	cargo fmt --all
+
+fmt-check: ## Check formatting without writing.
+	cargo fmt --all --check
+
+# ─── excluded sync crate (optional P2P) ──────────────────────────────────────
+
+sync: ## Build the excluded CRDT sync crate standalone (local-only, offline).
+	cargo build --manifest-path $(SYNC_MANIFEST)
+
+sync-dmtap: ## Build the sync crate with the DMTAP transport (fetches envoir).
+	cargo build --manifest-path $(SYNC_MANIFEST) --features sync-dmtap
+
+# ─── desktop (Tauri) ─────────────────────────────────────────────────────────
+
+desktop: ## Build the Tauri desktop app (bundles web/ and starts the daemon).
+	cd $(DESKTOP) && npm install && npm run tauri build
+
+desktop-dev: ## Run the Tauri app in dev (hot-reloads the web UI).
+	cd $(DESKTOP) && npm install && npm run tauri dev
+
+# ─── clean ───────────────────────────────────────────────────────────────────
+
+clean: ## Remove Rust build output and the web bundle.
+	cargo clean
+	rm -rf $(WEB)/dist
