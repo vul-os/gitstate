@@ -2,11 +2,10 @@
 //
 // Per-org LLM configuration persistence (migration 20260618_006_org_llm_settings).
 //
-// Each org is one of two billing/cost modes:
-//   - "managed": uses the platform Anthropic key; usage is metered and billed as
-//     overage on the per-builder tier (internal/billing).
-//   - "byok":    brings its own provider API key → we incur $0 managed LLM cost and
-//     never produce overage. The key is stored AES-256-GCM encrypted (internal/crypto).
+// Each org is one of two LLM key modes:
+//   - "managed": uses the platform Anthropic key.
+//   - "byok":    brings its own provider API key. The key is stored AES-256-GCM
+//     encrypted (internal/crypto).
 //
 // All functions run inside an org-scoped transaction (pgx.Tx); callers MUST use
 // db.WithOrg so the RLS policy (org_id = current_org()) is enforced and cross-org

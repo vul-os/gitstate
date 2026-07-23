@@ -6,6 +6,7 @@ pub mod context;
 pub mod insight;
 pub mod misc;
 pub mod repo;
+pub mod seed;
 pub mod serve;
 
 use gitstate_daemon::{build_state_from_env, AppState};

@@ -14,11 +14,15 @@ path = "src/main.rs"
 [dependencies]
 anyhow = { workspace = true }
 clap = { workspace = true }
+hex = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+sha2 = { workspace = true }
+time = { workspace = true }
 tokio = { workspace = true }
 gitstate-core = { workspace = true }
 gitstate-daemon = { workspace = true }
+gitstate-store = { workspace = true }
 
 [lints]
 workspace = true

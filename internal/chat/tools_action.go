@@ -25,39 +25,6 @@ func actionResult(a *Action) (json.RawMessage, error) {
 	})
 }
 
-// ── propose_plan_upgrade ────────────────────────────────────────────────────
-
-func proposePlanUpgradeTool() Tool {
-	return Tool{
-		Name:        "propose_plan_upgrade",
-		Description: "Propose upgrading the org's subscription plan. Returns a confirmable 'Upgrade' button that, when clicked, starts the Paystack checkout for the given plan. Does NOT charge or change the plan — the user must confirm. Use when the user asks to upgrade/downgrade/change plan.",
-		JSONSchema: objectSchema(map[string]any{
-			"planKey": stringProp("the target plan key, e.g. hobby | pro | team | scale | enterprise"),
-		}, "planKey"),
-		Handler: func(_ context.Context, _ *db.DB, _ string, args json.RawMessage) (json.RawMessage, *Action, error) {
-			var a struct {
-				PlanKey string `json:"planKey"`
-			}
-			if err := json.Unmarshal(args, &a); err != nil {
-				return nil, nil, fmt.Errorf("invalid args: %w", err)
-			}
-			if a.PlanKey == "" {
-				return nil, nil, fmt.Errorf("planKey is required")
-			}
-			action := &Action{
-				Type:     "plan_upgrade",
-				Label:    fmt.Sprintf("Upgrade to %s", titleCasePlan(a.PlanKey)),
-				Endpoint: "/api/billing/checkout",
-				Method:   "POST",
-				Payload:  map[string]any{"plan": a.PlanKey},
-				Confirm:  true,
-			}
-			out, _ := actionResult(action)
-			return out, action, nil
-		},
-	}
-}
-
 // ── propose_sync_repo ───────────────────────────────────────────────────────
 
 func proposeSyncRepoTool() Tool {
@@ -83,47 +50,6 @@ func proposeSyncRepoTool() Tool {
 				Endpoint: fmt.Sprintf("/api/repos/%s/sync", a.RepoID),
 				Method:   "POST",
 				Payload:  map[string]any{},
-				Confirm:  true,
-			}
-			out, _ := actionResult(action)
-			return out, action, nil
-		},
-	}
-}
-
-// ── propose_generate_invoice ────────────────────────────────────────────────
-
-func proposeGenerateInvoiceTool() Tool {
-	return Tool{
-		Name:        "propose_generate_invoice",
-		Description: "Propose generating a client invoice from merged-PR git activity over a date range. Returns a confirmable 'Generate invoice' button hitting the from-git invoice builder. Does NOT create the invoice — the user must confirm.",
-		JSONSchema: objectSchema(map[string]any{
-			"client": stringProp("client id (UUID), optional — leave empty for the default/unassigned client"),
-			"from":   stringProp("period start, YYYY-MM-DD"),
-			"to":     stringProp("period end, YYYY-MM-DD"),
-		}, "from", "to"),
-		Handler: func(_ context.Context, _ *db.DB, _ string, args json.RawMessage) (json.RawMessage, *Action, error) {
-			var a struct {
-				Client string `json:"client"`
-				From   string `json:"from"`
-				To     string `json:"to"`
-			}
-			if err := json.Unmarshal(args, &a); err != nil {
-				return nil, nil, fmt.Errorf("invalid args: %w", err)
-			}
-			if a.From == "" || a.To == "" {
-				return nil, nil, fmt.Errorf("from and to dates are required")
-			}
-			payload := map[string]any{"from": a.From, "to": a.To}
-			if a.Client != "" {
-				payload["clientId"] = a.Client
-			}
-			action := &Action{
-				Type:     "generate_invoice",
-				Label:    fmt.Sprintf("Generate invoice (%s → %s)", a.From, a.To),
-				Endpoint: "/api/invoices/from-git",
-				Method:   "POST",
-				Payload:  payload,
 				Confirm:  true,
 			}
 			out, _ := actionResult(action)
@@ -163,19 +89,4 @@ func proposeExcludeContributorTool() Tool {
 			return out, action, nil
 		},
 	}
-}
-
-// titleCasePlan upper-cases the first rune of a plan key for the button label.
-func titleCasePlan(s string) string {
-	if s == "" {
-		return s
-	}
-	return string(s[0]-32*btoi(s[0] >= 'a' && s[0] <= 'z')) + s[1:]
-}
-
-func btoi(b bool) byte {
-	if b {
-		return 1
-	}
-	return 0
 }

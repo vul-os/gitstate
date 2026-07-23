@@ -38,6 +38,9 @@ enum Command {
     /// Run the headless daemon (serves web/dist + the JSON API).
     Serve(cmd::serve::ServeArgs),
 
+    /// Populate a database with synthetic demo data (`--demo`).
+    Seed(cmd::seed::SeedArgs),
+
     /// Manage registered repositories.
     #[command(subcommand)]
     Repo(cmd::repo::RepoCmd),
@@ -95,6 +98,7 @@ async fn run() -> anyhow::Result<()> {
 
     match cli.command {
         Command::Serve(args) => cmd::serve::run(args).await,
+        Command::Seed(args) => cmd::seed::run(&ctx, args),
         Command::Repo(c) => cmd::repo::run(&ctx, c).await,
         Command::State { repo_id } => cmd::insight::state(&ctx, &repo_id),
         Command::Contributions(a) => cmd::insight::contributions(&ctx, a),

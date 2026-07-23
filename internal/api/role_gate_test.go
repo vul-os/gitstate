@@ -1,7 +1,7 @@
 // Package api — role_gate_test.go
 // DB-backed HTTP tests asserting the owner/admin role gates added to the
-// mutating invoice/client, leave-approval, and webhook-secret routes. A plain
-// member must be 403'd on every mutating endpoint; an owner is admitted.
+// mutating webhook-secret route. A plain member must be 403'd on every
+// mutating endpoint; an owner is admitted.
 //
 // The tests drive the REAL middleware chain (RequireAuth + OrgScope) by minting a
 // valid access token and setting X-Org-ID, then seeding throwaway orgs/users and
@@ -71,9 +71,8 @@ func TestRoleGates_MutatingRoutesRequireManager(t *testing.T) {
 	_, memberTok := seedMember(t, ctx, database, signingKey, orgID, "member")
 	_, ownerTok := seedMember(t, ctx, database, signingKey, orgID, "owner")
 
-	// Build the real authed muxes for invoices + webhooks.
+	// Build the real authed mux for webhooks.
 	mux := http.NewServeMux()
-	RegisterInvoiceRoutes(mux, database, cfg)
 	RegisterWebhookRoutes(mux, database, cfg)
 
 	do := func(method, path, token, body string) *httptest.ResponseRecorder {
@@ -90,12 +89,6 @@ func TestRoleGates_MutatingRoutesRequireManager(t *testing.T) {
 	memberCases := []struct {
 		name, method, path, body string
 	}{
-		{"createClient", http.MethodPost, "/api/clients", `{"name":"Acme"}`},
-		{"updateClient", http.MethodPatch, "/api/clients/00000000-0000-0000-0000-000000000000", `{"name":"Acme2"}`},
-		{"createInvoice", http.MethodPost, "/api/invoices", `{"from":"2026-01-01","to":"2026-01-31"}`},
-		{"generateInvoice", http.MethodPost, "/api/invoices/generate", `{"from":"2026-01-01","to":"2026-01-31","preview":true}`},
-		{"patchInvoice", http.MethodPatch, "/api/invoices/00000000-0000-0000-0000-000000000000", `{"status":"paid"}`},
-		{"deleteInvoice", http.MethodDelete, "/api/invoices/00000000-0000-0000-0000-000000000000", ``},
 		{"rotateWebhookSecret", http.MethodPost, "/api/webhooks/config", `{"provider":"github"}`},
 	}
 	for _, c := range memberCases {
@@ -105,12 +98,9 @@ func TestRoleGates_MutatingRoutesRequireManager(t *testing.T) {
 		}
 	}
 
-	// An owner is admitted past the gate. createClient should succeed (201);
-	// rotateWebhookSecret should succeed (200). These prove the gate lets managers
-	// through (not merely that everyone is blocked).
-	if rec := do(http.MethodPost, "/api/clients", ownerTok, `{"name":"Acme"}`); rec.Code != http.StatusCreated {
-		t.Errorf("createClient as owner: status = %d, want 201 (body=%s)", rec.Code, rec.Body.String())
-	}
+	// An owner is admitted past the gate. rotateWebhookSecret should succeed
+	// (200). This proves the gate lets managers through (not merely that
+	// everyone is blocked).
 	if rec := do(http.MethodPost, "/api/webhooks/config", ownerTok, `{"provider":"github"}`); rec.Code != http.StatusOK {
 		t.Errorf("rotateWebhookSecret as owner: status = %d, want 200 (body=%s)", rec.Code, rec.Body.String())
 	}

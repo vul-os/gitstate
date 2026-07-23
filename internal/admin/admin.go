@@ -1,5 +1,5 @@
-// Package admin provides the super-admin middleware and helpers shared between
-// the open-core admin pages and the EE ee/admin package.
+// Package admin provides the super-admin middleware and helpers used by the
+// admin console pages.
 //
 // RequireSuperAdmin gates any route to users whose is_super_admin flag is set
 // in the users table.  Every cross-org access additionally writes an audit_log

@@ -1,13 +1,11 @@
 // Package api — webhooks_public_test.go
-// DB-backed HTTP tests for the two PUBLIC, unauthenticated mux routes:
+// DB-backed HTTP tests for the PUBLIC, unauthenticated inbound webhook receiver:
 //   - POST /api/webhooks/github  — the inbound receiver: valid X-Hub-Signature-256
 //     HMAC over the raw body → processed (and a deployment event writes a
 //     deployments row); a bad signature → 401; an unknown event with a valid
 //     signature → 200 no-op.
-//   - GET /api/public/invoices/{token} — a sent invoice with a share token is
-//     readable; an unknown token → 404.
 //
-// Both handlers are built with the real DB pool. The tests seed throwaway orgs
+// The handler is built with the real DB pool. The tests seed throwaway orgs
 // and DELETE them (cascade) at the end so the DB stays clean. They skip cleanly
 // when DATABASE_URL is unset.
 package api
@@ -300,101 +298,3 @@ func TestGitLabWebhookReceiverHTTP(t *testing.T) {
 	t.Logf("gitlab receiver OK: token+?org=→200+row (constant-time), wrong/missing token→401, unknown→200 no-op")
 }
 
-func TestPublicInvoiceRouteHTTP(t *testing.T) {
-	database := apiTestDB(t)
-	defer database.Close()
-
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
-
-	ns := time.Now().UnixNano()
-	var orgID string
-	if err := database.Pool().QueryRow(ctx,
-		`INSERT INTO organizations (slug, name) VALUES ($1,$2) RETURNING id`,
-		fmt.Sprintf("pub-inv-%d", ns), "Public Invoice Org").Scan(&orgID); err != nil {
-		t.Fatalf("create org: %v", err)
-	}
-	defer func() {
-		_, _ = database.Pool().Exec(context.Background(), `DELETE FROM organizations WHERE id = $1`, orgID)
-	}()
-
-	token := fmt.Sprintf("pubtok-%d", ns)
-	var invoiceID string
-	if err := database.WithOrg(ctx, orgID, func(tx pgx.Tx) error {
-		num, e := store.NextClientInvoiceNumber(ctx, tx, orgID, 2026)
-		if e != nil {
-			return e
-		}
-		inv, e := store.CreateClientInvoice(ctx, tx, orgID, store.CreateClientInvoiceInput{
-			Number:      num,
-			PeriodStart: time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC),
-			PeriodEnd:   time.Date(2026, 3, 31, 0, 0, 0, 0, time.UTC),
-			Currency:    "USD",
-			Lines: []store.ClientInvoiceLine{
-				{Description: "work", EffortPoints: 5, Quantity: 1, UnitRateCents: 10000, AmountCents: 50000},
-			},
-		})
-		if e != nil {
-			return e
-		}
-		invoiceID = inv.ID
-		// Mark "sent" + attach a share token (mirrors the patch handler).
-		if e := store.SetClientInvoiceShareToken(ctx, tx, orgID, inv.ID, token); e != nil {
-			return e
-		}
-		sent := "sent"
-		_, e = store.UpdateClientInvoice(ctx, tx, orgID, inv.ID, store.ClientInvoicePatch{Status: &sent})
-		return e
-	}); err != nil {
-		t.Fatalf("seed invoice: %v", err)
-	}
-
-	mux := http.NewServeMux()
-	RegisterPublicInvoiceRoute(mux, database)
-
-	// ── valid token → 200 with the invoice + lines, token redacted ──
-	req := httptest.NewRequest(http.MethodGet, "/api/public/invoices/"+token, nil)
-	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("valid token: status = %d, want 200 (body=%s)", rec.Code, rec.Body.String())
-	}
-	var detail struct {
-		ID         string  `json:"id"`
-		Number     string  `json:"number"`
-		Status     string  `json:"status"`
-		TotalCents int     `json:"totalCents"`
-		ShareToken *string `json:"shareToken"`
-		Lines      []struct {
-			AmountCents int `json:"amountCents"`
-		} `json:"lines"`
-	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &detail); err != nil {
-		t.Fatalf("decode public invoice: %v", err)
-	}
-	if detail.ID != invoiceID {
-		t.Errorf("public invoice id = %q, want %q", detail.ID, invoiceID)
-	}
-	if detail.Status != "sent" {
-		t.Errorf("public invoice status = %q, want sent", detail.Status)
-	}
-	if detail.TotalCents != 50000 {
-		t.Errorf("public invoice total = %d, want 50000", detail.TotalCents)
-	}
-	if len(detail.Lines) != 1 || detail.Lines[0].AmountCents != 50000 {
-		t.Errorf("public invoice lines = %+v, want one line @50000", detail.Lines)
-	}
-	if detail.ShareToken != nil {
-		t.Errorf("public payload leaked share token = %v, want nil", *detail.ShareToken)
-	}
-
-	// ── unknown token → 404 ──
-	reqBad := httptest.NewRequest(http.MethodGet, "/api/public/invoices/nope-"+fmt.Sprint(ns), nil)
-	recBad := httptest.NewRecorder()
-	mux.ServeHTTP(recBad, reqBad)
-	if recBad.Code != http.StatusNotFound {
-		t.Errorf("unknown token: status = %d, want 404", recBad.Code)
-	}
-
-	t.Logf("public invoice route OK: valid token→200 (token redacted), bad token→404")
-}

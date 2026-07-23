@@ -8,10 +8,12 @@ This roadmap is the single source of truth for *what* we build and *in what orde
 architecture rationale lives in [decisions.md](decisions.md); live build status lives in
 [PROGRESS.md](PROGRESS.md). The interface contract lives in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
-The old multi-tenant Go+Postgres stack — the RLS tenancy model, Paystack billing, the super-admin
-console, the fly.io deploy — lives on **in git history and, for the staged port, still in-tree** under
-`internal/`, `cmd/`, and `migrations/`. Nothing there is deleted; it is the source we port from. See
-[docs/MIGRATION-NOTES.md](docs/MIGRATION-NOTES.md).
+The old multi-tenant Go+Postgres stack — the RLS tenancy model, the super-admin console, the fly.io
+deploy — lives on **in git history and, for the staged port, still in-tree** under `internal/`, `cmd/`,
+and `migrations/`, as the source we port from. The billing/invoicing/accounting/COGS layer (Paystack
+charging, client invoices, accounting-provider sync, cloud cost reconciliation) had no path forward in
+a local-first single-tenant app and has been removed outright rather than staged; it lives on only in
+git history. See [docs/MIGRATION-NOTES.md](docs/MIGRATION-NOTES.md).
 
 ---
 
@@ -43,7 +45,7 @@ vulos suite style (`slipscan` / `ofisi` / `wede`).
 - [ ] Tauri shell (`apps/desktop`) that boots the daemon and reuses the React `web/` UI.
 - [ ] Repoint `web/` at the daemon JSON API; remove the multi-tenant auth/org/billing surfaces.
 - [ ] New static marketing/docs site (`site/`) folded into `vulos-cloud` at `gitstate.<vulos-domain>`.
-- [ ] Keep `internal/`, `cmd/`, `migrations/`, `go.mod`, `go.sum` byte-for-byte for the staged port.
+- [x] Keep `internal/`, `cmd/`, `migrations/`, `go.mod`, `go.sum` compiling for the staged port; the billing/invoicing/accounting/COGS layer was cut outright (no port planned).
 
 Live status: [PROGRESS.md](PROGRESS.md).
 
@@ -96,7 +98,6 @@ a domain is ported, the Go source stays in-tree as the reference (never edited).
 - [ ] **DORA parity** — cycle-time p50/p90 and change-failure rate fully derived in `gitstate-git` (partly in Phase 1); match the legacy `internal/metrics` outputs.
 - [ ] **Effort/estimation parity** — port `internal/llm` diff-difficulty prompts and calibration into `gitstate-classify`.
 - [ ] **Involvement parity** — port `internal/metrics` multi-dimension involvement (texture, no score) into the six-dimension model.
-- [ ] **Billing/invoice (evidence) — reframed** — the legacy `internal/billing` produced git-evidence invoices with visible gaps. Port only as an **optional, local** report generator (no Paystack, no multi-tenant charging); the billing-collection cloud is **not** rebuilt.
 - [ ] **Reporting / NL→report** — port the SELECT-only queryable report path against the local SQLite store.
 - [ ] Once a domain's Rust port passes parity, remove the corresponding Go source in a dedicated commit.
 

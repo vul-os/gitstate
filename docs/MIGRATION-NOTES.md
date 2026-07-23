@@ -11,7 +11,7 @@ onto the user's machine. This document explains why a large chunk of Go is *stil
 
 ## Why the Go server is still here
 
-The Go server is kept **byte-for-byte in-tree** — under `internal/`, `cmd/`, and `migrations/`, with
+The Go server is kept **in-tree and compiling** — under `internal/`, `cmd/`, and `migrations/`, with
 `go.mod` and `go.sum` — for a **staged port**. Rather than delete it and reimplement from memory, we
 port its still-valuable domain logic to Rust one area at a time, using the Go source as the reference
 implementation. A Go domain is removed only once its Rust replacement passes parity, in a dedicated
@@ -19,7 +19,8 @@ commit.
 
 **Untouchable during the port** (no agent edits these): `internal/**`, `cmd/**`, `migrations/**`,
 `go.mod`, `go.sum`. They compile and run exactly as before; they are simply no longer the product's
-front door.
+front door. The one exception is the billing/invoicing/accounting/COGS layer, which had no path
+forward in a local-first single-tenant app and was excised outright (not staged) — see the table below.
 
 ## What was removed vs. kept vs. ported
 
@@ -32,7 +33,7 @@ front door.
 | `internal/sync` (GitHub/GitLab) | **Ported** → `gitstate-forge` (`gh`/`glab` + REST/GraphQL), local-credentials-only. |
 | `internal/llm` (diff-difficulty, status synthesis) | **Porting** → `gitstate-classify` (local LLM + heuristic + personalization). |
 | `internal/metrics` (cycle time, involvement) | **Porting** → `gitstate-git` derivation (DORA + six dimensions). |
-| `internal/billing` (evidence invoice with visible gaps) | **Reframed.** The git-evidence invoice was genuinely useful; if ported it returns as an **optional local report** — never a payment/charging service (T12). |
+| `internal/{billing,cogs,accounting,invoicedelivery,invoicepdf,exchange}`, `cmd/billsim` | **Removed outright.** The billing/invoicing/SaaS-viability layer (subscriptions, wallets, client invoices, accounting-provider sync, cloud-cost/COGS reconciliation) has no role in a local-first single-tenant app; not staged, not ported. Gone in git history only. |
 | `internal/report` (NL→report, SELECT-only) | **Planned port** against the local SQLite store. |
 | Postgres `migrations/` (root) | **Kept, unused by Rust.** The Rust store's forward-only migrations live in `crates/gitstate-store/migrations/` so they never collide with this directory. |
 

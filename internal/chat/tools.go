@@ -85,14 +85,8 @@ func NewRegistry() *Registry {
 		listReposTool(),
 		repoStatsTool(),
 		engHealthTool(),
-		listInvoicesTool(),
-		invoiceSummaryTool(),
-		currentUsageTool(),
-		walletBalanceTool(),
 		// ── action tools (PROPOSE only — never mutate) ──────────────────────
-		proposePlanUpgradeTool(),
 		proposeSyncRepoTool(),
-		proposeGenerateInvoiceTool(),
 		proposeExcludeContributorTool(),
 	}
 	r := &Registry{tools: tools, byName: make(map[string]Tool, len(tools))}

@@ -14,11 +14,8 @@ import (
 	"time"
 
 	"github.com/exo/gitstate/internal/api"
-	"github.com/exo/gitstate/internal/billing"
 	"github.com/exo/gitstate/internal/config"
 	"github.com/exo/gitstate/internal/db"
-	"github.com/exo/gitstate/internal/exchange"
-	"github.com/exo/gitstate/internal/invoicedelivery"
 	"github.com/exo/gitstate/internal/jobs"
 	"github.com/exo/gitstate/internal/llm"
 )
@@ -59,12 +56,6 @@ func main() {
 		cancel()
 	}
 
-	// Start the USD↔ZAR exchange-rate refresher when a DB and a provider key are present.
-	if database != nil && cfg.Billing.Exchange.APIKey != "" {
-		exchange.New(database, cfg).StartRefresher(ctx)
-		slog.Info("exchange-rate refresher started", "provider", cfg.Billing.Exchange.Provider)
-	}
-
 	// Durable background job queue (repo syncs survive restarts). Prefers the
 	// BYPASSRLS admin pool (ADMIN_DATABASE_URL) for cross-org dequeue. SetJobQueue
 	// MUST run before api.NewRouter (which calls RegisterSyncRoutes, reading it).
@@ -79,23 +70,6 @@ func main() {
 		queue.Start(ctx)                                  // RequeueStale + workers + stale ticker
 		defer queue.Close()
 		slog.Info("job queue started")
-	}
-
-	// Billing lifecycle: monthly scheduler + dunning machine. Issued invoices are
-	// emailed (PDF) to org owners via the decoupled hook. The Charger stays nil
-	// until the Paystack gateway phase passes an EE charger (real balances enter
-	// dunning, $0 invoices settle).
-	if database != nil && cfg.Billing.Enabled {
-		billing.InvoiceEmailHook = func(ctx context.Context, orgID, invoiceID string) error {
-			return invoicedelivery.EmailInvoiceToOwners(ctx, database, cfg, orgID, invoiceID)
-		}
-		sched, serr := billing.StartBillingScheduler(ctx, billing.SystemClock{}, database, cfg, nil)
-		if serr != nil {
-			slog.Error("failed to start billing scheduler", "error", serr)
-		} else {
-			defer sched.Close()
-			slog.Info("billing scheduler started")
-		}
 	}
 
 	// Start the in-process LLM gateway (no-op when LLM_GATEWAY != "llmux").

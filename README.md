@@ -34,10 +34,15 @@ backend, no multi-tenant server, no cloud account. What you run is what you own.
 [Quick start](#quick-start) ·
 [What it is](#what-is-gitstate) ·
 [How it works](#how-it-works) ·
+[Screenshots](#screenshots) ·
 [Architecture](#architecture) ·
 [Classification &amp; decentralization](#classification--decentralization) ·
 [Docs](docs/) ·
 [Roadmap](ROADMAP.md)
+
+<br>
+
+<img src="docs/screenshots/project-state.png" alt="gitstate desktop app showing a repo's Project state — DORA cycle-time cards, PR/issue counts — and the six-dimension Contribution table, all derived from git" width="900">
 
 </div>
 
@@ -130,6 +135,23 @@ flowchart TB
     b <-->|"CRDT ops"| c
     a <-->|"CRDT ops"| c
 ```
+
+---
+
+## Screenshots
+
+<table>
+<tr>
+<td width="50%"><img src="docs/screenshots/dashboard.png" alt="gitstate Dashboard — open/merged PRs, open issues and cycle time rolled up across every tracked repo"><br><sub><em>Dashboard — cross-repo overview, derived state at a glance</em></sub></td>
+<td width="50%"><img src="docs/screenshots/contributions.png" alt="Six-dimension contribution table: shipped, review, effort, quality, ownership, durability per contributor"><br><sub><em>Contribution — six gaming-resistant dimensions, normalized per repo</em></sub></td>
+</tr>
+<tr>
+<td width="50%"><img src="docs/screenshots/contexts.png" alt="Contexts view: saved working sets of repos, pull requests, tags and notes"><br><sub><em>Contexts — saved working sets that sync peer-to-peer over CRDT</em></sub></td>
+<td width="50%"><img src="docs/screenshots/classify.png" alt="Classify view: work items labeled with categories, confidence and rationale from the local heuristic/LLM classifier"><br><sub><em>Classify — work items labeled locally, heuristic fallback shown here</em></sub></td>
+</tr>
+</table>
+
+<sub>All shots are the real desktop app against a deterministic synthetic demo dataset (`gitstate seed --demo`) — a fake org, fake pseudonymous contributors, never real git/forge history. See <a href="docs/screenshots/">docs/screenshots/</a> for the full set (including <a href="docs/screenshots/categories.png">Categories</a> and a <a href="docs/screenshots/dashboard-dark.png">dark-mode</a> shot) and <code>scripts/screenshots.mjs</code> to regenerate.</sub>
 
 ---
 

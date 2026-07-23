@@ -59,3 +59,6 @@ target/
 *.db
 *.sqlite
 *.sqlite3
+
+# Throwaway demo db for scripts/screenshots.mjs (seeded fresh per run)
+/scripts/.screenshot-data/

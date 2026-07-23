@@ -243,7 +243,6 @@ func RegisterAdminRoutes(mux *http.ServeMux, database *db.DB, cfg *config.Config
 	mux.Handle("GET /admin",                      guard(http.HandlerFunc(h.analytics)))
 	mux.Handle("GET /admin/users",                guard(http.HandlerFunc(h.users)))
 	mux.Handle("GET /admin/orgs",                 guard(http.HandlerFunc(h.orgs)))
-	mux.Handle("GET /admin/cogs",                 guard(http.HandlerFunc(h.cogs)))
 	mux.Handle("GET /admin/analytics",            guard(http.HandlerFunc(h.geoAnalytics)))
 	mux.Handle("GET /admin/analytics/feed",       guard(http.HandlerFunc(h.geoAnalyticsFeed)))
 	mux.Handle("GET /admin/analytics/online",     guard(http.HandlerFunc(h.geoAnalyticsOnline)))

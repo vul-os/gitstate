@@ -11,7 +11,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/exo/gitstate/internal/billing"
 	"github.com/exo/gitstate/internal/config"
 	"github.com/exo/gitstate/internal/db"
 	"github.com/exo/gitstate/internal/githubapp"
@@ -305,25 +304,6 @@ func (h *syncHandlers) connectRepo(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Quota enforcement (closure #10): block a NEW repo connection beyond the plan's
-	// max_repos / when the org is suspended. Existing repos (re-connect / upsert of an
-	// already-present external_id) don't consume new quota, so we only gate when this
-	// is a genuinely new repo for the org.
-	if isNew, qErr := h.repoIsNew(r.Context(), orgID, req.Platform, externalID); qErr != nil {
-		writeSyncError(w, "check existing repo", qErr)
-		return
-	} else if isNew {
-		dec, qErr := billing.NewQuotaService(h.db, h.cfg).Check(r.Context(), orgID, billing.ResourceRepo)
-		if qErr != nil {
-			writeSyncError(w, "quota check", qErr)
-			return
-		}
-		if !dec.Allowed {
-			writeError(w, dec.HTTPStatus, dec.Reason)
-			return
-		}
-	}
-
 	var repo *store.Repo
 	if err := h.db.WithOrg(r.Context(), orgID, func(tx pgx.Tx) error {
 		rp, e := store.ConnectRepo(
@@ -350,22 +330,6 @@ func (h *syncHandlers) connectRepo(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusCreated, repoToResponse(*repo))
-}
-
-// repoIsNew reports whether (platform, externalID) is NOT yet connected for the
-// org — i.e. connecting it would consume new repo quota. A re-connect/upsert of an
-// existing repo returns false so it never trips the max_repos gate.
-func (h *syncHandlers) repoIsNew(ctx context.Context, orgID, platform, externalID string) (bool, error) {
-	var exists bool
-	err := h.db.WithOrg(ctx, orgID, func(tx pgx.Tx) error {
-		return tx.QueryRow(ctx,
-			`SELECT EXISTS(SELECT 1 FROM repos WHERE org_id=$1 AND platform=$2 AND external_id=$3)`,
-			orgID, platform, externalID).Scan(&exists)
-	})
-	if err != nil {
-		return false, err
-	}
-	return !exists, nil
 }
 
 // ── POST /api/repos/{id}/sync ─────────────────────────────────────────────────

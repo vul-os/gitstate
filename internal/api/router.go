@@ -12,9 +12,6 @@ import (
 	"github.com/exo/gitstate/internal/db"
 	"github.com/exo/gitstate/internal/middleware"
 	"github.com/exo/gitstate/internal/web"
-
-	eeadmin "github.com/exo/gitstate/ee/admin"
-	eebilling "github.com/exo/gitstate/ee/billing"
 )
 
 // NewRouter builds and returns the fully wired http.Handler for gitstate.
@@ -29,10 +26,8 @@ func NewRouter(cfg *config.Config, database *db.DB) http.Handler {
 	// Public docs API (embedded markdown; no DB required).
 	RegisterDocsRoutes(mux)
 
-	// Public, unauthenticated client-invoice share view (token-scoped, read-only).
+	// Inbound GitHub/GitLab webhook receiver (signature-verified, no session auth).
 	if database != nil {
-		RegisterPublicInvoiceRoute(mux, database)
-		// Inbound GitHub/GitLab webhook receiver (signature-verified, no session auth).
 		RegisterWebhookReceiver(mux, database)
 	}
 
@@ -49,14 +44,12 @@ func NewRouter(cfg *config.Config, database *db.DB) http.Handler {
 		RegisterConnectRoutes(mux, database, cfg)
 		RegisterLLMSettingsRoutes(mux, database, cfg)
 		RegisterCalendarRoutes(mux, database, cfg)
-		RegisterAccountingRoutes(mux, database, cfg)
 		RegisterMetricsRoutes(mux, database, cfg)
 		RegisterAnalyticsRoutes(mux, database, cfg)
 		RegisterContributionRoutes(mux, database, cfg)
 		RegisterContributorRoutes(mux, database, cfg)
 		RegisterEngHealthRoutes(mux, database, cfg)
 		RegisterPlanningRoutes(mux, database, cfg)
-		RegisterInvoiceRoutes(mux, database, cfg)
 		RegisterNotificationRoutes(mux, database, cfg)
 		RegisterWebhookRoutes(mux, database, cfg)
 		RegisterImportRoutes(mux, database, cfg)
@@ -67,12 +60,8 @@ func NewRouter(cfg *config.Config, database *db.DB) http.Handler {
 		RegisterContextRoutes(mux, database, cfg)
 		RegisterAgentRunRoutes(mux, database, cfg)
 		RegisterSearchRoutes(mux, database, cfg)
-		RegisterBillingRoutes(mux, database, cfg)
-		// EE Paystack charging: real when built with -tags ee, no-op stub otherwise.
-		eebilling.RegisterPaystackRoutes(mux, database, cfg)
-		// Super-admin console (server-rendered HTML) + EE cross-org (audited).
+		// Super-admin console (server-rendered HTML).
 		admin.RegisterAdminRoutes(mux, database, cfg)
-		eeadmin.RegisterEEAdminRoutes(mux, database, cfg)
 	}
 
 	// Catch-all: serve the embedded React app (SPA fallback). Registered last so all
