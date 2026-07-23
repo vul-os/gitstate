@@ -61,10 +61,6 @@ jobs:
   frontend:
     name: Frontend (lint, build)
     runs-on: ubuntu-latest
-    # The React app is repointed to the daemon JSON API in parallel with the
-    # Rust foundation; do not fail the whole pipeline while web/ is still being
-    # adapted from the old SaaS surfaces.
-    continue-on-error: true
     defaults:
       run:
         working-directory: web
@@ -81,3 +77,55 @@ jobs:
         run: npm run lint
       - name: Build
         run: npm run build
+
+  e2e:
+    name: E2E (seeded daemon, dark + light)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install web deps
+        working-directory: web
+        run: npm ci
+
+      - name: Install chromium
+        working-directory: web
+        run: npx playwright install --with-deps chromium
+
+      # The daemon serves web/dist, so the SPA must be built before it starts.
+      - name: Build SPA
+        working-directory: web
+        run: npm run build
+
+      # Deterministic synthetic dataset — the suite asserts against real rows,
+      # and its preflight fails loudly if the database is empty.
+      - name: Seed the demo dataset
+        run: cargo run -p gitstate-cli -- seed --demo
+        env:
+          GITSTATE_DATA_DIR: ${{ runner.temp }}/gitstate-data
+
+      - name: Start the daemon
+        run: |
+          cargo run -p gitstate-cli -- serve --port 8080 &
+          for i in $(seq 1 60); do
+            if curl -sf http://127.0.0.1:8080/health >/dev/null; then
+              echo "daemon up after ${i}s"; exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::daemon did not become healthy within 60s"; exit 1
+        env:
+          GITSTATE_DATA_DIR: ${{ runner.temp }}/gitstate-data
+
+      - name: Run the e2e suite
+        working-directory: web
+        run: npm run test:e2e
+        env:
+          BASE_URL: http://127.0.0.1:8080

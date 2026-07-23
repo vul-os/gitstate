@@ -99,6 +99,17 @@
   --chart-axis: var(--text-faint);
   --chart-dot-ring: var(--bg-surface);
 
+  /* Sequential ramp for magnitude (the contribution heatmap).
+     ONE hue, monotonic in lightness — deliberately not the categorical
+     palette, which encodes identity rather than "more vs less". Step 0 is the
+     empty-cell well, not part of the ramp. */
+  --heat-0: #16202f;
+  --heat-1: #0f4d47;
+  --heat-2: #14746a;
+  --heat-3: #17a394;
+  --heat-4: #22cbb6;
+  --heat-5: #5eead4;
+
   color-scheme: dark;
 }
 
@@ -146,6 +157,15 @@
   --chart-grid: rgba(15,23,42,0.07);
   --chart-axis: var(--text-faint);
   --chart-dot-ring: var(--bg-surface);
+
+  /* Sequential ramp, light mode: same single hue, direction flipped so
+     "more" is darker against paper. */
+  --heat-0: #e7e3da;
+  --heat-1: #b9e4dc;
+  --heat-2: #7fcdc0;
+  --heat-3: #3fae9d;
+  --heat-4: #14867a;
+  --heat-5: #0a5f57;
 
   color-scheme: light;
 }

@@ -12,24 +12,18 @@
     "dev:full": "concurrently -k -n api,web -c blue,green \"npm:dev:api\" \"npm:dev\"",
     "shots": "node scripts/screenshots.mjs",
     "test:e2e": "node tests/runner.mjs",
+    "test:e2e:dark": "node tests/runner.mjs --theme=dark",
     "test:e2e:light": "node tests/runner.mjs --theme=light"
   },
   "dependencies": {
-    "@dnd-kit/core": "^6.3.1",
-    "@dnd-kit/sortable": "^10.0.0",
-    "@dnd-kit/utilities": "^3.2.2",
     "@fontsource-variable/bricolage-grotesque": "^5.2.10",
     "@fontsource-variable/hanken-grotesk": "^5.2.8",
     "@fontsource/jetbrains-mono": "^5.2.8",
     "@tailwindcss/vite": "^4.3.1",
     "lucide-react": "^1.21.0",
-    "motion": "^12.40.0",
     "react": "^19.2.6",
     "react-dom": "^19.2.6",
-    "react-markdown": "^10.1.0",
     "react-router-dom": "^7.18.0",
-    "rehype-slug": "^6.0.0",
-    "remark-gfm": "^4.0.1",
     "tailwindcss": "^4.3.1"
   },
   "devDependencies": {

@@ -155,6 +155,20 @@ export function workItems(id, { kind, state } = {}) {
 /** GET /api/contributors — merged identities across all repos. */
 export function contributors() { return get('/api/contributors') }
 
+/**
+ * GET /api/analytics — the single round-trip behind the dashboard and insights
+ * screens: dense heatmap, weekly/cycle/throughput series, contributor rollup
+ * and headline totals.
+ *
+ * The window anchors on the newest commit rather than on wall-clock now, so a
+ * repo last scanned months ago still renders a populated view.
+ *
+ * @param {{ repo_id?: string, days?: number, from?: string, to?: string }} [opts]
+ */
+export function analytics({ repo_id, days, from, to } = {}) {
+  return get(`/api/analytics${qs({ repo_id, days, from, to })}`)
+}
+
 // Contexts (CRDT-backed saved working sets) --------------------------------------
 
 export function listContexts() { return get('/api/contexts') }

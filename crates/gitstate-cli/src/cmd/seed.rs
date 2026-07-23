@@ -102,6 +102,27 @@ fn days_ago(days: i64) -> String {
         .expect("format rfc3339")
 }
 
+/// A timestamp `days` back from the anchor at an explicit wall-clock time.
+/// Commits need intra-day spread (a heatmap day with six commits should not
+/// stamp all six at 09:00), which `days_ago` alone can't express.
+fn at_day(days: i64, hour: u8, minute: u8) -> String {
+    (anchor() - Duration::days(days.max(0)))
+        .date()
+        .with_hms(hour.min(23), minute.min(59), 0)
+        .expect("valid time of day")
+        .assume_utc()
+        .format(&Rfc3339)
+        .expect("format rfc3339")
+}
+
+/// 0 = Monday … 6 = Sunday for the day `days` back from the anchor.
+fn weekday_of(days: i64) -> u8 {
+    (anchor() - Duration::days(days.max(0)))
+        .date()
+        .weekday()
+        .number_days_from_monday()
+}
+
 /// A stable 64-bit value derived from `key` (SHA-256, first 8 bytes, BE).
 fn det_u64(key: &str) -> u64 {
     let digest = Sha256::digest(key.as_bytes());
@@ -156,11 +177,12 @@ struct DemoContributor {
     agent_kind: Option<&'static str>,
 }
 
-/// Six pseudonymous identities — human-sounding names, alias handles, and
+/// Ten pseudonymous identities — human-sounding names, alias handles, and
 /// `@example.com` addresses (RFC 2606 reserved for documentation/testing;
-/// never a real person). One is an agent identity, matching gitstate's
-/// agent-native contributor model.
-const CONTRIBUTORS: [DemoContributor; 6] = [
+/// never a real person). Two are agent identities, matching gitstate's
+/// agent-native contributor model. A cast this size gives the contributor
+/// leaderboard a believable long tail instead of four near-equal bars.
+const CONTRIBUTORS: [DemoContributor; 10] = [
     DemoContributor {
         name: "Ada Kestrel",
         login: "ada-k",
@@ -197,11 +219,39 @@ const CONTRIBUTORS: [DemoContributor; 6] = [
         agent_kind: None,
     },
     DemoContributor {
+        name: "Mateo Ruiz",
+        login: "mateo-r",
+        email: "mateo.ruiz@example.com",
+        is_agent: false,
+        agent_kind: None,
+    },
+    DemoContributor {
+        name: "Nour Haddad",
+        login: "nour-h",
+        email: "nour.haddad@example.com",
+        is_agent: false,
+        agent_kind: None,
+    },
+    DemoContributor {
+        name: "Wei Zhang",
+        login: "wei-z",
+        email: "wei.zhang@example.com",
+        is_agent: false,
+        agent_kind: None,
+    },
+    DemoContributor {
         name: "Review Agent",
         login: "gitstate-bot",
         email: "agent@example.com",
         is_agent: true,
         agent_kind: Some("ci-agent"),
+    },
+    DemoContributor {
+        name: "Refactor Agent",
+        login: "refactor-bot",
+        email: "refactor-agent@example.com",
+        is_agent: true,
+        agent_kind: Some("coding-agent"),
     },
 ];
 
@@ -214,9 +264,18 @@ const REPO_NAMES: [&str; 5] = [
     "pipeline-runner",
     "docs-site",
 ];
-const PR_COUNTS: [usize; 5] = [7, 6, 5, 6, 4];
-const ISSUE_COUNTS: [usize; 5] = [4, 5, 3, 4, 3];
-const COMMIT_COUNTS: [usize; 5] = [14, 12, 10, 11, 9];
+/// How far back the synthetic history runs. 53 weeks so the "1y" range renders
+/// a full contribution heatmap with no dead leading months, and the trend
+/// charts have enough points to have shape rather than reading as three dots
+/// joined by a line.
+const HISTORY_DAYS: i64 = 371;
+
+/// Per-repo activity multiplier, so the five repos don't all look identical:
+/// `atlas-api` is the busy monorepo-ish core, `docs-site` ticks over quietly.
+const REPO_INTENSITY: [f64; 5] = [1.0, 0.82, 0.66, 0.54, 0.3];
+
+const PR_COUNTS: [usize; 5] = [46, 38, 30, 26, 16];
+const ISSUE_COUNTS: [usize; 5] = [28, 24, 18, 16, 11];
 
 const PR_TITLES: &[&str] = &[
     "Add pagination to the search endpoint",
@@ -231,6 +290,24 @@ const PR_TITLES: &[&str] = &[
     "Document the new plugin API",
     "Add rate limiting to the public API",
     "Rework the cache eviction policy",
+    "Migrate the job queue off the legacy scheduler",
+    "Add structured logging to the request path",
+    "Split the settings store into typed sections",
+    "Backfill missing indexes on the events table",
+    "Replace the hand-rolled CSV parser",
+    "Add an idempotency key to webhook delivery",
+    "Tighten the CSP on the embedded dashboard",
+    "Cut cold-path allocations in the serializer",
+    "Add a health endpoint for the worker pool",
+    "Support cursor-based pagination on exports",
+    "Deduplicate the retry and backoff helpers",
+    "Add golden-file tests for the report renderer",
+    "Move secrets loading behind a provider trait",
+    "Trim the release image by half",
+    "Make the migration runner resumable",
+    "Add OpenTelemetry spans to the ingest path",
+    "Fix timezone drift in the weekly rollup",
+    "Batch the notification fan-out",
 ];
 
 const ISSUE_TITLES: &[&str] = &[
@@ -242,6 +319,18 @@ const ISSUE_TITLES: &[&str] = &[
     "Docs for the plugin API are out of date",
     "Memory grows unbounded under sustained load",
     "Rate limiter under-counts burst traffic",
+    "Export job times out on large accounts",
+    "Weekly rollup is off by one day near DST",
+    "Worker pool deadlocks when the queue drains",
+    "Migration runner cannot resume after a crash",
+    "Report renderer drops the last table row",
+    "Notification fan-out sends duplicates on retry",
+    "Cursor pagination skips items on concurrent writes",
+    "Cold start regressed after the plugin change",
+    "CSV import mangles quoted newlines",
+    "Health endpoint reports ready before warmup",
+    "Structured logs lose the trace id on retry",
+    "Index bloat on the events table slows queries",
 ];
 
 const COMMIT_SUMMARIES: &[&str] = &[
@@ -257,6 +346,24 @@ const COMMIT_SUMMARIES: &[&str] = &[
     "guard against duplicate webhook delivery",
     "cache eviction: switch to LRU",
     "wire up the CI matrix for the new target",
+    "drop the unused legacy scheduler shim",
+    "add structured logging to the request path",
+    "backfill the missing events index",
+    "make the migration runner resumable",
+    "batch notification fan-out by recipient",
+    "add golden-file test for the report renderer",
+    "fix timezone drift in the weekly rollup",
+    "trim the release image layers",
+    "thread the trace id through retries",
+    "handle quoted newlines in the CSV import",
+    "split the settings store into typed sections",
+    "add an idempotency key to webhook delivery",
+    "warm the worker pool before reporting ready",
+    "replace the hand-rolled parser with serde",
+    "tighten the embedded dashboard CSP",
+    "cut allocations in the serializer cold path",
+    "support cursor pagination on exports",
+    "add OpenTelemetry spans to ingest",
 ];
 
 const FILES: &[&str] = &[
@@ -323,8 +430,11 @@ pub fn seed_demo(store: &dyn Store) -> anyhow::Result<SeedSummary> {
     summary.categories = categories.len();
 
     for (ri, repo) in repos.iter().enumerate() {
-        let active: Vec<&DemoContributor> = (0..4)
-            .map(|k| &CONTRIBUTORS[(ri + k) % CONTRIBUTORS.len()])
+        // Six of the ten-person cast touch each repo, offset per repo so the
+        // whole cast appears across the org while each repo keeps its own
+        // recognizable core of owners.
+        let active: Vec<&DemoContributor> = (0..6)
+            .map(|k| &CONTRIBUTORS[(ri * 2 + k) % CONTRIBUTORS.len()])
             .collect();
 
         let (items, counts) = build_work_items(repo, ri);
@@ -366,7 +476,9 @@ fn seed_repos(store: &dyn Store) -> anyhow::Result<Vec<Repo>> {
             forge: Forge::GitHub,
             default_branch: "main".to_string(),
             last_scanned_at: Some(days_ago(0)),
-            added_at: days_ago(180),
+            // Added when the history starts, so "tracked since" lines up with
+            // the first lit cell in the heatmap.
+            added_at: days_ago(HISTORY_DAYS),
         };
         store.upsert_repo(&repo)?;
         repos.push(repo);
@@ -435,12 +547,20 @@ fn build_work_items(repo: &Repo, ri: usize) -> (Vec<WorkItem>, WorkCounts) {
         closed_issues: 0,
     };
 
+    // PRs march backward from the anchor across the whole history window, so
+    // the cycle-time trend and weekly throughput series both span it.
+    let pr_stride = (HISTORY_DAYS - 6) as f64 / pr_count.max(1) as f64;
+
     for i in 0..pr_count {
         let number = i + 1;
-        let state = match i % 4 {
-            0 | 1 => WorkState::Merged,
-            2 => WorkState::Open,
-            _ => WorkState::Draft,
+        let key = format!("{}:pr:{number}", repo.slug);
+        // The newest few PRs are still in flight; everything older has landed.
+        let state = if i < 2 {
+            WorkState::Draft
+        } else if i < 6 {
+            WorkState::Open
+        } else {
+            WorkState::Merged
         };
         match state {
             WorkState::Merged => counts.merged_prs += 1,
@@ -448,16 +568,34 @@ fn build_work_items(repo: &Repo, ri: usize) -> (Vec<WorkItem>, WorkCounts) {
             WorkState::Draft => counts.draft_prs += 1,
             _ => unreachable!(),
         }
-        let created_offset = (60 - (i as i64) * 5).max(2);
-        let created_at = days_ago(created_offset);
-        let merged_at =
-            matches!(state, WorkState::Merged).then(|| days_ago((created_offset - 2).max(0)));
+
+        let created_offset = (2.0 + i as f64 * pr_stride).round() as i64;
+        let created_at = at_day(
+            created_offset,
+            det_range(&format!("{key}:h"), 9, 17) as u8,
+            det_range(&format!("{key}:m"), 0, 59) as u8,
+        );
+
+        // Lead time: mostly hours-to-days, with a long tail of stragglers —
+        // the shape that makes a p50/p90 split worth showing at all.
+        let lead_hours = match det_u64(&format!("{key}:lead")) % 100 {
+            0..=44 => det_range(&format!("{key}:lead-fast"), 2, 30),
+            45..=79 => det_range(&format!("{key}:lead-mid"), 30, 96),
+            80..=94 => det_range(&format!("{key}:lead-slow"), 96, 336),
+            _ => det_range(&format!("{key}:lead-stuck"), 336, 900),
+        } as i64;
+        let merged_at = matches!(state, WorkState::Merged).then(|| {
+            (anchor() - Duration::days(created_offset) + Duration::hours(lead_hours))
+                .format(&Rfc3339)
+                .expect("format rfc3339")
+        });
         let updated_at = merged_at.clone().unwrap_or_else(|| created_at.clone());
-        let author = &CONTRIBUTORS[(ri + i) % CONTRIBUTORS.len()];
+        let author =
+            &CONTRIBUTORS[(det_u64(&format!("{key}:author")) as usize) % CONTRIBUTORS.len()];
         let title = PR_TITLES[(ri * 3 + i) % PR_TITLES.len()];
 
         items.push(WorkItem {
-            id: WorkItemId::from(det_uuid(&format!("{}:pr:{number}", repo.slug))),
+            id: WorkItemId::from(det_uuid(&key)),
             repo_id: repo.id.clone(),
             kind: WorkKind::Pr,
             external_ref: format!("#{number}"),
@@ -465,7 +603,10 @@ fn build_work_items(repo: &Repo, ri: usize) -> (Vec<WorkItem>, WorkCounts) {
             body: format!("Synthetic demo pull request: {title}."),
             state,
             author_login: Some(author.login.to_string()),
-            labels: vec![LABELS[(ri + i) % LABELS.len()].to_string()],
+            labels: vec![
+                LABELS[(det_u64(&format!("{key}:l1")) as usize) % LABELS.len()].to_string(),
+                LABELS[(det_u64(&format!("{key}:l2")) as usize) % LABELS.len()].to_string(),
+            ],
             created_at,
             updated_at,
             merged_at,
@@ -477,9 +618,15 @@ fn build_work_items(repo: &Repo, ri: usize) -> (Vec<WorkItem>, WorkCounts) {
         });
     }
 
+    let issue_stride = (HISTORY_DAYS - 4) as f64 / issue_count.max(1) as f64;
+
     for j in 0..issue_count {
         let number = pr_count + j + 1;
-        let state = if j % 2 == 0 {
+        let key = format!("{}:issue:{number}", repo.slug);
+        // Recent issues are still open; the backlog behind them got closed.
+        let state = if j < 5 {
+            WorkState::Open
+        } else if det_u64(&format!("{key}:state")) % 10 < 8 {
             WorkState::Closed
         } else {
             WorkState::Open
@@ -489,10 +636,12 @@ fn build_work_items(repo: &Repo, ri: usize) -> (Vec<WorkItem>, WorkCounts) {
             WorkState::Open => counts.open_issues += 1,
             _ => unreachable!(),
         }
-        let created_offset = (50 - (j as i64) * 6).max(1);
+        let created_offset = (1.0 + j as f64 * issue_stride).round() as i64;
         let created_at = days_ago(created_offset);
-        let closed_at =
-            matches!(state, WorkState::Closed).then(|| days_ago((created_offset - 3).max(0)));
+        let closed_at = matches!(state, WorkState::Closed).then(|| {
+            let age = det_range(&format!("{key}:age"), 1, 40) as i64;
+            days_ago((created_offset - age).max(0))
+        });
         let updated_at = closed_at.clone().unwrap_or_else(|| created_at.clone());
         let author = &CONTRIBUTORS[(ri + j + 1) % CONTRIBUTORS.len()];
         let title = ISSUE_TITLES[(ri * 2 + j) % ISSUE_TITLES.len()];
@@ -518,27 +667,94 @@ fn build_work_items(repo: &Repo, ri: usize) -> (Vec<WorkItem>, WorkCounts) {
     (items, counts)
 }
 
+/// How many commits a repo lands on the day `days_back` from the anchor.
+///
+/// Deterministic but shaped like a real team's calendar so the contribution
+/// heatmap has texture rather than uniform noise: weekdays carry the work,
+/// weekends are mostly silent with the occasional push, a long tail of quiet
+/// days sits next to occasional bursts, and the whole window ramps up toward
+/// the present (the team grew). `intensity` scales the repo overall.
+fn commits_on_day(repo_slug: &str, days_back: i64, intensity: f64) -> u32 {
+    let weekday = weekday_of(days_back);
+    let roll = det_u64(&format!("{repo_slug}:day:{days_back}")) % 100;
+
+    if weekday >= 5 {
+        // Weekend: usually nothing, sometimes a small push.
+        let base = match roll {
+            0..=73 => 0,
+            74..=93 => 1,
+            _ => 2,
+        };
+        return (base as f64 * intensity).round() as u32;
+    }
+
+    // `days_back` counts backward, so invert it into a 0..1 recency ramp.
+    let recency = (HISTORY_DAYS - days_back).max(0) as f64 / HISTORY_DAYS as f64;
+    let ramp = 0.5 + 0.5 * recency;
+    let base = match roll {
+        0..=10 => 0, // even weekdays go quiet sometimes
+        11..=39 => 2,
+        40..=68 => 4,
+        69..=86 => 6,
+        87..=96 => 9,
+        _ => 14, // a release-day burst
+    };
+    (base as f64 * ramp * intensity).round() as u32
+}
+
+/// Walk every day in the history window and emit that day's commits. Authors
+/// rotate deterministically through the repo's active cast, weighted so the
+/// leaderboard has a clear top few and a believable tail.
 fn build_commits(repo: &Repo, ri: usize, active: &[&DemoContributor]) -> Vec<Commit> {
-    let count = COMMIT_COUNTS[ri];
-    (0..count)
-        .map(|k| {
-            let author = active[k % active.len()];
-            let key = format!("{}:commit:{k}", repo.slug);
-            Commit {
+    let intensity = REPO_INTENSITY[ri];
+    let mut out = Vec::new();
+
+    for days_back in (0..HISTORY_DAYS).rev() {
+        let n = commits_on_day(&repo.slug, days_back, intensity);
+        for k in 0..n {
+            let key = format!("{}:commit:{days_back}:{k}", repo.slug);
+
+            // Weighted author pick: squaring a uniform roll biases toward the
+            // front of the cast, which is what a real repo's blame looks like.
+            let roll = det_u64(&format!("{key}:author")) % 1000;
+            let frac = roll as f64 / 1000.0;
+            let idx = ((frac * frac) * active.len() as f64) as usize;
+            let author = active[idx.min(active.len() - 1)];
+
+            // Spread across a working day, with a little evening tail.
+            let hour = det_range(&format!("{key}:hour"), 8, 20) as u8;
+            let minute = det_range(&format!("{key}:min"), 0, 59) as u8;
+
+            // Most commits are small; a few are large. A flat 5..240 range made
+            // every commit look like a rewrite.
+            let size_roll = det_u64(&format!("{key}:size")) % 100;
+            let (lo, hi) = match size_roll {
+                0..=59 => (1, 40),
+                60..=87 => (40, 180),
+                88..=97 => (180, 600),
+                _ => (600, 2400),
+            };
+            let additions = det_range(&format!("{key}:add"), lo, hi) as u32;
+            let deletions = det_range(&format!("{key}:del"), 0, (hi / 2).max(1)) as u32;
+
+            out.push(Commit {
                 sha: det_hex(&key, 40),
                 repo_id: repo.id.clone(),
                 author_email: author.email.to_string(),
                 author_name: author.name.to_string(),
-                committed_at: days_ago((70 - (k as i64) * 4).max(1)),
-                additions: det_range(&format!("{key}:add"), 5, 240) as u32,
-                deletions: det_range(&format!("{key}:del"), 0, 120) as u32,
-                files_changed: det_range(&format!("{key}:files"), 1, 9) as u32,
-                is_merge: k % 6 == 5,
-                is_test_touch: k % 3 == 0,
-                summary: COMMIT_SUMMARIES[(ri + k) % COMMIT_SUMMARIES.len()].to_string(),
-            }
-        })
-        .collect()
+                committed_at: at_day(days_back, hour, minute),
+                additions,
+                deletions,
+                files_changed: det_range(&format!("{key}:files"), 1, 14) as u32,
+                is_merge: det_u64(&format!("{key}:merge")) % 9 == 0,
+                is_test_touch: det_u64(&format!("{key}:test")) % 100 < 38,
+                summary: COMMIT_SUMMARIES
+                    [(det_u64(&format!("{key}:msg")) as usize) % COMMIT_SUMMARIES.len()]
+                .to_string(),
+            });
+        }
+    }
+    out
 }
 
 fn build_project_state(repo: &Repo, counts: &WorkCounts) -> ProjectState {
@@ -628,14 +844,20 @@ fn build_classifications_and_effort(
     items: &[WorkItem],
     ri: usize,
 ) -> (Vec<Classification>, Vec<EffortEstimate>) {
-    // Classify/estimate a handful of items per repo — enough to populate the
-    // classify/effort surfaces without pretending every item was judged.
-    let sample: Vec<&WorkItem> = items.iter().take(3).collect();
+    // Classify/estimate most items, leaving a visible unclassified remainder so
+    // the Classify screen still has something to act on.
+    let sample: Vec<&WorkItem> = items
+        .iter()
+        .filter(|w| det_u64(&format!("{}:{}:judged", w.repo_id.0, w.external_ref)) % 10 < 8)
+        .collect();
     let mut classifications = Vec::with_capacity(sample.len());
     let mut effort = Vec::with_capacity(sample.len());
     for (idx, item) in sample.iter().enumerate() {
         let key = format!("{}:{}", item.repo_id.0, item.external_ref);
-        let category_key = CATEGORY_ROTATION[(ri * 3 + idx) % CATEGORY_ROTATION.len()];
+        // Spread across the taxonomy by content hash rather than position, so
+        // the category breakdown isn't a perfectly even round-robin.
+        let category_key = CATEGORY_ROTATION
+            [(det_u64(&format!("{key}:cat")) as usize + ri + idx) % CATEGORY_ROTATION.len()];
         classifications.push(Classification {
             item_id: item.id.clone(),
             category_key: category_key.to_string(),
@@ -770,5 +992,130 @@ mod tests {
             CONTRIBUTORS.len()
         );
         assert_eq!(store.list_contexts().expect("contexts").len(), 2);
+    }
+
+    /// The demo dataset exists to make the visualizations look like a real
+    /// team's ledger. These assertions pin the properties the heatmap, trend
+    /// charts and leaderboard actually depend on — thin data is the exact
+    /// regression this guards against.
+    #[test]
+    fn demo_dataset_is_dense_enough_to_visualize() {
+        use gitstate_core::analytics;
+
+        let store = SqliteStore::open_in_memory().expect("open in-memory store");
+        seed_demo(&store).expect("seed demo");
+
+        let commits = store.list_commits(None).expect("commits");
+        let items = store.list_all_work_items().expect("work items");
+        let known = store.list_contributors().expect("contributors");
+
+        assert!(
+            commits.len() > 1_000,
+            "a heatmap needs volume; got {} commits",
+            commits.len()
+        );
+
+        let (from, to) = analytics::range_ending(DEMO_ANCHOR, HISTORY_DAYS as u32).unwrap();
+        let a = analytics::compute(&commits, &items, &known, 5, &from, &to);
+
+        // Dense grid, and genuinely busy — not a handful of lit cells.
+        assert_eq!(a.heatmap.len(), HISTORY_DAYS as usize);
+        assert!(
+            a.totals.active_days > 150,
+            "heatmap should be mostly lit; {} active days",
+            a.totals.active_days
+        );
+
+        // Weekends visibly quieter than weekdays — the texture that makes a
+        // contribution heatmap read as real.
+        let weekday_commits: u32 = a
+            .heatmap
+            .iter()
+            .filter(|d| d.weekday < 5)
+            .map(|d| d.commits)
+            .sum();
+        let weekend_commits: u32 = a
+            .heatmap
+            .iter()
+            .filter(|d| d.weekday >= 5)
+            .map(|d| d.commits)
+            .sum();
+        assert!(
+            weekday_commits > weekend_commits * 5,
+            "weekday {weekday_commits} vs weekend {weekend_commits}"
+        );
+
+        // A leaderboard with a real distribution, not four equal bars.
+        assert!(
+            a.contributors.len() >= 8,
+            "got {} contributors",
+            a.contributors.len()
+        );
+        let top = a.contributors[0].commits;
+        let last = a.contributors[a.contributors.len() - 1].commits;
+        assert!(
+            top > last * 2,
+            "leaderboard should have a spread: {top} vs {last}"
+        );
+
+        // Trend charts need enough points to have shape.
+        assert!(
+            a.cycle_time.len() > 100,
+            "cycle-time trend has {} points",
+            a.cycle_time.len()
+        );
+        assert!(
+            a.weekly.len() >= 40,
+            "weekly series has {} points",
+            a.weekly.len()
+        );
+        assert!(
+            a.throughput.len() >= 20,
+            "throughput series has {} points",
+            a.throughput.len()
+        );
+
+        // p90 above p50 — the split is only worth rendering if it's real.
+        let p50 = a.totals.cycle_p50_hours.expect("p50");
+        let p90 = a.totals.cycle_p90_hours.expect("p90");
+        assert!(p90 > p50, "p90 {p90} should exceed p50 {p50}");
+
+        // Categorical breakdowns have several slices to colour.
+        assert!(a.labels.len() >= 5, "labels: {:?}", a.labels);
+        assert!(a.totals.additions > 0 && a.totals.deletions > 0);
+    }
+
+    #[test]
+    fn commit_generation_is_deterministic_across_runs() {
+        let a = SqliteStore::open_in_memory().unwrap();
+        let b = SqliteStore::open_in_memory().unwrap();
+        seed_demo(&a).unwrap();
+        seed_demo(&b).unwrap();
+
+        let ca = a.list_commits(None).unwrap();
+        let cb = b.list_commits(None).unwrap();
+        assert_eq!(ca.len(), cb.len());
+        // Same shas, same timestamps, same authors — screenshots stay stable.
+        for (x, y) in ca.iter().zip(cb.iter()) {
+            assert_eq!(x.sha, y.sha);
+            assert_eq!(x.committed_at, y.committed_at);
+            assert_eq!(x.author_email, y.author_email);
+            assert_eq!(x.additions, y.additions);
+        }
+    }
+
+    #[test]
+    fn weekends_are_quiet_but_not_dead() {
+        // The shaping function is the thing the heatmap's texture rests on.
+        let weekday_total: u32 = (0..HISTORY_DAYS)
+            .filter(|d| weekday_of(*d) < 5)
+            .map(|d| commits_on_day("demo-org/atlas-api", d, 1.0))
+            .sum();
+        let weekend_total: u32 = (0..HISTORY_DAYS)
+            .filter(|d| weekday_of(*d) >= 5)
+            .map(|d| commits_on_day("demo-org/atlas-api", d, 1.0))
+            .sum();
+        assert!(weekend_total > 0, "an occasional weekend push is expected");
+        assert!(weekday_total > weekend_total * 5);
     }
 }

@@ -5,6 +5,7 @@
 use std::path::Path;
 
 use gitstate_classify::Personalizer;
+use gitstate_core::analytics as analytics_lib;
 use gitstate_core::{
     now_rfc3339, now_wall_ms, Category, CategorySource, Classification, Context, ContextId,
     ContextPrRef, Contribution, Contributor, EffortEstimate, Error, Forge, Hlc, PeerId,
@@ -281,6 +282,61 @@ pub fn work_items(
 
 pub fn contributors(state: &AppState) -> Result<Vec<Contributor>> {
     state.store.list_contributors()
+}
+
+// ──────────────────────────── analytics ────────────────────────────
+
+/// The widest range the UI can ask for. Anything beyond this is clamped so a
+/// bogus `?days=999999` can't make the daemon materialize a million-day grid.
+pub const MAX_ANALYTICS_DAYS: u32 = 3653; // ~10 years
+
+/// Roll the cached commits + work items up into the visualization payload.
+///
+/// The window ends at the most recent commit rather than at wall-clock "now":
+/// a demo database (or a repo last scanned months ago) would otherwise render
+/// an entirely empty heatmap for today's trailing window.
+pub fn analytics(
+    state: &AppState,
+    repo_id: Option<&RepoId>,
+    days: Option<u32>,
+    from: Option<&str>,
+    to: Option<&str>,
+) -> Result<gitstate_core::Analytics> {
+    let commits = state.store.list_commits(repo_id)?;
+    let items = match repo_id {
+        Some(r) => state.store.list_work_items(r)?,
+        None => state.store.list_all_work_items()?,
+    };
+    let known = state.store.list_contributors()?;
+    let repos = match repo_id {
+        Some(_) => 1,
+        None => state.store.list_repos()?.len() as u32,
+    };
+
+    // Anchor: explicit `to`, else the newest commit, else today.
+    let anchor = to
+        .and_then(|t| analytics_lib::day_key(t).map(str::to_string))
+        .or_else(|| {
+            commits
+                .iter()
+                .filter_map(|c| analytics_lib::day_key(&c.committed_at))
+                .max()
+                .map(str::to_string)
+        })
+        .unwrap_or_else(|| now_rfc3339()[..10].to_string());
+
+    let (start, end) = match from.and_then(|f| analytics_lib::day_key(f).map(str::to_string)) {
+        Some(f) => (f, anchor),
+        None => {
+            let window = days.unwrap_or(180).clamp(1, MAX_ANALYTICS_DAYS);
+            analytics_lib::range_ending(&anchor, window)
+                .ok_or_else(|| Error::invalid(format!("bad analytics anchor date: {anchor}")))?
+        }
+    };
+
+    Ok(analytics_lib::compute(
+        &commits, &items, &known, repos, &start, &end,
+    ))
 }
 
 // ───────────────────────── classify + effort ─────────────────────────

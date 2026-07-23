@@ -84,7 +84,7 @@ export function AppShell() {
               navOpen ? 'translate-x-0' : '-translate-x-full',
             ].join(' ')}
           >
-            <Sidebar onNavigate={nav.closeNav} />
+            <Sidebar onNavigate={nav.closeNav} navLabel="Primary (mobile)" />
           </div>
         </div>
 

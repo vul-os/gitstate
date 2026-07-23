@@ -1,349 +1,202 @@
 # gitstate Design System — "The Ledger"
 
-Dark-first, technical-editorial. Git commit graphs as motif. Hairline borders, grain overlay, teal→indigo gradient mesh.
+Dark-first, technical-editorial. Hairline borders, tabular numerals, a mono
+voice for metadata, and a teal→indigo accent pair. Light mode is a warm paper
+base, not an inverted dark theme.
+
+Everything here is what the app actually ships. The single source of truth for
+values is `src/index.css`; this document explains the intent behind them.
 
 ---
 
 ## Fonts
 
-| Role    | Family                        | Variable | Import path |
-|---------|-------------------------------|----------|-------------|
-| Display | Bricolage Grotesque Variable  | Yes (wght axis) | `@fontsource-variable/bricolage-grotesque` |
-| Body    | Hanken Grotesk Variable       | Yes (wght axis) | `@fontsource-variable/hanken-grotesk` |
-| Mono    | JetBrains Mono                | No (400/500/700) | `@fontsource/jetbrains-mono` |
+| Role    | Family                       | Variable         | Import path                                |
+| ------- | ---------------------------- | ---------------- | ------------------------------------------ |
+| Display | Bricolage Grotesque Variable | Yes (wght axis)  | `@fontsource-variable/bricolage-grotesque` |
+| Body    | Hanken Grotesk Variable      | Yes (wght axis)  | `@fontsource-variable/hanken-grotesk`      |
+| Mono    | JetBrains Mono               | No (400/500/700) | `@fontsource/jetbrains-mono`               |
 
-### CSS variables
-```css
---font-display: 'Bricolage Grotesque Variable', system-ui, sans-serif;
---font-body:    'Hanken Grotesk Variable', system-ui, sans-serif;
---font-mono:    'JetBrains Mono', 'Fira Code', ui-monospace, monospace;
-```
-
-### Tailwind utilities (from index.css `@layer utilities`)
 ```jsx
 <h1 className="font-display text-4xl font-semibold">Heading</h1>
 <p className="font-body">Body text</p>
-<code className="font-mono">monospace label</code>
+<code className="font-mono">metadata label</code>
 ```
+
+**Mono carries metadata, not code.** Timestamps, counts, axis ticks, stat-card
+labels and the `local · on your machine` badge are all mono — it's the voice of
+"this came from the ledger", not decoration.
+
+**Numbers are `tabular-nums`.** Any figure that updates in place (stat values,
+table columns, axis labels) must not reflow as digits change.
 
 ---
 
-## Color Tokens
+## Color tokens
 
-All tokens live as CSS custom properties on `:root` (dark) and `.light` (light).
+Semantic aliases on `:root` (dark, the default) and `.light`. Components use
+these — never a raw hex, and never a `--chart-*` token for text.
 
-### Semantic (use these in components)
+### Surfaces and text
 
-| Token            | Dark value  | Light value | Purpose |
-|------------------|-------------|-------------|---------|
-| `--bg`           | `#0B1120`   | `#f8fafc`   | Page background |
-| `--bg-surface`   | `#111827`   | `#ffffff`   | Card / panel surface |
-| `--bg-surface2`  | `#1a2336`   | `#f1f5f9`   | Elevated surface / hover state |
-| `--bg-surface3`  | `#1f2d44`   | `#e8edf5`   | Inputs, badges, toggles |
-| `--border`       | `#1e2d45`   | `#e2e8f0`   | Default hairline border |
-| `--border2`      | `#243352`   | `#cbd5e1`   | Stronger border / hover |
-| `--text`         | `#e2e8f0`   | `#0f172a`   | Primary text |
-| `--text-dim`     | `#cbd5e1`   | `#1e293b`   | Secondary text |
-| `--text-muted`   | `#94a3b8`   | `#475569`   | Muted / metadata |
-| `--text-faint`   | `#64748b`   | `#94a3b8`   | Faint / disabled |
-| `--brand-teal`   | `#2DD4BF`   | `#2DD4BF`   | Primary accent |
-| `--brand-indigo` | `#6366F1`   | `#6366F1`   | Secondary accent |
+| Token           | Dark      | Light     | Purpose                         |
+| --------------- | --------- | --------- | ------------------------------- |
+| `--bg`          | `#0B1120` | `#f4f2ed` | Page background (warm on light) |
+| `--bg-surface`  | `#101827` | `#ffffff` | Card / panel surface            |
+| `--bg-surface2` | `#172032` | `#f0ede6` | Recessed well / hover state     |
+| `--bg-surface3` | `#1d2b41` | `#e8e4db` | Deepest inset (pills, tracks)   |
+| `--border`      | `#1c2a40` | `#e3ddd2` | Hairline divider                |
+| `--border2`     | `#22334e` | `#cfc8ba` | Stronger edge / focus border    |
+| `--text`        | `#e2e8f0` | `#0f172a` | Primary text                    |
+| `--text-dim`    | `#cbd5e1` | `#283548` | Secondary text                  |
+| `--text-muted`  | `#94a3b8` | `#51606f` | Muted / metadata                |
+| `--text-faint`  | `#8593a8` | `#6b7787` | Small meta — still AA (~4.5:1)  |
 
-### Tailwind @theme tokens (use in Tailwind classes)
+`--text-faint` is deliberately not as faint as it sounds: it sits at ~4.5:1 on
+every surface so the small mono metadata it carries stays AA-legible.
 
-```
-bg-gs-teal      #2DD4BF
-bg-gs-indigo    #6366F1
-bg-gs-base      #0B1120
-bg-gs-surface   #111827
-bg-gs-surface-2 #1a2336
-bg-gs-border    #1e2d45
-bg-gs-muted     #64748b
-bg-gs-text      #e2e8f0
-```
+### Brand
 
-### Gradient text (brand teal → slate → indigo)
-```jsx
-import { GradientText } from './components/ui'
-<GradientText as="h1" className="text-5xl font-display">git is truth</GradientText>
+| Token            | Value     |
+| ---------------- | --------- |
+| `--brand-teal`   | `#2DD4BF` |
+| `--brand-indigo` | `#6366F1` |
 
-// Or plain CSS utility:
-<span className="gradient-text">text</span>
-```
+### Status — reserved
+
+`--ok` `--warn` `--bad` `--info`. These are **reserved for state** and never
+reused as a chart series colour. Dark: `#34D399` `#FBBF24` `#F87171` `#38BDF8`.
+Light (deepened for paper): `#047857` `#B45309` `#DC2626` `#0284C7`.
+
+### Radii
+
+`--radius-card` 12px · `--radius-btn` 8px · `--radius-badge` 6px
 
 ---
 
-## Radii
+## Data visualization
 
-| Token             | Value  |
-|-------------------|--------|
-| `--radius-card`   | 12px   |
-| `--radius-badge`  | 6px    |
-| `--radius-btn`    | 8px    |
+The rules the charts are built on. Breaking one is a bug, not a style choice.
+
+### Categorical — identity
+
+`--chart-1` … `--chart-6`, assigned **in fixed order, never cycled**. Colour
+follows the entity, so a filter that changes the series count must not repaint
+the survivors.
+
+| Slot | Dark      | Light     |
+| ---- | --------- | --------- |
+| 1    | `#2DD4BF` | `#0D9488` |
+| 2    | `#6366F1` | `#4F46E5` |
+| 3    | `#F59E0B` | `#D97706` |
+| 4    | `#FB7185` | `#E11D5E` |
+| 5    | `#A78BFA` | `#7C3AED` |
+| 6    | `#22D3EE` | `#0891B2` |
+
+Light mode is **selected**, not an automatic flip — each slot is deepened so it
+holds against the warm off-white without vibrating. Both sets pass adjacent-pair
+CVD separation, the normal-vision floor, and 3:1 contrast against their surface.
+
+### Sequential — magnitude
+
+`--heat-0` … `--heat-5`: **one hue, monotonic in lightness**, used only by the
+contribution heatmap. Never the categorical palette — the cells mean "more vs
+less", not "which". `--heat-0` is the empty-cell well rather than a ramp step,
+so "no commits" reads as absence instead of as the lowest bucket.
+
+Direction flips per theme: brighter = more on dark, darker = more on light.
+
+### Chart chrome
+
+`--chart-grid` (recessive horizontal gridlines only — vertical lines compete
+with the data), `--chart-axis`, `--chart-dot-ring` (the surface-coloured ring
+that separates an overlapping marker from the line beneath it).
+
+### Non-negotiables
+
+- **One y-axis. Never a dual-axis chart.** Two measures of different scale get
+  two charts. Multi-series input therefore assumes a shared unit.
+- **≥ 2 series ⇒ a legend is always present**, so identity is never colour-alone.
+  A single series needs none — the panel title names it.
+- **Text wears text tokens**, never the series colour. A coloured swatch beside
+  a label carries identity; the label itself stays in ink.
+- **Thin marks, recessive axes**, and no number printed on every point.
+- Charts are `role="img"` with a real accessible name, and the heatmap ships a
+  live-region text readout plus a less→more legend.
+
+### Test hooks
+
+Icon `<svg>`s also carry `role="img"`, so charts expose explicit attributes:
+
+| Hook                                | On                            |
+| ----------------------------------- | ----------------------------- |
+| `data-chart="trend"` / `="heatmap"` | the chart `<svg>`             |
+| `data-series` / `data-points`       | TrendChart `<svg>`            |
+| `data-trend-line="<key>"`           | each TrendChart line `<path>` |
+| `data-days`                         | Heatmap `<svg>`               |
+| `data-day` / `data-level`           | each Heatmap cell `<rect>`    |
+| `data-stat` / `data-stat-value`     | StatCard                      |
 
 ---
 
-## Theme System
+## Theme system
 
-### Provider
-
-Wrap the app root in `ThemeProvider` (already done in `main.jsx`):
-
-```jsx
-import { ThemeProvider } from './lib/theme.jsx'
-<ThemeProvider><App /></ThemeProvider>
-```
-
-### Hook
+Dark is the default; a first visit with no stored choice follows
+`prefers-color-scheme`. An explicit pick persists to `localStorage['gs-theme']`
+and wins from then on. The resolved theme applies a `.light` class to `<html>`.
 
 ```jsx
 import { useTheme } from './lib/theme.jsx'
-
-function MyComponent() {
-  const { theme, setTheme, resolved } = useTheme()
-  // theme:    'dark' | 'light' | 'system'  — persisted choice
-  // resolved: 'dark' | 'light'             — what's currently rendered
-  // setTheme('light')  — persists to localStorage
-}
+const { theme, resolved, setTheme, toggle } = useTheme()
+// theme:    'system' | 'dark' | 'light'  — the persisted choice
+// resolved: 'dark' | 'light'             — what's actually rendered
 ```
 
-### ThemeToggle component
+`<ThemeToggle />` (in the TopBar) is the user-facing 2-state light↔dark control.
 
-A compact dark/light/system selector:
-
-```jsx
-import { ThemeToggle } from './components/ThemeToggle.jsx'
-<ThemeToggle />            // renders in TopBar
-<ThemeToggle className="ml-4" />
-```
+Dark-mode ambience — grain, gradient mesh, glow — is **muted or disabled** under
+`.light`, where it would wash the page out and crush contrast.
 
 ---
 
-## Currency System
+## UI primitives (`src/components/ui/`)
 
-### Provider
+Imported by direct path (`./components/ui/Card.jsx`), not through a barrel.
 
-Already wired in `main.jsx`:
+| Component          | Purpose                                                                |
+| ------------------ | ---------------------------------------------------------------------- |
+| `Button`           | `primary` (gradient) / `outline` / `ghost` / `danger`; sizes `xs`–`xl`  |
+| `Card`             | Themed surface; `padding` `none`–`xl`, plus `glow` and `hoverable`      |
+| `Badge` / `Pill`   | Compact status chips; `Pill` is the fully-rounded variant               |
+| `StatCard`         | Headline tile: accent edge, icon chip, big tabular value, delta, spark  |
+| `Sparkline`        | Dependency-free inline SVG trend, sized for a StatCard                  |
+| `TrendChart`       | Responsive line/area chart with crosshair tooltip and optional legend   |
+| `Heatmap`          | Contribution calendar on the sequential ramp; fits its container width  |
+| `BarList`          | Ranked, directly-labelled horizontal bars                               |
+| `SegmentedControl` | Inline range filter, rendered as a real `radiogroup`                    |
 
-```jsx
-import { CurrencyProvider } from './lib/currency.jsx'
-<CurrencyProvider><App /></CurrencyProvider>
-```
+### Page chrome (`src/components/common.jsx`)
 
-### Hook
+`PageHeader`, `Spinner`, `ErrorState` (understands the `daemon_unreachable`
+code and tells you to start the daemon), `EmptyState`, `MetricPill`.
 
-```jsx
-import { useCurrency } from './lib/currency.jsx'
+### Shell
 
-function PriceTag({ usdAmount }) {
-  const { format, currency } = useCurrency()
-  return <span>{format(usdAmount)}</span>  // "$9.99" | "R186.93" | "£7.86" | "€9.17"
-}
-```
+`AppShell` (sidebar + top bar + routed outlet, with a skip link and an
+off-canvas mobile drawer), `Sidebar`, `TopBar`, `ThemeToggle`, `Logo`.
 
-Supported currencies (static display rates, real charge rate from backend):
-
-| Code | Flag | Rate (from USD) |
-|------|------|-----------------|
-| USD  | 🇺🇸  | 1.0             |
-| ZAR  | 🇿🇦  | 18.70           |
-| GBP  | 🇬🇧  | 0.786           |
-| EUR  | 🇪🇺  | 0.917           |
-
-### CurrencySelector component
-
-Flag + code dropdown:
-
-```jsx
-import { CurrencySelector } from './components/CurrencySelector.jsx'
-<CurrencySelector />
-<CurrencySelector className="ml-auto" />
-```
+The desktop rail and the mobile drawer are **both always in the DOM**, so they
+carry distinct labels — `Primary` and `Primary (mobile)` — rather than two
+navigation landmarks with the same name.
 
 ---
 
-## UI Primitives
+## Accessibility baseline
 
-All importable from `./components/ui/index.js`:
-
-```js
-import { Button, Card, Badge, Pill, GradientText, Section, Container, Glow, GitGraph, Stat, Kbd, CodeBlock, DiffBlock } from './components/ui'
-```
-
-### Button
-
-```jsx
-<Button variant="primary" size="md">Deploy</Button>
-<Button variant="outline">Cancel</Button>
-<Button variant="ghost" size="sm">Edit</Button>
-<Button variant="danger">Delete</Button>
-
-// Sizes: xs | sm | md | lg | xl
-// Variants: primary (teal→indigo gradient) | outline | ghost | danger
-// Props: leftIcon, rightIcon, disabled, onClick, ...button
-```
-
-### Card
-
-```jsx
-<Card>Default surface card</Card>
-<Card padding="lg" glow>With glow + larger padding</Card>
-<Card hoverable>Lifts on hover</Card>
-<Card padding="none">Custom inner layout</Card>
-// padding: none | sm | md | lg | xl
-```
-
-### Badge / Pill
-
-```jsx
-<Badge>Default</Badge>
-<Badge color="teal">Synced</Badge>
-<Badge color="indigo">Beta</Badge>
-<Badge color="add">+42 lines</Badge>
-<Badge color="del">−3 files</Badge>
-<Pill color="green">Active</Pill>
-// colors: default | teal | indigo | green | red | yellow | blue | add | del
-```
-
-### GradientText
-
-```jsx
-<GradientText as="h1" className="text-5xl font-display font-semibold">
-  The git ledger
-</GradientText>
-```
-
-### Section + Container
-
-```jsx
-<Section py="xl">
-  <Container size="lg">
-    <h2>Content</h2>
-  </Container>
-</Section>
-// Section py: sm | md | lg | xl | 2xl
-// Container size: sm | md | lg | xl | full
-```
-
-### Glow
-
-Decorative mesh-gradient radial blob — position absolutely:
-
-```jsx
-<div className="relative overflow-hidden">
-  <Glow variant="teal" className="top-0 left-1/4" />
-  <Glow variant="indigo" size={400} className="bottom-0 right-0" />
-  <Content />
-</div>
-// variant: teal | indigo | brand
-// size: number (px, default 600)
-```
-
-### GitGraph
-
-Decorative SVG commit graph:
-
-```jsx
-<GitGraph className="absolute right-0 top-0 opacity-20" />
-<GitGraph variant="compact" width={180} opacity={0.3} />
-```
-
-### Stat
-
-```jsx
-<Stat label="Cycle time" value="4.2d" delta="+0.3d" deltaDir="up" />
-<Stat label="Open PRs" value={42} sublabel="across 3 repos" />
-// deltaDir: 'up' (green) | 'down' (red) | 'neutral' (muted)
-```
-
-### Kbd
-
-```jsx
-<Kbd>⌘</Kbd><Kbd>K</Kbd>
-```
-
-### CodeBlock / DiffBlock
-
-```jsx
-<CodeBlock lang="go" filename="internal/sync/worker.go">
-  {codeString}
-</CodeBlock>
-
-<DiffBlock filename="web/src/App.jsx">
-{`-import { OldComponent } from './old'
-+import { NewComponent } from './new'
- export default function App() {`}
-</DiffBlock>
-```
-
----
-
-## Markdown Renderer
-
-```jsx
-import { Markdown } from './components/Markdown.jsx'
-
-<Markdown>{markdownContent}</Markdown>
-<Markdown className="prose-sm">{shortContent}</Markdown>
-```
-
-Styles: headings (Bricolage Grotesque), body (Hanken Grotesk), code blocks (JetBrains Mono), links (teal underline), blockquotes (teal left border), tables (monospace headers), lists (teal bullet dots). All theme-aware.
-
----
-
-## Motion / Reveal
-
-```jsx
-import { Reveal, RevealList } from './components/Reveal.jsx'
-
-// Single element fade-up on mount:
-<Reveal delay={0.1}>
-  <HeroSection />
-</Reveal>
-
-// In-view trigger (fires once when scrolled into view):
-<Reveal inView delay={0}>
-  <FeatureCard />
-</Reveal>
-
-// Staggered list — each child gets a sequential delay:
-<RevealList className="grid grid-cols-3 gap-4" staggerDelay={0.07} inView>
-  <Card>Feature 1</Card>
-  <Card>Feature 2</Card>
-  <Card>Feature 3</Card>
-</RevealList>
-```
-
----
-
-## Grain / Noise Overlay
-
-```jsx
-// Add grain texture to any element:
-<div className="grain relative">
-  <Content />
-</div>
-// The ::after pseudo-element applies a subtle SVG noise filter (opacity ~4%)
-// Works best on solid/gradient backgrounds — adds print-like texture
-```
-
----
-
-## Shell Structure
-
-```
-AppShell (AppShell.jsx)
-├── Sidebar (Sidebar.jsx)       — sticky left nav, 216px, brand-themed
-│   ├── LogoMark + wordmark
-│   ├── OrgSwitcher
-│   ├── NavLinks (active = teal)
-│   └── User footer + sign out
-└── Main column
-    ├── TopBar (TopBar.jsx)     — sticky, h-14, backdrop-blur
-    │   ├── Section title (Breadcrumb)
-    │   ├── "synced" live pill
-    │   └── ThemeToggle
-    └── <main> p-8 — routed content via <Outlet />
-```
-
-All surfaces use `var(--bg-*)` / `var(--border)` tokens so they are theme-aware automatically.
+- Skip link is the first tab stop and moves focus into `<main>`.
+- Focus-visible rings on every interactive element (`--brand-teal`).
+- Filters are real `radiogroup`s; the mobile drawer traps focus and closes on
+  Escape or scrim click.
+- Charts carry accessible names; the heatmap has a text readout so its content
+  is not colour-only.
+- Contrast: body and small meta text clear AA on every surface in both themes.

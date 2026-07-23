@@ -65,6 +65,11 @@ pub trait Store: Send + Sync {
     fn get_contributions(&self, repo: &RepoId, from: &str, to: &str) -> Result<Vec<Contribution>>;
     fn save_work_items(&self, items: &[WorkItem]) -> Result<()>;
     fn list_work_items(&self, repo: &RepoId) -> Result<Vec<WorkItem>>;
+    /// Cached commits, oldest first. `repo: None` spans every repo — the
+    /// analytics rollups read across the whole local ledger.
+    fn list_commits(&self, repo: Option<&RepoId>) -> Result<Vec<Commit>>;
+    /// Every work item across every repo, newest first.
+    fn list_all_work_items(&self) -> Result<Vec<WorkItem>>;
     fn save_effort(&self, rows: &[EffortEstimate]) -> Result<()>;
     fn save_classifications(&self, rows: &[Classification]) -> Result<()>;
     fn get_classification(&self, item: &WorkItemId) -> Result<Option<Classification>>;

@@ -9,6 +9,7 @@
 //! signed [`taxonomy::Taxonomy`]. Everything else (git2 walk, gh/glab shell,
 //! rusqlite store, axum daemon, CLI, Tauri shell) is a thin adapter over these.
 
+pub mod analytics;
 pub mod derive;
 pub mod domain;
 pub mod error;
@@ -17,6 +18,8 @@ pub mod taxonomy;
 pub mod traits;
 
 pub use error::{Error, Result};
+
+pub use analytics::Analytics;
 
 // The domain vocabulary is re-exported flat so adapter crates can
 // `use gitstate_core::{Repo, WorkItem, ...}`.

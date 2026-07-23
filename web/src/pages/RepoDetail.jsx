@@ -1,15 +1,19 @@
 import { useMemo } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { RefreshCw, ArrowLeft, Sparkles, Scale } from 'lucide-react'
+import { RefreshCw, ArrowLeft, Sparkles, Scale, GitCommitHorizontal, Users, Timer, Plus } from 'lucide-react'
 import { Card } from '../components/ui/Card.jsx'
 import { Button } from '../components/ui/Button.jsx'
 import { Badge } from '../components/ui/Badge.jsx'
+import { StatCard } from '../components/ui/StatCard.jsx'
+import { Heatmap } from '../components/ui/Heatmap.jsx'
+import { TrendChart } from '../components/ui/TrendChart.jsx'
 import { PageHeader, Spinner, ErrorState, EmptyState, MetricPill } from '../components/common.jsx'
 import { useAsync, useAction } from '../lib/hooks.js'
 import {
   listRepos, projectState, contributions, workItems, contributors,
-  scanRepo, classify, effort,
+  scanRepo, classify, effort, analytics,
 } from '../lib/api.js'
+import { commitSeries, cycleSeries, sparkOf, formatHours, compact } from '../lib/analyticsView.js'
 
 const DIMS = [
   ['shipped', 'Shipped'],
@@ -21,15 +25,74 @@ const DIMS = [
 ]
 
 async function loadRepo(id) {
-  const [repos, state, contribs, items, people] = await Promise.all([
+  const [repos, state, contribs, items, people, stats] = await Promise.all([
     listRepos(),
     projectState(id).catch(() => null),
     contributions(id, {}).catch(() => []),
     workItems(id, {}).catch(() => []),
     contributors().catch(() => []),
+    analytics({ repo_id: id, days: 365 }).catch(() => null),
   ])
   const repo = repos.find((r) => r.id === id) || null
-  return { repo, state, contribs, items, people }
+  return { repo, state, contribs, items, people, stats }
+}
+
+/** Per-repo activity: headline scalars, the heatmap, and the two trends. */
+function ActivityPanel({ stats }) {
+  const t = stats?.totals
+  if (!t || !t.commits) {
+    return (
+      <EmptyState
+        title="No commit history cached"
+        description="Scan this repo to walk its git history — the heatmap and trends fill in from the derived commit cache."
+      />
+    )
+  }
+  return (
+    <div className="flex flex-col gap-4">
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <StatCard
+          label="Commits" value={compact(t.commits)} sublabel={`${t.active_days} active days`}
+          accent="var(--chart-1)" icon={<GitCommitHorizontal size={14} />} spark={sparkOf(stats, 'commits')}
+        />
+        <StatCard
+          label="Contributors" value={t.contributors} accent="var(--chart-5)" icon={<Users size={14} />}
+        />
+        <StatCard
+          label="Cycle p50" value={formatHours(t.cycle_p50_hours)}
+          sublabel={`p90 ${formatHours(t.cycle_p90_hours)}`} accent="var(--chart-3)" icon={<Timer size={14} />}
+        />
+        <StatCard
+          label="Net lines" value={compact(t.net_lines)}
+          sublabel={`+${compact(t.additions)} / −${compact(t.deletions)}`}
+          accent="var(--ok)" icon={<Plus size={14} />}
+        />
+      </div>
+
+      <Card padding="lg">
+        <h3 className="mb-4 text-sm font-semibold text-[var(--text)]">Contribution heatmap</h3>
+        <Heatmap days={stats.heatmap ?? []} />
+      </Card>
+
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+        <Card padding="lg">
+          <h3 className="mb-4 text-sm font-semibold text-[var(--text)]">Commits per week</h3>
+          <TrendChart
+            series={[{ key: 'c', label: 'Commits', color: 'var(--chart-1)', points: commitSeries(stats) }]}
+            area height={180}
+          />
+        </Card>
+        <Card padding="lg">
+          <h3 className="mb-4 text-sm font-semibold text-[var(--text)]">Cycle time per merged PR</h3>
+          <TrendChart
+            series={[{ key: 'x', label: 'Lead time', color: 'var(--chart-3)', points: cycleSeries(stats) }]}
+            area height={180} yFormat={formatHours}
+            emptyLabel="No merged pull requests yet"
+          />
+        </Card>
+      </div>
+    </div>
+  )
 }
 
 function DimBar({ value }) {
@@ -178,7 +241,7 @@ export default function RepoDetail() {
     )
   }
 
-  const { repo, state, contribs, items, people } = data
+  const { repo, state, contribs, items, people, stats } = data
 
   async function doScan() {
     await runScan(repo.id, { with_forge: repo.forge !== 'local' })
@@ -221,6 +284,13 @@ export default function RepoDetail() {
       <section className="mb-8">
         <h2 className="mb-3 text-sm font-semibold text-[var(--text)]">Project state</h2>
         <ProjectStatePanel state={state} />
+      </section>
+
+      <section className="mb-8">
+        <h2 className="mb-3 text-sm font-semibold text-[var(--text)]">
+          Activity <span className="font-normal text-[var(--text-faint)]">· last 12 months</span>
+        </h2>
+        <ActivityPanel stats={stats} />
       </section>
 
       <section className="mb-8">

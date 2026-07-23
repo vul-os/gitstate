@@ -42,7 +42,7 @@ backend, no multi-tenant server, no cloud account. What you run is what you own.
 
 <br>
 
-<img src="docs/screenshots/project-state.png" alt="gitstate desktop app showing a repo's Project state — DORA cycle-time cards, PR/issue counts — and the six-dimension Contribution table, all derived from git" width="900">
+<img src="docs/screenshots/dashboard.png" alt="gitstate desktop app dashboard — commit, merged-PR, cycle-time and contributor stat cards, a cycle-time trend chart, a contribution heatmap and a contributor leaderboard, all derived from git" width="900">
 
 </div>
 
@@ -142,8 +142,8 @@ flowchart TB
 
 <table>
 <tr>
-<td width="50%"><img src="docs/screenshots/dashboard.png" alt="gitstate Dashboard — open/merged PRs, open issues and cycle time rolled up across every tracked repo"><br><sub><em>Dashboard — cross-repo overview, derived state at a glance</em></sub></td>
-<td width="50%"><img src="docs/screenshots/contributions.png" alt="Six-dimension contribution table: shipped, review, effort, quality, ownership, durability per contributor"><br><sub><em>Contribution — six gaming-resistant dimensions, normalized per repo</em></sub></td>
+<td width="50%"><img src="docs/screenshots/insights.png" alt="Insights view: ten headline stat cards, a year-long contribution heatmap, commit-volume, lines-added, cycle-time and throughput trend charts, plus a contributor table"><br><sub><em>Insights — a year of delivery, derived from git rather than self-reported</em></sub></td>
+<td width="50%"><img src="docs/screenshots/repo-detail.png" alt="Repo detail: DORA project-state cards, per-repo activity stats, contribution heatmap, commits-per-week and cycle-time charts, and the six-dimension contribution table"><br><sub><em>Repo detail — project state, activity and the six gaming-resistant dimensions</em></sub></td>
 </tr>
 <tr>
 <td width="50%"><img src="docs/screenshots/contexts.png" alt="Contexts view: saved working sets of repos, pull requests, tags and notes"><br><sub><em>Contexts — saved working sets that sync peer-to-peer over CRDT</em></sub></td>
@@ -151,7 +151,7 @@ flowchart TB
 </tr>
 </table>
 
-<sub>All shots are the real desktop app against a deterministic synthetic demo dataset (`gitstate seed --demo`) — a fake org, fake pseudonymous contributors, never real git/forge history. See <a href="docs/screenshots/">docs/screenshots/</a> for the full set (including <a href="docs/screenshots/categories.png">Categories</a> and a <a href="docs/screenshots/dashboard-dark.png">dark-mode</a> shot) and <code>scripts/screenshots.mjs</code> to regenerate.</sub>
+<sub>All shots are the real desktop app against a deterministic synthetic demo dataset (`gitstate seed --demo`) — a fake org, fake pseudonymous contributors, never real git/forge history. See <a href="docs/screenshots/">docs/screenshots/</a> for the full set (including <a href="docs/screenshots/categories.png">Categories</a>, <a href="docs/screenshots/repos.png">Repos</a> and <a href="docs/screenshots/dashboard-light.png">light-mode</a> shots) and <code>web/scripts/screenshots.mjs</code> to regenerate.</sub>
 
 ---
 

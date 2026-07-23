@@ -54,6 +54,9 @@ export function StatCard({
 
   return (
     <div
+      // The label is styled uppercase in CSS but stays title-case in the DOM,
+      // so tests address the tile by this hook rather than by its rendered text.
+      data-stat={label}
       className={[
         'group relative flex flex-col rounded-[var(--radius-card)] border border-[var(--border)]',
         'bg-[var(--bg-surface)] p-5 overflow-hidden transition-all duration-200',
@@ -86,7 +89,10 @@ export function StatCard({
       </div>
 
       <div className="mt-3 flex items-end justify-between gap-3">
-        <span className="font-display text-[2rem] leading-[1.05] font-semibold text-[var(--text)] tabular-nums tracking-tight">
+        <span
+          data-stat-value
+          className="font-display text-[2rem] leading-[1.05] font-semibold text-[var(--text)] tabular-nums tracking-tight"
+        >
           {value}
         </span>
         {hasSpark && (

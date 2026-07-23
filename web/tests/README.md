@@ -1,94 +1,103 @@
 # gitstate e2e tests
 
-End-to-end browser tests for the gitstate portal, built on a tiny custom
+End-to-end browser tests for the gitstate desktop UI, built on a tiny custom
 runner that uses the **`playwright`** library directly. There is **no
 `@playwright/test`** dependency and nothing new to `npm install` — only the
 already-present `playwright` package is used.
 
+gitstate is a single-user local-first app: the daemon serves the SPA *and* the
+JSON API on one origin, and there is no auth, no orgs and no tokens. So the
+suite needs exactly one URL and no credentials.
+
 ## Running
 
-1. Start the app (Go API on :8080 + Vite dev server on :5173) with seeded data:
+1. Seed a demo database, build the SPA, and start the daemon:
 
    ```bash
-   npm run dev:full
+   cargo run -p gitstate-cli -- seed --demo
+   (cd web && npm run build)
+   cargo run -p gitstate-cli -- serve --port 8080
    ```
 
 2. In another terminal, run the suite:
 
    ```bash
-   npm run test:e2e          # runs the core suite in BOTH dark and light themes
-   npm run test:e2e:light    # light theme only
+   npm run test:e2e          # BOTH dark and light themes
+   npm run test:e2e:dark     # dark only
+   npm run test:e2e:light    # light only
    ```
 
    Or drive the runner directly:
 
    ```bash
-   node tests/runner.mjs --theme=dark      # dark only
-   node tests/runner.mjs --theme=light     # light only
    node tests/runner.mjs --headed          # show the browser window
-   node tests/runner.mjs --grep=board      # only specs whose name matches "board"
+   node tests/runner.mjs --grep=heatmap    # only specs matching "heatmap"
    ```
 
-The runner prints a green/red per-spec summary and exits non-zero if anything
-fails, so it drops straight into CI.
+The runner **preflights** the daemon before launching a browser: if it can't
+reach `/health`, or the database has no repos, it fails immediately with the
+command you need to run. A suite that silently asserts against an empty app is
+worse than no suite.
+
+It prints a green/red per-spec summary and exits non-zero if anything fails, so
+it drops straight into CI.
 
 ## Environment variables
 
-| Var        | Default                  | Purpose                                  |
-| ---------- | ------------------------ | ---------------------------------------- |
-| `BASE_URL` | `http://localhost:5173`  | Vite web app base URL                    |
-| `API_URL`  | `http://localhost:8080`  | Go API base URL (login, share, admin)    |
-| `EMAIL`    | `demo@gitstate.dev`      | Login email (also the super-admin)       |
-| `PASSWORD` | `demo1234`               | Login password                           |
-| `HEADLESS` | `1`                      | Set to `0`/`false` to show the browser   |
+| Var        | Default                 | Purpose                              |
+| ---------- | ----------------------- | ------------------------------------ |
+| `BASE_URL` | `http://localhost:8080` | the daemon (serves both SPA and API) |
+| `HEADLESS` | `1`                     | `0`/`false` shows the browser window |
 
 ## How the runner works (`runner.mjs`)
 
 - Launches **one** chromium instance and reuses it across every spec.
-- Each spec gets a **fresh `BrowserContext` + `Page`** so specs are isolated
-  (no shared cookies/localStorage between specs).
+- Each spec gets a **fresh `BrowserContext` + `Page`** so specs are isolated.
 - Specs register themselves at import time via `test(name, fn, opts)`.
-- The theme (`--theme`) is applied per context by seeding `localStorage`
-  `gs-theme` in an init script **and** setting Playwright's `colorScheme`
-  before any app JS runs. The core suite runs in **both** dark and light;
-  data-mutating / single-shot specs are tagged `{ themes: false }` and run once.
+- The theme is applied per context by seeding `localStorage` `gs-theme` in an
+  init script **and** setting Playwright's `colorScheme` before any app JS runs.
+  The suite runs in **both** dark and light; tag a spec `{ themes: false }` to
+  run it once.
 - Every spec **fails if the page logs an uncaught error or `console.error`**
-  (a small allowlist filters known dev/SSE noise — see `IGNORED_CONSOLE`).
-- Shared helpers exposed to specs: `login(page)` (drives the real `/login`
-  form), `gotoApp` / `gotoPublic` (navigate + wait for content), `pageHeading`
-  (reads the `<main> h1`, since the app's TopBar also renders an `h1`),
-  `api` / `apiPatch` (authenticated API calls used to cross-check persistence),
-  and `assert` / `assertVisible` (failures name the page + the expectation).
+  (a short allowlist filters unavoidable noise — see `IGNORED_CONSOLE`). This is
+  what catches the class of bug where a page renders but a component throws
+  under it.
+- Helpers exposed to specs: `goto` (navigate + wait for content), `pageHeading`
+  (reads the `<main> h1`, since the TopBar also renders an `h1`), `api` (plain
+  `GET` against the daemon), and `assert` / `assertVisible` /
+  `assertCountAtLeast` (failures name the page and the expectation).
 
 ## What's covered (`e2e/*.mjs`)
 
 | Spec | Asserts |
 | ---- | ------- |
-| `01-auth` | Valid login reaches the dashboard + stores a token; bad creds stay on `/login` with an error and no token. |
-| `02-dashboard` | Stat tiles render; the cycle-time-trend `LineChart` has real data points (`data-point-count > 0` + a line path with geometry). |
-| `03-board` | All four kanban columns render; **drags a card to another column** and verifies the move **persisted** via the API, then restores it. |
-| `04-analytics` | Analytics heatmap (cells) + Commits-over-time chart + leaderboard/data tables; Cycle Time chart + merged-PRs table; Involvement member cards. |
-| `05-contribution` | Roster loads; **People / Over time** tabs switch; **moving a weight slider re-orders the ranking**; opening a contributor drawer shows evidence + composite. |
-| `06-capacity` | Balances render; the **leave-request form** opens with its controls; the **Approvals** tab shows pending requests. |
-| `07-eng-health` | DORA cards render: **change-failure rate, lead time p50, deploy frequency** + the change-failure-over-time chart. |
-| `08-invoices` | Invoice list + detail with line items; reads the share token and loads the **public `/i/:token`** invoice in a fresh, **unauthenticated** context (client-facing line items + totals render). |
-| `09-planning-import` | Planning capacity timeline + forecast tiles; Import wizard source picker (Jira/Linear) advances to the Connect step. |
-| `10-settings` | Calendars / Notifications / Webhooks sections; the notifications digest preview (3 tabs) resolves to real content. |
-| `11-marketing` | Landing hero + CTA, `/pricing`, `/compare` (calculator recomputes), `/docs` home — all without page errors. |
-| `12-admin` | Logs into the server-rendered admin console at `${API_URL}/admin/login` and asserts Analytics / Users / Orgs render real data. |
+| `01-shell` | Every nav route renders its own heading; the rail links all of them and marks exactly one active; unknown routes hit a not-found page; legacy SaaS paths (`/analytics`, `/projects`, `/home`) still redirect; the theme toggle flips the document theme. |
+| `02-dashboard` | Stat cards match `/api/analytics` (not a hardcoded value); the cycle-time line has real multi-vertex geometry; the heatmap draws one cell per day in range across ≥4 ramp steps including the empty well; the leaderboard leads with the API's top contributor; the range filter refetches and shrinks the grid; every repo is listed and links through. |
+| `03-insights` | All ten scalar cards render and cross-check against the API; all five chart panels plot real geometry; the two-series throughput chart carries a legend; the contributor table row count matches the API and agents are badged; the repo filter scopes the cards *and* the table; the range filter narrows the window. |
+| `04-repos` | The repo list shows every registered repo; repo detail renders project state, per-repo scoped charts (verified against a scoped API query), work items, and all six contribution dimensions. |
+| `05-working-sets` | Contexts, categories (the full default taxonomy), the classify repo picker, the signed taxonomy version, and the settings daemon status. |
+| `06-analytics-contract` | `/api/analytics` invariants with no browser: a dense, gapless, zero-filled grid with a correctly advancing weekday; totals that sum to the heatmap and satisfy `net = adds − dels` and `p90 ≥ p50`; chronologically ordered series with no negative lead times; per-repo scoping that sums back to the unscoped total; a window anchored on the newest commit rather than wall-clock now; and clamped/empty handling for absurd or unknown input. |
+| `07-charts-a11y` | Every chart has `role="img"` plus a non-empty accessible name; the heatmap has a live-region text readout and a less→more ramp legend; the range filter is a labelled radiogroup with exactly one checked option; multi-series charts carry legends; the skip link is the first tab stop and moves focus to `<main>`. |
 
-## Notes & gotchas baked into the specs
+## Conventions baked into the specs
 
-- **Two `h1`s on app pages.** The authed layout's TopBar renders an `h1` with
-  the route title; the page's own heading lives in `<main>`. Use `pageHeading`.
-- **Board drag** uses real pointer events with an 8px activation move + stepped
-  glide so dnd-kit's `PointerSensor` fires; persistence is checked against the
-  API (the authoritative source) rather than the optimistic UI.
-- **Weight sliders** are controlled range inputs — `fill()` doesn't move them,
-  so specs use keyboard `Home`/`End`. The re-rank weights by **Review** (a
-  dimension that discriminates the seeded roster); `durability` is 0 for all
-  seed members and would tie.
-- **Invoice share** requires an issued/`sent` invoice with a `shareToken`
-  (the seed's `INV-2026-001` has one).
-- **Admin console uses SSE**, so the admin spec never waits for `networkidle`
-  (it would hang) — it waits on concrete elements instead.
+**Assert against the API, not against magic numbers.** Specs fetch the same
+endpoint the page does and compare. That keeps the suite working when the seed
+data changes, while still catching a card that renders a stale or hardcoded value.
+
+**Charts carry `data-*` hooks.** Icon `<svg>`s from the icon set *also* have
+`role="img"`, so structural selectors alone match them too — an early version of
+this suite asserted "chart geometry" against a stopwatch icon's path and passed.
+Use the explicit hooks instead:
+
+- `svg[data-chart="trend"]` / `svg[data-chart="heatmap"]`
+- `path[data-trend-line="<series key>"]` — assert `d` contains `L` for real geometry
+- `svg[data-chart="heatmap"][data-days]`, and `rect[data-day][data-level]` per cell
+- `[data-stat="<label>"] [data-stat-value]` for stat-card values
+
+**Stat-card labels are title-case in the DOM.** They only *look* uppercase —
+that's `text-transform` in CSS. Address them by `data-stat`, not by rendered text.
+
+**There are two nav landmarks.** The desktop rail and the mobile drawer are both
+always in the DOM; they carry distinct labels (`Primary` and `Primary (mobile)`)
+so neither the specs nor a screen reader has to guess.

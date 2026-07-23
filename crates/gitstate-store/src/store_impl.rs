@@ -178,6 +178,25 @@ fn map_work_item(r: &rusqlite::Row) -> rusqlite::Result<WorkItem> {
 const WI_COLS: &str = "id, repo_id, kind, external_ref, title, body, state, author_login, \
     labels, created_at, updated_at, merged_at, closed_at, files_touched";
 
+fn map_commit(r: &rusqlite::Row) -> rusqlite::Result<Commit> {
+    Ok(Commit {
+        sha: r.get(0)?,
+        repo_id: RepoId(r.get(1)?),
+        author_email: r.get(2)?,
+        author_name: r.get(3)?,
+        committed_at: r.get(4)?,
+        additions: r.get(5)?,
+        deletions: r.get(6)?,
+        files_changed: r.get(7)?,
+        is_merge: r.get::<_, i64>(8)? != 0,
+        is_test_touch: r.get::<_, i64>(9)? != 0,
+        summary: r.get(10)?,
+    })
+}
+
+const COMMIT_COLS: &str = "sha, repo_id, author_email, author_name, committed_at, additions, \
+    deletions, files_changed, is_merge, is_test_touch, summary";
+
 // ─────────────────────────── CRDT: context ───────────────────────────
 
 fn ensure_context_row(conn: &Connection, id: &ContextId, created_at: &str) -> Result<()> {
@@ -927,6 +946,57 @@ impl Store for SqliteStore {
         Ok(rows)
     }
 
+    fn list_commits(&self, repo: Option<&RepoId>) -> Result<Vec<Commit>> {
+        let conn = self.conn.lock().unwrap();
+        // Oldest first so every downstream series is already in chronological
+        // order; the secondary sha sort keeps same-second commits stable.
+        let rows = match repo {
+            Some(r) => {
+                let mut stmt = conn
+                    .prepare(&format!(
+                        "SELECT {COMMIT_COLS} FROM commits WHERE repo_id = ?1
+                         ORDER BY committed_at, sha"
+                    ))
+                    .map_err(st)?;
+                let v = stmt
+                    .query_map([&r.0], map_commit)
+                    .map_err(st)?
+                    .collect::<rusqlite::Result<Vec<_>>>()
+                    .map_err(st)?;
+                v
+            }
+            None => {
+                let mut stmt = conn
+                    .prepare(&format!(
+                        "SELECT {COMMIT_COLS} FROM commits ORDER BY committed_at, sha"
+                    ))
+                    .map_err(st)?;
+                let v = stmt
+                    .query_map([], map_commit)
+                    .map_err(st)?
+                    .collect::<rusqlite::Result<Vec<_>>>()
+                    .map_err(st)?;
+                v
+            }
+        };
+        Ok(rows)
+    }
+
+    fn list_all_work_items(&self) -> Result<Vec<WorkItem>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn
+            .prepare(&format!(
+                "SELECT {WI_COLS} FROM work_items ORDER BY created_at DESC, id"
+            ))
+            .map_err(st)?;
+        let rows = stmt
+            .query_map([], map_work_item)
+            .map_err(st)?
+            .collect::<rusqlite::Result<_>>()
+            .map_err(st)?;
+        Ok(rows)
+    }
+
     fn save_effort(&self, rows: &[EffortEstimate]) -> Result<()> {
         let mut conn = self.conn.lock().unwrap();
         let tx = conn.transaction().map_err(st)?;
@@ -1221,6 +1291,141 @@ mod tests {
         let got = s.get_category("feature.api").unwrap().unwrap();
         assert_eq!(got.label, "API feature");
         assert_eq!(s.list_categories().unwrap().len(), 1);
+    }
+
+    /// Register a repo so the FK on `commits`/`work_items` is satisfiable.
+    fn seed_repo(s: &SqliteStore, id: &str) -> RepoId {
+        let rid = RepoId(id.into());
+        s.upsert_repo(&Repo {
+            id: rid.clone(),
+            slug: format!("demo/{id}"),
+            path: String::new(),
+            remote_url: None,
+            forge: Forge::Local,
+            default_branch: "main".into(),
+            last_scanned_at: None,
+            added_at: now_rfc3339(),
+        })
+        .unwrap();
+        rid
+    }
+
+    fn commit_at(repo: &RepoId, sha: &str, at: &str) -> Commit {
+        Commit {
+            sha: sha.into(),
+            repo_id: repo.clone(),
+            author_email: "dev@example.com".into(),
+            author_name: "Dev".into(),
+            committed_at: at.into(),
+            additions: 10,
+            deletions: 2,
+            files_changed: 1,
+            is_merge: false,
+            is_test_touch: true,
+            summary: "work".into(),
+        }
+    }
+
+    #[test]
+    fn list_commits_returns_oldest_first_and_preserves_flags() {
+        let s = store();
+        let r = seed_repo(&s, "r1");
+        s.save_commits(
+            &r,
+            &[
+                commit_at(&r, "ccc", "2026-06-03T00:00:00Z"),
+                commit_at(&r, "aaa", "2026-06-01T00:00:00Z"),
+                commit_at(&r, "bbb", "2026-06-02T00:00:00Z"),
+            ],
+        )
+        .unwrap();
+
+        let all = s.list_commits(None).unwrap();
+        let shas: Vec<&str> = all.iter().map(|c| c.sha.as_str()).collect();
+        assert_eq!(shas, vec!["aaa", "bbb", "ccc"]);
+        assert!(all[0].is_test_touch, "bool columns survive the round-trip");
+        assert!(!all[0].is_merge);
+        assert_eq!(all[0].additions, 10);
+        assert_eq!(all[0].repo_id, r);
+    }
+
+    #[test]
+    fn list_commits_scopes_to_one_repo() {
+        let s = store();
+        let r1 = seed_repo(&s, "r1");
+        let r2 = seed_repo(&s, "r2");
+        s.save_commits(&r1, &[commit_at(&r1, "aaa", "2026-06-01T00:00:00Z")])
+            .unwrap();
+        s.save_commits(&r2, &[commit_at(&r2, "bbb", "2026-06-02T00:00:00Z")])
+            .unwrap();
+
+        assert_eq!(s.list_commits(None).unwrap().len(), 2);
+        let scoped = s.list_commits(Some(&r1)).unwrap();
+        assert_eq!(scoped.len(), 1);
+        assert_eq!(scoped[0].sha, "aaa");
+        // An unknown repo is empty, not an error.
+        assert!(s
+            .list_commits(Some(&RepoId("nope".into())))
+            .unwrap()
+            .is_empty());
+    }
+
+    #[test]
+    fn list_all_work_items_spans_every_repo() {
+        let s = store();
+        let r1 = seed_repo(&s, "r1");
+        let r2 = seed_repo(&s, "r2");
+        let item = |repo: &RepoId, id: &str, created: &str| WorkItem {
+            id: WorkItemId(id.into()),
+            repo_id: repo.clone(),
+            kind: WorkKind::Pr,
+            external_ref: format!("#{id}"),
+            title: "t".into(),
+            body: String::new(),
+            state: WorkState::Merged,
+            author_login: None,
+            labels: vec!["backend".into()],
+            created_at: created.into(),
+            updated_at: created.into(),
+            merged_at: Some(created.into()),
+            closed_at: None,
+            files_touched: vec!["a.rs".into()],
+        };
+        s.save_work_items(&[
+            item(&r1, "1", "2026-06-01T00:00:00Z"),
+            item(&r2, "2", "2026-06-05T00:00:00Z"),
+        ])
+        .unwrap();
+
+        let all = s.list_all_work_items().unwrap();
+        assert_eq!(all.len(), 2);
+        assert_eq!(all[0].id.0, "2", "newest first");
+        assert_eq!(all[0].labels, vec!["backend".to_string()]);
+        assert_eq!(s.list_work_items(&r1).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn analytics_compute_over_stored_rows() {
+        // The store's read path feeds the pure analytics module end to end.
+        let s = store();
+        let r = seed_repo(&s, "r1");
+        s.save_commits(
+            &r,
+            &[
+                commit_at(&r, "aaa", "2026-06-01T09:00:00Z"),
+                commit_at(&r, "bbb", "2026-06-01T18:00:00Z"),
+                commit_at(&r, "ccc", "2026-06-04T09:00:00Z"),
+            ],
+        )
+        .unwrap();
+
+        let commits = s.list_commits(None).unwrap();
+        let a =
+            gitstate_core::analytics::compute(&commits, &[], &[], 1, "2026-06-01", "2026-06-07");
+        assert_eq!(a.totals.commits, 3);
+        assert_eq!(a.totals.active_days, 2);
+        assert_eq!(a.heatmap.len(), 7);
+        assert_eq!(a.totals.test_touch_rate, 1.0);
     }
 
     #[test]

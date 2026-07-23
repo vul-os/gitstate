@@ -22,6 +22,32 @@ pub fn repo_routes() -> Router<AppState> {
         .route("/api/repos/{id}/project-state", get(project_state))
         .route("/api/repos/{id}/contributions", get(contributions))
         .route("/api/repos/{id}/work-items", get(work_items))
+        .route("/api/analytics", get(analytics))
+}
+
+#[derive(Debug, Deserialize)]
+struct AnalyticsQuery {
+    repo_id: Option<String>,
+    /// Trailing window size in days (default 180). Ignored when `from` is given.
+    days: Option<u32>,
+    from: Option<String>,
+    to: Option<String>,
+}
+
+/// `GET /api/analytics` — the one round-trip that feeds the dashboard and the
+/// insights screen: heatmap, trends, leaderboard and headline totals.
+async fn analytics(
+    State(state): State<AppState>,
+    Query(q): Query<AnalyticsQuery>,
+) -> ApiResult<Json<gitstate_core::Analytics>> {
+    let repo = q.repo_id.filter(|s| !s.is_empty()).map(RepoId::from);
+    Ok(Json(ops::analytics(
+        &state,
+        repo.as_ref(),
+        q.days,
+        q.from.as_deref(),
+        q.to.as_deref(),
+    )?))
 }
 
 async fn list(State(state): State<AppState>) -> ApiResult<Json<Vec<Repo>>> {

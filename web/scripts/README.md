@@ -2,51 +2,55 @@
 
 ## screenshots.mjs
 
-Playwright-based screenshotter that captures the gitstate UI into PNG files.
+Playwright-based screenshotter that captures the gitstate UI into the PNGs the
+README and docs reference.
 
 ### Usage
 
 ```bash
-# From web/
+# Seed a deterministic demo database, build the SPA, and start the daemon:
+cargo run -p gitstate-cli -- seed --demo
+(cd web && npm run build)
+cargo run -p gitstate-cli -- serve --port 8080
+
+# Then, from web/:
 npm run shots
 ```
 
-The gitstate server must be running first (default `http://localhost:8080`).
+There is no auth — the daemon serves the SPA and the JSON API on one origin, so
+every route is reachable directly.
 
-### Output destinations
-
-Every captured screenshot is written to **two** locations:
-
-| Destination | Path | Purpose |
-|---|---|---|
-| Docs | `docs/screenshots/<name>.png` | README and project docs |
-| Public | `web/public/shots/<name>.png` | Served as `/shots/*.png` in the Vite app |
-
-The `web/public/shots/` files are served statically at `/shots/<name>.png` by both the Vite dev server and the production build. The landing page `Hero` section uses these via `<BrowserFrame src="/shots/dashboard.png">`.
+The daemon serves `web/dist`, so **build before capturing** or the shots will
+show the previous build.
 
 ### Environment variables
 
-| Variable | Default | Description |
-|---|---|---|
-| `BASE_URL` | `http://localhost:8080` | Base URL of the running server |
-| `OUT` | `../../docs/screenshots` | Override the docs output directory |
-| `EMAIL` | `demo@gitstate.dev` | Login email for authed page shots |
-| `PASSWORD` | `demo1234` | Login password for authed page shots |
+| Variable   | Default                  | Description                          |
+| ---------- | ------------------------ | ------------------------------------ |
+| `BASE_URL` | `http://localhost:8080`  | the daemon (serves both SPA and API) |
+| `OUT`      | `../../docs/screenshots` | output directory                     |
 
 ### Captured pages
 
-**Public (no auth) — dark + light themes:**
-- `/` → `landing-dark.png`, `landing-light.png`
-- `/pricing` → `pricing.png`, `pricing-light.png`
-- `/compare` → `compare.png`
-- `/docs` → `docs.png`
+Dark theme (the product's default look): `/dashboard`, `/insights` (full page),
+`/repos`, the first repo's detail page, `/contexts`, `/categories`, `/classify`,
+`/taxonomy`, `/settings`.
 
-**Authed (dark theme):**
-- `/dashboard` → `dashboard.png`
-- `/board` → `board.png`
-- `/involvement` → `involvement.png`
-- `/capacity` → `capacity.png`
-- `/cycle-time` → `cycle-time.png`
-- `/settings/billing` → `billing.png`
+Light theme: `/dashboard` and `/insights`, the two screens carrying the most
+chrome.
 
-Pages fail independently — one broken route won't stop the rest. Override with `BASE_URL`, `OUT`, `EMAIL`, and `PASSWORD` env vars.
+Pages fail independently — one broken route won't stop the rest — but the script
+exits non-zero if any failed.
+
+### Why it waits on `svg[data-chart]`
+
+Charts render only after `/api/analytics` resolves. Waiting on the heading alone
+captures a spinner where the chart should be. The selector is `data-chart` and
+not `role="img"` because icon `<svg>`s carry that role too — the same reason the
+e2e suite uses these hooks (see `web/tests/README.md`).
+
+### Determinism
+
+`gitstate seed --demo` derives every id, hash and timestamp from a fixed anchor
+via SHA-256, so re-seeding reproduces byte-identical rows and repeated capture
+sessions stay pixel-stable.

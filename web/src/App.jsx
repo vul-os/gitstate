@@ -8,6 +8,7 @@ import { AppShell } from './components/AppShell.jsx'
 const Dashboard = lazy(() => import('./pages/Dashboard.jsx'))
 const Repos = lazy(() => import('./pages/Repos.jsx'))
 const RepoDetail = lazy(() => import('./pages/RepoDetail.jsx'))
+const Insights = lazy(() => import('./pages/Insights.jsx'))
 const Contexts = lazy(() => import('./pages/Contexts.jsx'))
 const Categories = lazy(() => import('./pages/Categories.jsx'))
 const Classify = lazy(() => import('./pages/Classify.jsx'))
@@ -72,14 +73,16 @@ export default function App() {
                 <Route path="/dashboard" element={<Dashboard />} />
                 <Route path="/repos" element={<Repos />} />
                 <Route path="/repos/:id" element={<RepoDetail />} />
+                <Route path="/insights" element={<Insights />} />
                 <Route path="/contexts" element={<Contexts />} />
                 <Route path="/categories" element={<Categories />} />
                 <Route path="/classify" element={<Classify />} />
                 <Route path="/taxonomy" element={<Taxonomy />} />
                 <Route path="/settings" element={<Settings />} />
-                {/* Legacy SaaS links → dashboard */}
+                {/* Legacy SaaS links → their local-first equivalents */}
                 <Route path="/projects" element={<Navigate to="/repos" replace />} />
                 <Route path="/home" element={<Navigate to="/dashboard" replace />} />
+                <Route path="/analytics" element={<Navigate to="/insights" replace />} />
               </Route>
               <Route path="*" element={<NotFound />} />
             </Routes>

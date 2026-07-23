@@ -9,6 +9,7 @@ import { LogoMark } from './Logo.jsx'
 import {
   LayoutDashboard,
   FolderGit2,
+  BarChart3,
   Layers,
   Tags,
   Sparkles,
@@ -19,6 +20,7 @@ import {
 const NAV = [
   { label: 'Dashboard', to: '/dashboard', end: true, icon: LayoutDashboard },
   { label: 'Repos', to: '/repos', icon: FolderGit2 },
+  { label: 'Insights', to: '/insights', icon: BarChart3 },
   { group: 'Working sets' },
   { label: 'Contexts', to: '/contexts', icon: Layers },
   { label: 'Categories', to: '/categories', icon: Tags },
@@ -28,7 +30,14 @@ const NAV = [
   { label: 'Settings', to: '/settings', end: true, icon: SettingsIcon },
 ]
 
-export function Sidebar({ onNavigate }) {
+/**
+ * @param {object} props
+ * @param {() => void} [props.onNavigate]
+ * @param {string} [props.navLabel]  distinguishes the desktop rail from the
+ *   mobile drawer — both are in the DOM at all times, and two navigation
+ *   landmarks sharing one name is ambiguous to a screen reader.
+ */
+export function Sidebar({ onNavigate, navLabel = 'Primary' }) {
   return (
     <aside className="flex flex-col w-full lg:w-[216px] shrink-0 h-screen lg:sticky lg:top-0 border-r border-[var(--border)] bg-[var(--bg-surface)]">
       {/* Logo */}
@@ -40,7 +49,7 @@ export function Sidebar({ onNavigate }) {
       </div>
 
       {/* Nav */}
-      <nav aria-label="Primary" className="flex-1 py-3 px-2.5 overflow-y-auto">
+      <nav aria-label={navLabel} className="flex-1 py-3 px-2.5 overflow-y-auto">
         <div className="space-y-px">
           {NAV.map((item, idx) => {
             if (item.group === 'end') {
