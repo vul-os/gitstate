@@ -17,8 +17,8 @@ func TestIsBlockedIP(t *testing.T) {
 		"::1",         // IPv6 loopback
 		"fc00::1",     // fc00::/7
 		"fd12:3456::1",
-		"fe80::1",  // IPv6 link-local
-		"0.0.0.0",  // unspecified
+		"fe80::1",   // IPv6 link-local
+		"0.0.0.0",   // unspecified
 		"224.0.0.1", // multicast
 	}
 	for _, s := range blocked {

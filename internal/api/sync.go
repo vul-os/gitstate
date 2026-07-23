@@ -33,6 +33,7 @@ import (
 //	GET  /api/issues               — list issues ?source=&state=&project=
 //	POST /api/issues               — create a native (non-git) issue
 //	PATCH /api/issues/{id}         — update state; writes back to platform when source='git'
+//
 // pkgJobQueue is the process-wide durable job queue, set by main.go via
 // SetJobQueue BEFORE RegisterSyncRoutes runs (NewRouter's signature can't change,
 // so the queue is injected out-of-band). When nil (e.g. dev-without-queue, tests

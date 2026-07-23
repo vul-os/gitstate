@@ -10,10 +10,10 @@ import (
 
 // tools_action.go — the ACTION tools. These NEVER mutate. Each returns an
 // *Action describing a one-click, confirmable button that hits an existing
-// authenticated API endpoint. The model can PROPOSE an upgrade / sync / invoice
-// / exclusion, but the actual write only happens when the human clicks and the
-// UI calls Endpoint with the user's own session. Result JSON is a short
-// machine-readable echo so the model can confirm what it proposed.
+// authenticated API endpoint. The model can PROPOSE a sync / exclusion, but the
+// actual write only happens when the human clicks and the UI calls Endpoint
+// with the user's own session. Result JSON is a short machine-readable echo so
+// the model can confirm what it proposed.
 
 // actionResult is the compact JSON a tool returns alongside an *Action, so the
 // model knows the proposal succeeded (a button was surfaced) without mutating.

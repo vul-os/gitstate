@@ -203,10 +203,10 @@ type Involvement struct {
 	ProjectID       *string
 	UserID          *string
 	PeriodStart     time.Time
-	FeaturesShipped int               // merged PRs authored by this user this period
-	ReviewsDone     int               // PRs reviewed (the invisible senior work — decisions P2)
-	AreasOwned      int               // distinct file areas touched / owned via git history
-	Active          bool              // true if any activity in this period
+	FeaturesShipped int                    // merged PRs authored by this user this period
+	ReviewsDone     int                    // PRs reviewed (the invisible senior work — decisions P2)
+	AreasOwned      int                    // distinct file areas touched / owned via git history
+	Active          bool                   // true if any activity in this period
 	Dimensions      map[string]interface{} // extensible texture (no scoring, no composite)
 }
 
@@ -417,8 +417,8 @@ type InvolvementMember struct {
 	AvatarURL       string
 	FeaturesShipped int
 	ReviewsDone     int
-	AreasOwned      int   // max distinct areas owned across the window's periods
-	Active          bool  // active in any period within the window
+	AreasOwned      int  // max distinct areas owned across the window's periods
+	Active          bool // active in any period within the window
 	LastActive      time.Time
 	IsAgent         bool
 	CommitCount     int

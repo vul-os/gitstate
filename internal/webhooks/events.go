@@ -163,9 +163,9 @@ type ghWorkflowRunPayload struct {
 // review.user.login; the PR author (for self-review skipping) is
 // pull_request.user.login. external_id keys the review row idempotently.
 type ghPRReviewPayload struct {
-	Action      string `json:"action"` // submitted | edited | dismissed
-	Repository  ghRepo `json:"repository"`
-	Review      struct {
+	Action     string `json:"action"` // submitted | edited | dismissed
+	Repository ghRepo `json:"repository"`
+	Review     struct {
 		ID          int64      `json:"id"`
 		State       string     `json:"state"` // approved | changes_requested | commented | dismissed
 		SubmittedAt *time.Time `json:"submitted_at"`

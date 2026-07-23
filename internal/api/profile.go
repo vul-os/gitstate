@@ -27,11 +27,11 @@ func RegisterProfileRoutes(mux *http.ServeMux, database *db.DB, cfg *config.Conf
 type profileHandlers struct{ db *db.DB }
 
 type profileResponse struct {
-	ID                string `json:"id"`
-	Email             string `json:"email"`
-	Name              string `json:"name"`
-	AvatarURL         string `json:"avatarUrl"`
-	EmailIsPlaceholder bool  `json:"emailIsPlaceholder"`
+	ID                 string `json:"id"`
+	Email              string `json:"email"`
+	Name               string `json:"name"`
+	AvatarURL          string `json:"avatarUrl"`
+	EmailIsPlaceholder bool   `json:"emailIsPlaceholder"`
 }
 
 // emailIsPlaceholder reports whether an email is a provider "noreply" address —

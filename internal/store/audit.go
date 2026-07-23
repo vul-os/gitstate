@@ -1,7 +1,6 @@
 // Package store — audit_log writer.
 // WriteAudit is the single write path for the audit_log table (decisions S2).
 // It is intentionally simple: fire-and-forget within the calling request context.
-// The EE admin agent depends on this exact signature.
 package store
 
 import (
@@ -16,7 +15,7 @@ import (
 //
 //   - actorID — UUID string of the acting user; may be empty for system actions.
 //   - orgID   — UUID string of the org being touched; may be empty for global actions
-//               (e.g. super-admin listing all orgs).
+//     (e.g. super-admin listing all orgs).
 //   - action  — short verb, e.g. "super_admin.view_org", "billing.generate_invoice".
 //   - target  — the specific resource identifier, e.g. a repo ID or org slug.
 //   - meta    — arbitrary JSON-serialisable context to accompany the event.

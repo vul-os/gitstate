@@ -55,12 +55,12 @@ func TestVerifyMalformedHash(t *testing.T) {
 	cases := []string{
 		"",
 		"plaintext",
-		"$argon2id$v=19$bad",                       // too few parts
-		"$bcrypt$v=19$m=1,t=1,p=1$AAAA$AAAA",       // wrong algorithm
-		"$argon2id$v=99$m=1,t=1,p=1$AAAA$AAAA",     // wrong version
-		"$argon2id$v=19$nope$AAAA$AAAA",            // unparseable params
-		"$argon2id$v=19$m=1,t=1,p=1$!!!$AAAA",      // bad salt base64
-		"$argon2id$v=19$m=1,t=1,p=1$AAAA$!!!",      // bad hash base64
+		"$argon2id$v=19$bad",                   // too few parts
+		"$bcrypt$v=19$m=1,t=1,p=1$AAAA$AAAA",   // wrong algorithm
+		"$argon2id$v=99$m=1,t=1,p=1$AAAA$AAAA", // wrong version
+		"$argon2id$v=19$nope$AAAA$AAAA",        // unparseable params
+		"$argon2id$v=19$m=1,t=1,p=1$!!!$AAAA",  // bad salt base64
+		"$argon2id$v=19$m=1,t=1,p=1$AAAA$!!!",  // bad hash base64
 	}
 	for _, enc := range cases {
 		if err := auth.VerifyPassword("anything", enc); err == nil {

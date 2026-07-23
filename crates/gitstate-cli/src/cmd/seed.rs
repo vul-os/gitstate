@@ -450,8 +450,8 @@ fn build_work_items(repo: &Repo, ri: usize) -> (Vec<WorkItem>, WorkCounts) {
         }
         let created_offset = (60 - (i as i64) * 5).max(2);
         let created_at = days_ago(created_offset);
-        let merged_at = matches!(state, WorkState::Merged)
-            .then(|| days_ago((created_offset - 2).max(0)));
+        let merged_at =
+            matches!(state, WorkState::Merged).then(|| days_ago((created_offset - 2).max(0)));
         let updated_at = merged_at.clone().unwrap_or_else(|| created_at.clone());
         let author = &CONTRIBUTORS[(ri + i) % CONTRIBUTORS.len()];
         let title = PR_TITLES[(ri * 3 + i) % PR_TITLES.len()];
@@ -603,10 +603,13 @@ fn build_contributions(repo: &Repo, active: &[&DemoContributor]) -> Vec<Contribu
                 agent_commits,
             };
             let agent_pct = agent_commits as f64 / (human_commits + agent_commits).max(1) as f64;
-            let composite =
-                (dims.shipped + dims.review + dims.effort + dims.quality + dims.ownership
-                    + dims.durability)
-                    / 6.0;
+            let composite = (dims.shipped
+                + dims.review
+                + dims.effort
+                + dims.quality
+                + dims.ownership
+                + dims.durability)
+                / 6.0;
             Contribution {
                 contributor_id: contributor_id(c),
                 repo_id: repo.id.clone(),
@@ -682,8 +685,7 @@ fn seed_contexts(store: &dyn Store, repos: &[Repo]) -> anyhow::Result<Vec<Contex
                     note: None,
                 },
             ],
-            notes: "Synthetic demo context: coordinating the API + web launch surface."
-                .to_string(),
+            notes: "Synthetic demo context: coordinating the API + web launch surface.".to_string(),
             tags: vec!["feature.api".to_string(), "launch".to_string()],
             created_at: days_ago(21),
             updated_at: days_ago(1),
@@ -693,16 +695,14 @@ fn seed_contexts(store: &dyn Store, repos: &[Repo]) -> anyhow::Result<Vec<Contex
         Context {
             id: ContextId::from(det_uuid("context:reliability-sweep")),
             name: "Reliability sweep".to_string(),
-            description: "Bug fixes and perf work queued for the reliability pass."
-                .to_string(),
+            description: "Bug fixes and perf work queued for the reliability pass.".to_string(),
             repo_ids: vec![repo_id("ledger-core"), repo_id("pipeline-runner")],
             pr_refs: vec![ContextPrRef {
                 repo_slug: "demo-org/ledger-core".to_string(),
                 number: 2,
                 note: Some("regression from last release".to_string()),
             }],
-            notes: "Synthetic demo context: tracking flaky/duplicate-delivery fixes."
-                .to_string(),
+            notes: "Synthetic demo context: tracking flaky/duplicate-delivery fixes.".to_string(),
             tags: vec!["bugfix".to_string(), "perf".to_string()],
             created_at: days_ago(14),
             updated_at: days_ago(2),
@@ -761,7 +761,10 @@ mod tests {
 
         // Re-seeding is idempotent: no duplicate rows accumulate.
         seed_demo(&store).expect("reseed demo");
-        assert_eq!(store.list_repos().expect("list repos").len(), REPO_NAMES.len());
+        assert_eq!(
+            store.list_repos().expect("list repos").len(),
+            REPO_NAMES.len()
+        );
         assert_eq!(
             store.list_contributors().expect("contributors").len(),
             CONTRIBUTORS.len()

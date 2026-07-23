@@ -3,11 +3,11 @@
 // commits so an agent can find work by MEANING, not exact keywords.
 //
 // Two layers:
-//   1. Primary FTS — websearch_to_tsquery against the generated search_tsv
-//      columns (GIN-indexed), ranked by ts_rank, with a ts_headline snippet.
-//   2. Fuzzy fallback — when FTS matches nothing (typo / partial word, e.g.
-//      "athentication"), fall back to pg_trgm similarity on issue titles plus a
-//      lenient ILIKE scan on PR titles / commit messages, ranked by similarity.
+//  1. Primary FTS — websearch_to_tsquery against the generated search_tsv
+//     columns (GIN-indexed), ranked by ts_rank, with a ts_headline snippet.
+//  2. Fuzzy fallback — when FTS matches nothing (typo / partial word, e.g.
+//     "athentication"), fall back to pg_trgm similarity on issue titles plus a
+//     lenient ILIKE scan on PR titles / commit messages, ranked by similarity.
 //
 // Everything runs on the caller's pgx.Tx (wrapped in db.WithOrg) so FORCE-RLS
 // scopes every read to the org. Only the entity type list is templated into SQL;
@@ -50,12 +50,12 @@ const (
 
 // SearchResult is a single compact, LLM-friendly hit.
 type SearchResult struct {
-	Type    string  `json:"type"`           // issue | pr | commit
-	ID      string  `json:"id"`             // internal UUID
-	Number  int     `json:"number"`         // issue/PR number (0 for commits)
-	Title   string  `json:"title"`          // title / commit subject
-	Snippet string  `json:"snippet"`        // highlighted excerpt of the match
-	Rank    float64 `json:"rank"`           // ts_rank (FTS) or similarity (fuzzy)
+	Type    string  `json:"type"`    // issue | pr | commit
+	ID      string  `json:"id"`      // internal UUID
+	Number  int     `json:"number"`  // issue/PR number (0 for commits)
+	Title   string  `json:"title"`   // title / commit subject
+	Snippet string  `json:"snippet"` // highlighted excerpt of the match
+	Rank    float64 `json:"rank"`    // ts_rank (FTS) or similarity (fuzzy)
 	RepoID  string  `json:"repoId,omitempty"`
 	State   string  `json:"state,omitempty"` // issue/PR state; "" for commits
 }

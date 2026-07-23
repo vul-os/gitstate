@@ -129,10 +129,10 @@ func TestMatchInstallationOwner(t *testing.T) {
 		wantOK bool
 	}{
 		{"nu-bi", 22, true},
-		{"NU-BI", 22, true},                       // case-insensitive
-		{"Cognizance-Processing", 11, true},       // case-insensitive
+		{"NU-BI", 22, true},                 // case-insensitive
+		{"Cognizance-Processing", 11, true}, // case-insensitive
 		{"alice", 33, true},
-		{"not-installed", 0, false},               // App not installed on this org
+		{"not-installed", 0, false}, // App not installed on this org
 		{"", 0, false},
 	}
 	for _, tc := range cases {

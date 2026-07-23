@@ -472,4 +472,3 @@ func cmdRuns(args []string) int {
 	renderRunList(os.Stdout, runs)
 	return 0
 }
-

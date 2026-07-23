@@ -38,7 +38,7 @@ func RegisterDocsRoutes(mux *http.ServeMux) {
 // USD, the backend charges in ZAR at capture-time FX). The web pricing page depends
 // on this exact JSON shape.
 type publicPlan struct {
-	Key string `json:"key"`
+	Key  string `json:"key"`
 	Name string `json:"name"`
 	// PerBuilderUSD is per_builder_cents/100, or null for enterprise (custom
 	// pricing) so the pricing page renders "Custom" rather than "$0/builder".
@@ -47,9 +47,9 @@ type publicPlan struct {
 	// BYOKPerBuilderUSD is the per-builder price when bringing your own LLM key:
 	// the base minus the included-LLM value (you don't pay for managed AI you don't
 	// use). null for free (already $0/BYOK) and enterprise (custom).
-	BYOKPerBuilderUSD *float64 `json:"byokPerBuilderUsd"`
-	OverageMarkup     float64  `json:"overageMarkup"`
-	Builders          int      `json:"builders"` // cap: 0 = unlimited
+	BYOKPerBuilderUSD *float64       `json:"byokPerBuilderUsd"`
+	OverageMarkup     float64        `json:"overageMarkup"`
+	Builders          int            `json:"builders"` // cap: 0 = unlimited
 	Features          map[string]any `json:"features"`
 }
 

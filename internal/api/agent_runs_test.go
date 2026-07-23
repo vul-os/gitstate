@@ -4,6 +4,7 @@
 //   - happy path: an API token with write:agent_runs logs a run (201) and the
 //     run lists back (200), with supervisor_id defaulting to the token's user;
 //   - scope rejection: a token WITHOUT write:agent_runs is 403 on POST.
+//
 // Skips when DATABASE_URL is unset.
 package api
 

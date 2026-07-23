@@ -7,7 +7,7 @@
 //   - Every org-scoped write receives a pgx.Tx from db.WithOrg so RLS fires.
 //   - The dunning columns live on the subscriptions table (migration 003).
 //   - billing_status is the authoritative lifecycle state:
-//       active | past_due | suspended | canceled
+//     active | past_due | suspended | canceled
 //     The legacy `status` column is kept in sync for back-compat (active|past_due|canceled;
 //     suspended maps to past_due on the legacy column since it predates suspension).
 package store

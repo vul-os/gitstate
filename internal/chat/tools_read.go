@@ -218,13 +218,13 @@ func cycleTimeSummaryTool() Tool {
 
 // cycleTimeSummaryResult is the compact shape the model reasons over.
 type cycleTimeSummaryResult struct {
-	From            string   `json:"from"`
-	To              string   `json:"to"`
-	PRs             int      `json:"prs"`
-	WithLeadTime    int      `json:"withLeadTime"`
-	LeadP50Hours    *float64 `json:"leadP50Hours"`
-	LeadP90Hours    *float64 `json:"leadP90Hours"`
-	ReviewP50Hours  *float64 `json:"reviewP50Hours"`
+	From           string   `json:"from"`
+	To             string   `json:"to"`
+	PRs            int      `json:"prs"`
+	WithLeadTime   int      `json:"withLeadTime"`
+	LeadP50Hours   *float64 `json:"leadP50Hours"`
+	LeadP90Hours   *float64 `json:"leadP90Hours"`
+	ReviewP50Hours *float64 `json:"reviewP50Hours"`
 }
 
 func summariseCycleTimes(rows []*store.CycleTime, win store.CycleTimeFilter) cycleTimeSummaryResult {
@@ -273,11 +273,11 @@ func listReposTool() Tool {
 				return nil, nil, err
 			}
 			type repoView struct {
-				ID            string     `json:"id"`
-				FullName      string     `json:"fullName"`
-				Platform      string     `json:"platform"`
-				DefaultBranch string     `json:"defaultBranch"`
-				LastSyncedAt  *time.Time `json:"lastSyncedAt"`
+				ID             string     `json:"id"`
+				FullName       string     `json:"fullName"`
+				Platform       string     `json:"platform"`
+				DefaultBranch  string     `json:"defaultBranch"`
+				LastSyncedAt   *time.Time `json:"lastSyncedAt"`
 				LastAnalyzedAt *time.Time `json:"lastAnalyzedAt"`
 			}
 			views := make([]repoView, 0, len(repos))
@@ -364,16 +364,16 @@ func engHealthTool() Tool {
 }
 
 type engHealthSummary struct {
-	From              string   `json:"from"`
-	To                string   `json:"to"`
-	MergedPRs         int      `json:"mergedPrs"`
-	ChangeFailureRate *float64 `json:"changeFailureRate"`
-	BugFixChanges     int      `json:"bugFixChanges"`
-	LeadP50Hours      *float64 `json:"leadP50Hours"`
-	LeadP90Hours      *float64 `json:"leadP90Hours"`
-	MergedWithoutReview int    `json:"mergedWithoutReview"`
-	TruckFactor       int      `json:"truckFactor"`
-	SingleOwnerAreas  []string `json:"singleOwnerAreas"`
+	From                string   `json:"from"`
+	To                  string   `json:"to"`
+	MergedPRs           int      `json:"mergedPrs"`
+	ChangeFailureRate   *float64 `json:"changeFailureRate"`
+	BugFixChanges       int      `json:"bugFixChanges"`
+	LeadP50Hours        *float64 `json:"leadP50Hours"`
+	LeadP90Hours        *float64 `json:"leadP90Hours"`
+	MergedWithoutReview int      `json:"mergedWithoutReview"`
+	TruckFactor         int      `json:"truckFactor"`
+	SingleOwnerAreas    []string `json:"singleOwnerAreas"`
 }
 
 func summariseEngHealth(win store.EngHealthWindow, lead store.LeadTimeStats, d store.DeliveryCounts, review store.ReviewHealth, bus store.BusFactor) engHealthSummary {
@@ -405,4 +405,3 @@ func summariseEngHealth(win store.EngHealthWindow, lead store.LeadTimeStats, d s
 	}
 	return s
 }
-

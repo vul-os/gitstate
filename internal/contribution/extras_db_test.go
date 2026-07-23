@@ -55,7 +55,9 @@ func TestContribByContributor_CanonicalNameAndTrends(t *testing.T) {
 		fmt.Sprintf("contrib-byc-%d", ns), "Contrib ByContributor Org").Scan(&orgID); err != nil {
 		t.Fatalf("create org: %v", err)
 	}
-	defer func() { _, _ = database.Pool().Exec(context.Background(), `DELETE FROM organizations WHERE id=$1`, orgID) }()
+	defer func() {
+		_, _ = database.Pool().Exec(context.Background(), `DELETE FROM organizations WHERE id=$1`, orgID)
+	}()
 
 	// Anchor the commits inside the most recent ~6 month windows so the trend has
 	// points. Spread Cameron's two emails across two recent months.

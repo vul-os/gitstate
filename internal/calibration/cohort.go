@@ -4,12 +4,12 @@
 // The design (Wave 1 of the AI/agent flywheel):
 //
 //   - cohort.go    — pure, deterministic derivation of cohort_key / size_bucket /
-//                    change_type from a PR + its diff metadata.
+//     change_type from a PR + its diff metadata.
 //   - curve.go     — the math: a fixed cold-start difficulty→secs prior, empirical-
-//                    Bayes shrinkage toward the global cohort, recency-weighted
-//                    quantiles, and CalibratedSecs (the read path).
+//     Bayes shrinkage toward the global cohort, recency-weighted
+//     quantiles, and CalibratedSecs (the read path).
 //   - recompute.go — RecomputeCalibration: backfill actuals from cycle_times, build
-//                    the per-cohort curves, and the per-cohort accuracy summary.
+//     the per-cohort curves, and the per-cohort accuracy summary.
 //
 // All DB work runs inside db.WithOrg so the non-superuser FORCE-RLS role sees
 // app.current_org; a bare-pool read would return zero rows.

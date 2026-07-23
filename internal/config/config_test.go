@@ -19,8 +19,6 @@ func clearConfigEnv(t *testing.T) {
 		"JWT_SIGNING_KEY", "ACCESS_TOKEN_TTL", "REFRESH_TOKEN_TTL",
 		"OAUTH_GOOGLE_CLIENT_ID", "OAUTH_GOOGLE_CLIENT_SECRET",
 		"OAUTH_MICROSOFT_CLIENT_ID", "OAUTH_MICROSOFT_CLIENT_SECRET", "OAUTH_MICROSOFT_TENANT",
-		"XERO_CLIENT_ID", "XERO_CLIENT_SECRET",
-		"QUICKBOOKS_CLIENT_ID", "QUICKBOOKS_CLIENT_SECRET",
 		"BILLING_ENABLED", "SUPER_ADMIN_EMAILS",
 	} {
 		t.Setenv(k, "")
@@ -135,15 +133,13 @@ func TestFileUsedWhenEnvUnset(t *testing.T) {
 // are set, for every derived provider flag.
 func TestProviderEnabledDerivation(t *testing.T) {
 	cases := []struct {
-		name     string
-		idKey    string
-		secKey   string
-		get      func(*config.Config) bool
+		name   string
+		idKey  string
+		secKey string
+		get    func(*config.Config) bool
 	}{
 		{"google", "OAUTH_GOOGLE_CLIENT_ID", "OAUTH_GOOGLE_CLIENT_SECRET", func(c *config.Config) bool { return c.Auth.Providers.Google.Enabled }},
 		{"microsoft", "OAUTH_MICROSOFT_CLIENT_ID", "OAUTH_MICROSOFT_CLIENT_SECRET", func(c *config.Config) bool { return c.Auth.Providers.Microsoft.Enabled }},
-		{"xero", "XERO_CLIENT_ID", "XERO_CLIENT_SECRET", func(c *config.Config) bool { return c.Accounting.Xero.Enabled }},
-		{"quickbooks", "QUICKBOOKS_CLIENT_ID", "QUICKBOOKS_CLIENT_SECRET", func(c *config.Config) bool { return c.Accounting.QuickBooks.Enabled }},
 	}
 
 	for _, tc := range cases {

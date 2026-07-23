@@ -194,10 +194,10 @@ func (q *Queue) Enqueue(ctx context.Context, orgID, kind string, payload any, op
 
 // claimedJob is a single dequeued row.
 type claimedJob struct {
-	ID      string
-	OrgID   string
-	Kind    string
-	Payload json.RawMessage
+	ID          string
+	OrgID       string
+	Kind        string
+	Payload     json.RawMessage
 	Attempts    int
 	MaxAttempts int
 }

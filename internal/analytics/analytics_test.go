@@ -217,7 +217,7 @@ func TestContributorIDFromAuthor(t *testing.T) {
 		{in: "contributor:abc-123", wantID: "abc-123", wantOK: true},
 		{in: "  contributor:abc-123  ", wantID: "abc-123", wantOK: true},
 		{in: "contributor: 9f8 ", wantID: "9f8", wantOK: true},
-		{in: "contributor:", wantOK: false},   // prefix only → not a contributor token
+		{in: "contributor:", wantOK: false},      // prefix only → not a contributor token
 		{in: "alice@example.com", wantOK: false}, // plain email
 		{in: "alice", wantOK: false},             // plain login
 		{in: "", wantOK: false},

@@ -190,20 +190,20 @@ func TestEmptyRepo(t *testing.T) {
 // TestIsTestPath spot-checks the cross-ecosystem test-path heuristic.
 func TestIsTestPath(t *testing.T) {
 	cases := map[string]bool{
-		"internal/foo_test.go":        true,
-		"src/app.test.js":             true,
-		"web/Button.spec.tsx":         true,
-		"tests/test_thing.py":         true,
-		"pkg/thing_test.py":           true,
-		"src/__tests__/x.js":          true,
-		"java/src/FooTest.java":       true,
-		"java/src/TestFoo.java":       true,
-		"spec/models/user_spec.rb":    true,
-		"testdata/fixture.json":       true,
-		"src/app.go":                  false,
-		"src/contest.go":              false, // "test" substring must not match
-		"README.md":                   false,
-		"internal/latest/version.go":  false,
+		"internal/foo_test.go":       true,
+		"src/app.test.js":            true,
+		"web/Button.spec.tsx":        true,
+		"tests/test_thing.py":        true,
+		"pkg/thing_test.py":          true,
+		"src/__tests__/x.js":         true,
+		"java/src/FooTest.java":      true,
+		"java/src/TestFoo.java":      true,
+		"spec/models/user_spec.rb":   true,
+		"testdata/fixture.json":      true,
+		"src/app.go":                 false,
+		"src/contest.go":             false, // "test" substring must not match
+		"README.md":                  false,
+		"internal/latest/version.go": false,
 	}
 	for path, want := range cases {
 		if got := IsTestPath(path); got != want {

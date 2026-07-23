@@ -3,7 +3,6 @@ module github.com/exo/gitstate
 go 1.25.6
 
 require (
-	github.com/go-pdf/fpdf v0.9.0
 	github.com/golang-jwt/jwt/v5 v5.2.2
 	github.com/google/go-github/v66 v66.0.0
 	github.com/jackc/pgx/v5 v5.10.0

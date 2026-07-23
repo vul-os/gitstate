@@ -39,11 +39,11 @@ type relatedCommit struct {
 
 // similarIssue is a historically-similar issue plus its resolving PR.
 type similarIssue struct {
-	ID           string     `json:"id"`
-	Number       int        `json:"number"`
-	Title        string     `json:"title"`
-	State        string     `json:"state"`
-	ResolvingPR  *relatedPR `json:"resolvingPr"`
+	ID          string     `json:"id"`
+	Number      int        `json:"number"`
+	Title       string     `json:"title"`
+	State       string     `json:"state"`
+	ResolvingPR *relatedPR `json:"resolvingPr"`
 }
 
 // issueContext is the bundle returned by GET /api/context/issue/{id}.

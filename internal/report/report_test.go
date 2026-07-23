@@ -110,8 +110,8 @@ func TestValidateSQL_TableAllowlist(t *testing.T) {
 		"SELECT token_hash FROM refresh_tokens",
 		"SELECT * FROM oauth_accounts",
 		"SELECT * FROM audit_log",
-		"SELECT id FROM issues UNION SELECT password_hash FROM users",  // join via second FROM
-		"SELECT id FROM issues -- AND password_hash FROM users",        // comment evasion
+		"SELECT id FROM issues UNION SELECT password_hash FROM users", // join via second FROM
+		"SELECT id FROM issues -- AND password_hash FROM users",       // comment evasion
 	}
 	for _, q := range blocked {
 		if err := validateSQL(q); err == nil {

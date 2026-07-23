@@ -37,7 +37,9 @@ func TestComputeInvolvementReviewsDone(t *testing.T) {
 		fmt.Sprintf("inv-rev-%d", ns), "Inv Rev").Scan(&orgID); err != nil {
 		t.Fatalf("create org: %v", err)
 	}
-	t.Cleanup(func() { _, _ = database.Pool().Exec(context.Background(), `DELETE FROM organizations WHERE id=$1`, orgID) })
+	t.Cleanup(func() {
+		_, _ = database.Pool().Exec(context.Background(), `DELETE FROM organizations WHERE id=$1`, orgID)
+	})
 
 	reviewerEmail := fmt.Sprintf("rev-%d@example.com", ns)
 	authorEmail := fmt.Sprintf("auth-%d@example.com", ns)

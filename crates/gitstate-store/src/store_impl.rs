@@ -20,7 +20,13 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 /// A raw `context_members` row: (member_kind, member_key, note, add_hlc, remove_hlc).
-type MemberRow = (String, String, Option<String>, Option<String>, Option<String>);
+type MemberRow = (
+    String,
+    String,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+);
 
 /// The local SQLite-backed [`Store`].
 pub struct SqliteStore {

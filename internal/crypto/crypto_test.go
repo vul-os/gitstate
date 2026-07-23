@@ -15,7 +15,7 @@ func TestEncryptDecrypt_RoundTrip(t *testing.T) {
 	key := keyFor("a-test-key")
 	cases := [][]byte{
 		[]byte("hello world"),
-		[]byte(""),                       // empty plaintext is valid
+		[]byte(""),                        // empty plaintext is valid
 		[]byte("ghp_secrettoken_1234567"), // token-like
 		bytes.Repeat([]byte{0x00}, 100),   // all-zero bytes
 		[]byte("unicode: αβγ 日本語 🚀"),

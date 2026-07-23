@@ -73,8 +73,8 @@ type DashboardResult struct {
 
 // BurndownResult is the response for GET /api/reports/burndown.
 type BurndownResult struct {
-	ProjectID string              `json:"projectId,omitempty"`
-	Days      int                 `json:"days"`
+	ProjectID string                `json:"projectId,omitempty"`
+	Days      int                   `json:"days"`
 	Series    []store.BurndownPoint `json:"series"`
 }
 

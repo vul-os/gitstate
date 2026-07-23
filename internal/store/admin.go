@@ -17,12 +17,12 @@ import (
 
 // AdminStats holds top-level instance analytics for the super-admin dashboard.
 type AdminStats struct {
-	TotalUsers        int
-	TotalOrgs         int
-	TotalSuperAdmins  int
-	NewUsersLast30d   int
-	NewOrgsLast30d    int
-	MRREstimateCents  int // sum of active subscriptions' plan usd_cents
+	TotalUsers       int
+	TotalOrgs        int
+	TotalSuperAdmins int
+	NewUsersLast30d  int
+	NewOrgsLast30d   int
+	MRREstimateCents int // sum of active subscriptions' plan usd_cents
 }
 
 // SignupDay is one row from the signups-by-day query.

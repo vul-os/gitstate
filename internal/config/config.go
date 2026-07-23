@@ -22,26 +22,8 @@ type Config struct {
 	Auth     AuthConfig     `yaml:"auth"`
 	Git      GitConfig      `yaml:"git"`
 	LLM      LLMConfig      `yaml:"llm"`
-	Billing    BillingConfig    `yaml:"billing"`
-	Admin      AdminConfig      `yaml:"admin"`
-	Accounting AccountingConfig `yaml:"accounting"`
-}
-
-// AccountingConfig holds Xero / QuickBooks OAuth app credentials (cloud-only).
-// Each provider's Enabled is derived: true iff ClientID + ClientSecret are set.
-type AccountingConfig struct {
-	Xero       OAuthCreds `yaml:"xero"`
-	QuickBooks OAuthCreds `yaml:"quickbooks"`
-	Sage       OAuthCreds `yaml:"sage"`
-	ZohoBooks  OAuthCreds `yaml:"zoho_books"`
-	FreshBooks OAuthCreds `yaml:"freshbooks"`
-}
-
-// OAuthCreds is a generic client id/secret pair with a derived Enabled flag.
-type OAuthCreds struct {
-	ClientID     string `yaml:"client_id"`
-	ClientSecret string `yaml:"client_secret"`
-	Enabled      bool   `yaml:"-"`
+	Billing  BillingConfig  `yaml:"billing"`
+	Admin    AdminConfig    `yaml:"admin"`
 }
 
 // AppConfig holds core application settings.
@@ -199,13 +181,6 @@ type AdminConfig struct {
 	// AnalyticsSalt salts the IP hash so raw IPs are never stored. GENERATE_DAILY
 	// rotation is the operator's call; a stable per-deploy secret is fine.
 	AnalyticsSalt string `yaml:"-"` // ANALYTICS_SALT
-
-	// Cloud COGS reconciliation (actual vs the billsim projection). All optional;
-	// the COGS dashboard degrades to "projection only" when a key is absent.
-	FlyAPIToken  string `yaml:"-"` // FLY_API_TOKEN (Fly.io billing/usage)
-	FlyOrgSlug   string `yaml:"-"` // FLY_ORG_SLUG
-	NeonAPIKey   string `yaml:"-"` // NEON_API_KEY (Neon consumption API)
-	NeonProjectID string `yaml:"-"` // NEON_PROJECT_ID
 }
 
 // envVarRe matches ${ENV_VAR} references in YAML values.
@@ -311,17 +286,6 @@ func Load() (*Config, error) {
 	cfg.Git.GitLab.LoginEnabled =
 		cfg.Git.GitLab.OAuthClientID != "" && cfg.Git.GitLab.OAuthClientSecret != ""
 
-	cfg.Accounting.Xero.Enabled =
-		cfg.Accounting.Xero.ClientID != "" && cfg.Accounting.Xero.ClientSecret != ""
-	cfg.Accounting.QuickBooks.Enabled =
-		cfg.Accounting.QuickBooks.ClientID != "" && cfg.Accounting.QuickBooks.ClientSecret != ""
-	cfg.Accounting.Sage.Enabled =
-		cfg.Accounting.Sage.ClientID != "" && cfg.Accounting.Sage.ClientSecret != ""
-	cfg.Accounting.ZohoBooks.Enabled =
-		cfg.Accounting.ZohoBooks.ClientID != "" && cfg.Accounting.ZohoBooks.ClientSecret != ""
-	cfg.Accounting.FreshBooks.Enabled =
-		cfg.Accounting.FreshBooks.ClientID != "" && cfg.Accounting.FreshBooks.ClientSecret != ""
-
 	return cfg, nil
 }
 
@@ -408,16 +372,6 @@ func overlayEnv(cfg *Config) {
 	setStr(&cfg.Auth.Providers.Google.ClientSecret, "OAUTH_GOOGLE_CLIENT_SECRET")
 	setStr(&cfg.Auth.Providers.Microsoft.ClientID, "OAUTH_MICROSOFT_CLIENT_ID")
 	setStr(&cfg.Auth.Providers.Microsoft.ClientSecret, "OAUTH_MICROSOFT_CLIENT_SECRET")
-	setStr(&cfg.Accounting.Xero.ClientID, "XERO_CLIENT_ID")
-	setStr(&cfg.Accounting.Sage.ClientID, "SAGE_CLIENT_ID")
-	setStr(&cfg.Accounting.Sage.ClientSecret, "SAGE_CLIENT_SECRET")
-	setStr(&cfg.Accounting.ZohoBooks.ClientID, "ZOHO_BOOKS_CLIENT_ID")
-	setStr(&cfg.Accounting.ZohoBooks.ClientSecret, "ZOHO_BOOKS_CLIENT_SECRET")
-	setStr(&cfg.Accounting.FreshBooks.ClientID, "FRESHBOOKS_CLIENT_ID")
-	setStr(&cfg.Accounting.FreshBooks.ClientSecret, "FRESHBOOKS_CLIENT_SECRET")
-	setStr(&cfg.Accounting.Xero.ClientSecret, "XERO_CLIENT_SECRET")
-	setStr(&cfg.Accounting.QuickBooks.ClientID, "QUICKBOOKS_CLIENT_ID")
-	setStr(&cfg.Accounting.QuickBooks.ClientSecret, "QUICKBOOKS_CLIENT_SECRET")
 	setStr(&cfg.Auth.Providers.Microsoft.Tenant, "OAUTH_MICROSOFT_TENANT")
 
 	// Git
@@ -462,8 +416,4 @@ func overlayEnv(cfg *Config) {
 	setStr(&cfg.Admin.DatabaseURL, "ADMIN_DATABASE_URL")
 	setStr(&cfg.Admin.GeoIPDBPath, "GEOIP_DB_PATH")
 	setStr(&cfg.Admin.AnalyticsSalt, "ANALYTICS_SALT")
-	setStr(&cfg.Admin.FlyAPIToken, "FLY_API_TOKEN")
-	setStr(&cfg.Admin.FlyOrgSlug, "FLY_ORG_SLUG")
-	setStr(&cfg.Admin.NeonAPIKey, "NEON_API_KEY")
-	setStr(&cfg.Admin.NeonProjectID, "NEON_PROJECT_ID")
 }

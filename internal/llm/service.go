@@ -49,8 +49,8 @@ Write 3–5 short paragraphs. Plain prose, no bullet lists. Be direct and specif
 // DiffMeta carries optional metadata about the diff being estimated. Callers
 // may leave fields empty; the service includes non-empty values in context.
 type DiffMeta struct {
-	PRID    string // pull_request UUID (optional)
-	PRTitle string // human-readable PR title (optional)
+	PRID     string // pull_request UUID (optional)
+	PRTitle  string // human-readable PR title (optional)
 	RepoName string // e.g. "owner/repo" (optional)
 	// Area is the cohort area (top-level dir) the change touches, used to frame
 	// the exemplars (optional).
@@ -64,10 +64,10 @@ type DiffMeta struct {
 // gives the model concrete predicted-vs-actual ground truth from this org so its
 // difficulty judgment is grounded in how long similar work actually took.
 type Exemplar struct {
-	Title         string
-	Difficulty    float64
+	Title          string
+	Difficulty     float64
 	PredictedHours float64
-	ActualHours   float64
+	ActualHours    float64
 }
 
 // DifficultySummary is the parsed result of EstimateDifficulty.

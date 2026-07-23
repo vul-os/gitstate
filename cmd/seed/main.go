@@ -2348,7 +2348,7 @@ func (s *seeder) seedTimeEntries(orgID string, issueIDs []string) int {
 
 // subTally summarises the seeded subscriptions for the seed summary box.
 type subTally struct {
-	orgs    int // active subscriptions seeded
+	orgs     int // active subscriptions seeded
 	mrrCents int // instance-wide MRR the admin console will read
 	// per-org breakdown for the summary line.
 	teamBuilders int
@@ -2406,11 +2406,11 @@ func (s *seeder) seedSubscriptions(primary *store.Org) subTally {
 		role string
 	}
 	roster := []seatAssign{
-		{members[0], "owner"},  // Alex
-		{members[1], "admin"},  // Priya
-		{members[2], "member"}, // Marcus
-		{members[3], "member"}, // Sofia
-		{members[5], "member"}, // Aisha
+		{members[0], "owner"},        // Alex
+		{members[1], "admin"},        // Priya
+		{members[2], "member"},       // Marcus
+		{members[3], "member"},       // Sofia
+		{members[5], "member"},       // Aisha
 		{members[10], "stakeholder"}, // Sam — free, must NOT count toward MRR
 	}
 	s.must(s.db.WithOrg(s.ctx, org2.ID, func(tx pgx.Tx) error {

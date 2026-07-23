@@ -297,4 +297,3 @@ func TestGitLabWebhookReceiverHTTP(t *testing.T) {
 
 	t.Logf("gitlab receiver OK: token+?org=→200+row (constant-time), wrong/missing token→401, unknown→200 no-op")
 }
-

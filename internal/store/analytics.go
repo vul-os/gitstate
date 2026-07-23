@@ -906,7 +906,7 @@ func (f AnalyticsFilter) Contributors(ctx context.Context, tx pgx.Tx, orgID stri
 	}
 
 	out := make([]Contributor, 0, len(raw))
-	byContrib := map[string]int{} // contributor_id -> index in out
+	byContrib := map[string]int{}                           // contributor_id -> index in out
 	contribDisplay, _ := contributorDisplay(ctx, tx, orgID) // id -> (name,email)
 	// Identities per contributor so each leaderboard row carries the whole group
 	// (the frontend builds a `contributor:<id>` author option from it). Loaded once

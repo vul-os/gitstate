@@ -1,13 +1,13 @@
 // Package chat implements gitstate's agentic chat engine: a Claude-Code-style
 // assistant that streams tokens, calls TOOLS to read gitstate data, and PROPOSES
-// confirmable actions (buttons the UI renders) for any billing/destructive
-// mutation. It never mutates state itself — the model can only read, and any
-// write is surfaced as an *Action the human must click.
+// confirmable actions (buttons the UI renders) for any destructive mutation. It
+// never mutates state itself — the model can only read, and any write is
+// surfaced as an *Action the human must click.
 //
 // The engine (engine.go) drives an llm.openAIClient (through the in-process
 // llmux gateway) in a tool-calling loop. tools.go defines the Tool contract and
 // the concrete read + action tools, each reusing the existing analytics /
-// contribution / billing / store services so no query logic is reinvented.
+// contribution / store services so no query logic is reinvented.
 //
 // # Security model
 //
@@ -17,7 +17,7 @@
 //   - ACTION tools NEVER mutate. They return an *Action describing a one-click
 //     button (Type/Label/Endpoint/Method/Payload/Confirm). The real mutation only
 //     happens when the USER clicks and the UI calls the named endpoint with its
-//     own auth — the model cannot trigger a charge, sync, invoice, or exclusion.
+//     own auth — the model cannot trigger a sync or exclusion directly.
 package chat
 
 import (
@@ -34,9 +34,9 @@ import (
 // the mutation runs through the normal authorize-on-the-endpoint path. The chat
 // engine itself performs no writes.
 type Action struct {
-	// Type is a stable machine key for the action family (e.g. "plan_upgrade",
-	// "sync_repo", "generate_invoice", "exclude_contributor"). The UI can switch
-	// on it to pick an icon/confirmation copy.
+	// Type is a stable machine key for the action family (e.g. "sync_repo",
+	// "exclude_contributor"). The UI can switch on it to pick an icon/confirmation
+	// copy.
 	Type string `json:"type"`
 	// Label is the human button text, e.g. "Upgrade to Pro".
 	Label string `json:"label"`
@@ -65,15 +65,15 @@ type Tool struct {
 // Registry is the ordered set of tools exposed to the model. Order is stable so
 // the system prompt and the OpenAI tools array are deterministic.
 type Registry struct {
-	tools []Tool
+	tools  []Tool
 	byName map[string]Tool
 }
 
 // NewRegistry builds the default gitstate tool registry: the read tools
-// (analytics, contribution, eng-health, cycle-time, repos, billing, invoices)
-// plus the action tools (plan upgrade, repo sync, invoice-from-git, exclude
-// contributor). All handlers are org-scoped and side-effect-free except that
-// action tools return an *Action (still no mutation).
+// (analytics, contribution, eng-health, cycle-time, repos) plus the action
+// tools (repo sync, exclude contributor). All handlers are org-scoped and
+// side-effect-free except that action tools return an *Action (still no
+// mutation).
 func NewRegistry() *Registry {
 	tools := []Tool{
 		// ── read tools ──────────────────────────────────────────────────────
@@ -123,8 +123,12 @@ func objectSchema(props map[string]any, required ...string) map[string]any {
 	return s
 }
 
-func stringProp(desc string) map[string]any { return map[string]any{"type": "string", "description": desc} }
-func intProp(desc string) map[string]any    { return map[string]any{"type": "integer", "description": desc} }
+func stringProp(desc string) map[string]any {
+	return map[string]any{"type": "string", "description": desc}
+}
+func intProp(desc string) map[string]any {
+	return map[string]any{"type": "integer", "description": desc}
+}
 
 // jsonResult marshals v into a json.RawMessage for a tool result. It never
 // fails for the value types we use; on the off chance marshalling errors it

@@ -67,7 +67,9 @@ func TestProfile_GetUpdateAndConflicts(t *testing.T) {
 		fmt.Sprintf("profile-%d", ns), "Profile Org").Scan(&orgID); err != nil {
 		t.Fatalf("create org: %v", err)
 	}
-	defer func() { _, _ = database.Pool().Exec(context.Background(), `DELETE FROM organizations WHERE id=$1`, orgID) }()
+	defer func() {
+		_, _ = database.Pool().Exec(context.Background(), `DELETE FROM organizations WHERE id=$1`, orgID)
+	}()
 
 	u1ID, u1Tok := seedMember(t, ctx, database, key, orgID, "owner")
 	u2ID, _ := seedMember(t, ctx, database, key, orgID, "member")

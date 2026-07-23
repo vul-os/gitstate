@@ -60,7 +60,7 @@ func (c Config) Configured() bool { return c.Host != "" && c.From != "" }
 type Mailer struct {
 	cfg  Config
 	prov providerConfig // resend / ses / smtp selection (resolved from env)
-	send sendFunc        // injectable for tests; defaults to smtp.SendMail
+	send sendFunc       // injectable for tests; defaults to smtp.SendMail
 	log  *log.Logger
 }
 

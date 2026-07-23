@@ -37,19 +37,19 @@ type Plan struct {
 
 // Subscription mirrors a row from the subscriptions table.
 type Subscription struct {
-	ID              string
-	OrgID           string
-	PlanKey         string
-	Status          string     // active | past_due | canceled
+	ID               string
+	OrgID            string
+	PlanKey          string
+	Status           string // active | past_due | canceled
 	CurrentPeriodEnd *time.Time
 	PaystackSubCode  string
-	CreatedAt       time.Time
+	CreatedAt        time.Time
 }
 
 // UsageRollup is a single kind-aggregated result from SumUsage.
 type UsageRollup struct {
-	Kind        string
-	TotalQty    float64
+	Kind         string
+	TotalQty     float64
 	TotalCostUSD float64
 }
 

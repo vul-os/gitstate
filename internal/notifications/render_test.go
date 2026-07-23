@@ -287,7 +287,7 @@ func TestStartOfWeek(t *testing.T) {
 	// All days within the week of Mon 2026-06-15 map back to that Monday 00:00 UTC.
 	want := time.Date(2026, 6, 15, 0, 0, 0, 0, time.UTC)
 	for _, d := range []time.Time{
-		time.Date(2026, 6, 15, 9, 0, 0, 0, time.UTC),  // Mon
+		time.Date(2026, 6, 15, 9, 0, 0, 0, time.UTC),   // Mon
 		time.Date(2026, 6, 17, 23, 59, 0, 0, time.UTC), // Wed
 		time.Date(2026, 6, 21, 12, 0, 0, 0, time.UTC),  // Sun (still same ISO week)
 	} {

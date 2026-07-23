@@ -1,10 +1,10 @@
 // Package api — chat.go
 // The agentic chat endpoint: POST /api/chat streams a Claude-Code-style
 // assistant over Server-Sent Events. The model can call read tools (analytics,
-// contribution, eng-health, billing, invoices) and PROPOSE confirmable actions
-// (plan upgrade, repo sync, invoice generation, contributor exclusion) — it
-// never mutates state itself. Everything routes through the in-process llmux
-// gateway (the same one GET /api/models uses), so it honours LLM_GATEWAY=llmux.
+// contribution, eng-health) and PROPOSE confirmable actions (repo sync,
+// contributor exclusion) — it never mutates state itself. Everything routes
+// through the in-process llmux gateway (the same one GET /api/models uses),
+// so it honours LLM_GATEWAY=llmux.
 //
 // # SSE event contract (for the UI)
 //
@@ -18,12 +18,12 @@
 //   - tool_call    {"id","name","args":{...}}                   a tool invocation started
 //   - tool_result  {"id","name","result":{...}}  OR  {...,"error":"..."}
 //   - action       {"type","label","endpoint","method","payload":{...},"confirm":true}
-//                                                               a confirmable button to render
+//     a confirmable button to render
 //   - done         {"content":"<final assistant text>"}         terminal success
 //   - error        {"error":"..."}                              terminal failure
 //
-// Billing/destructive operations are ALWAYS surfaced as `action` events
-// (buttons the user clicks); the model cannot execute them.
+// Destructive operations are ALWAYS surfaced as `action` events (buttons the
+// user clicks); the model cannot execute them.
 package api
 
 import (

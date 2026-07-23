@@ -9,21 +9,21 @@ import (
 
 func TestIsBugFixMessage(t *testing.T) {
 	cases := map[string]bool{
-		"fix: correct off-by-one":         true,
-		"fixed the crash":                 true,
-		"fixes #123":                      true,
-		"hotfix for prod":                 true,
-		"bug in parser":                   true,
-		"patch the leak":                  true,
-		"patched memory issue":            true,
-		"revert bad change":               true,
-		"reverted the merge":              true,
-		"address regression in cache":     true,
-		"feat: add new endpoint":          false,
-		"refactor module":                 false,
-		"docs: update readme":             false,
-		"prefix matters not":              false,
-		"affixed a label":                 false, // must not match "fix" inside a word
+		"fix: correct off-by-one":     true,
+		"fixed the crash":             true,
+		"fixes #123":                  true,
+		"hotfix for prod":             true,
+		"bug in parser":               true,
+		"patch the leak":              true,
+		"patched memory issue":        true,
+		"revert bad change":           true,
+		"reverted the merge":          true,
+		"address regression in cache": true,
+		"feat: add new endpoint":      false,
+		"refactor module":             false,
+		"docs: update readme":         false,
+		"prefix matters not":          false,
+		"affixed a label":             false, // must not match "fix" inside a word
 	}
 	for msg, want := range cases {
 		if got := IsBugFixMessage(msg); got != want {
@@ -36,12 +36,12 @@ func TestIsBugFixMessage(t *testing.T) {
 
 func TestParseStatNum(t *testing.T) {
 	cases := map[string]int{
-		"5":   5,
+		"5":     5,
 		"  12 ": 12,
-		"-":   0, // binary file marker
-		"":    0,
-		"abc": 0,
-		"0":   0,
+		"-":     0, // binary file marker
+		"":      0,
+		"abc":   0,
+		"0":     0,
 	}
 	for in, want := range cases {
 		if got := parseStatNum(in); got != want {

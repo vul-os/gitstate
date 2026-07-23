@@ -22,10 +22,10 @@ func TestLeaveTitle(t *testing.T) {
 		kind, name, want string
 	}{
 		{"pto", "Ada Lovelace", "PTO — Ada Lovelace"},
-		{"", "Ada", "PTO — Ada"},      // default label
+		{"", "Ada", "PTO — Ada"}, // default label
 		{"sick", "Bob", "Sick leave — Bob"},
 		{"holiday", "Cy", "Holiday — Cy"},
-		{"pto", "", "PTO"},            // no name → label only
+		{"pto", "", "PTO"}, // no name → label only
 		{"holiday", "", "Holiday"},
 	}
 	for _, c := range cases {

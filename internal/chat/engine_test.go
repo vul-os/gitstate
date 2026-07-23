@@ -89,8 +89,7 @@ func TestRegistrySchemasValid(t *testing.T) {
 	for _, want := range []string{
 		"get_analytics_summary", "commits_over_time", "top_contributors",
 		"get_contribution", "cycle_time_summary", "list_repos", "repo_stats",
-		"eng_health", "list_invoices", "invoice_summary", "current_usage", "wallet_balance",
-		"propose_plan_upgrade", "propose_sync_repo", "propose_generate_invoice", "propose_exclude_contributor",
+		"eng_health", "propose_sync_repo", "propose_exclude_contributor",
 	} {
 		if !seen[want] {
 			t.Errorf("missing expected tool %q", want)
@@ -106,22 +105,22 @@ func TestAgenticLoopExecutesToolThenAnswers(t *testing.T) {
 	var tc llm.ChatToolCall
 	tc.ID = "call_1"
 	tc.Type = "function"
-	tc.Function.Name = "propose_plan_upgrade"
-	tc.Function.Arguments = `{"planKey":"pro"}`
+	tc.Function.Name = "propose_sync_repo"
+	tc.Function.Arguments = `{"repoId":"repo-1"}`
 
 	fake := &fakeProvider{results: []llm.ChatResult{
 		{Content: "Let me set that up.", ToolCalls: []llm.ChatToolCall{tc}, FinishReason: "tool_calls"},
-		{Content: "I've prepared an upgrade button for you.", FinishReason: "stop"},
+		{Content: "I've prepared a sync button for you.", FinishReason: "stop"},
 	}}
 
 	// nil *db.DB is fine: the action tool's handler never touches the DB.
 	e := NewEngine(fake, nil, NewRegistry(), "test-model")
-	events, final := collect(t, e, []llm.ChatMessage{{Role: "user", Content: "upgrade me to pro"}})
+	events, final := collect(t, e, []llm.ChatMessage{{Role: "user", Content: "sync the frontend repo"}})
 
 	if fake.calls != 2 {
 		t.Fatalf("provider called %d times, want 2", fake.calls)
 	}
-	if final != "I've prepared an upgrade button for you." {
+	if final != "I've prepared a sync button for you." {
 		t.Errorf("final = %q", final)
 	}
 
@@ -166,11 +165,11 @@ func TestAgenticLoopExecutesToolThenAnswers(t *testing.T) {
 // confirmable Action (and the right endpoint/method/payload) and that the loop
 // emits exactly one action event — never executing a mutation.
 func TestActionToolProposesWithoutMutating(t *testing.T) {
-	tool, ok := NewRegistry().Lookup("propose_plan_upgrade")
+	tool, ok := NewRegistry().Lookup("propose_sync_repo")
 	if !ok {
-		t.Fatal("propose_plan_upgrade not registered")
+		t.Fatal("propose_sync_repo not registered")
 	}
-	result, action, err := tool.Handler(context.Background(), nil, "org-123", json.RawMessage(`{"planKey":"team"}`))
+	result, action, err := tool.Handler(context.Background(), nil, "org-123", json.RawMessage(`{"repoId":"repo-1"}`))
 	if err != nil {
 		t.Fatalf("handler error: %v", err)
 	}
@@ -180,17 +179,14 @@ func TestActionToolProposesWithoutMutating(t *testing.T) {
 	if !action.Confirm {
 		t.Error("action.Confirm must be true")
 	}
-	if action.Type != "plan_upgrade" {
+	if action.Type != "sync_repo" {
 		t.Errorf("action.Type = %q", action.Type)
 	}
-	if action.Endpoint != "/api/billing/checkout" || action.Method != "POST" {
+	if action.Endpoint != "/api/repos/repo-1/sync" || action.Method != "POST" {
 		t.Errorf("endpoint/method = %s %s", action.Method, action.Endpoint)
 	}
-	if action.Payload["plan"] != "team" {
-		t.Errorf("payload plan = %v, want team", action.Payload["plan"])
-	}
-	if action.Label != "Upgrade to Team" {
-		t.Errorf("label = %q, want Upgrade to Team", action.Label)
+	if action.Label != "Sync repository" {
+		t.Errorf("label = %q, want Sync repository", action.Label)
 	}
 	// The result echo must mark it proposed (no mutation performed).
 	var echo map[string]any

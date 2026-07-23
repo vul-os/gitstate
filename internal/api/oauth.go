@@ -7,10 +7,10 @@ import (
 	"strings"
 	"time"
 
-	oauthpkg "github.com/exo/gitstate/internal/oauth"
 	"github.com/exo/gitstate/internal/auth"
 	"github.com/exo/gitstate/internal/config"
 	"github.com/exo/gitstate/internal/db"
+	oauthpkg "github.com/exo/gitstate/internal/oauth"
 	"github.com/exo/gitstate/internal/store"
 )
 

@@ -235,20 +235,20 @@ func RegisterAdminRoutes(mux *http.ServeMux, database *db.DB, cfg *config.Config
 	guard := RequireAdminAuth(cfg, database)
 
 	// Public auth routes — NOT behind the gate (the gate redirects here).
-	mux.Handle("GET /admin/login",  http.HandlerFunc(h.loginPage))
+	mux.Handle("GET /admin/login", http.HandlerFunc(h.loginPage))
 	mux.Handle("POST /admin/login", middleware.AuthRateLimit()(http.HandlerFunc(h.loginSubmit)))
 	mux.Handle("GET /admin/logout", http.HandlerFunc(h.logout))
 
 	// Gated console routes.
-	mux.Handle("GET /admin",                      guard(http.HandlerFunc(h.analytics)))
-	mux.Handle("GET /admin/users",                guard(http.HandlerFunc(h.users)))
-	mux.Handle("GET /admin/orgs",                 guard(http.HandlerFunc(h.orgs)))
-	mux.Handle("GET /admin/analytics",            guard(http.HandlerFunc(h.geoAnalytics)))
-	mux.Handle("GET /admin/analytics/feed",       guard(http.HandlerFunc(h.geoAnalyticsFeed)))
-	mux.Handle("GET /admin/analytics/online",     guard(http.HandlerFunc(h.geoAnalyticsOnline)))
-	mux.Handle("GET /admin/events",               guard(http.HandlerFunc(h.sseEvents)))
-	mux.Handle("POST /admin/users/{id}/promote",  guard(http.HandlerFunc(h.promoteUser)))
-	mux.Handle("POST /admin/users/{id}/demote",   guard(http.HandlerFunc(h.demoteUser)))
+	mux.Handle("GET /admin", guard(http.HandlerFunc(h.analytics)))
+	mux.Handle("GET /admin/users", guard(http.HandlerFunc(h.users)))
+	mux.Handle("GET /admin/orgs", guard(http.HandlerFunc(h.orgs)))
+	mux.Handle("GET /admin/analytics", guard(http.HandlerFunc(h.geoAnalytics)))
+	mux.Handle("GET /admin/analytics/feed", guard(http.HandlerFunc(h.geoAnalyticsFeed)))
+	mux.Handle("GET /admin/analytics/online", guard(http.HandlerFunc(h.geoAnalyticsOnline)))
+	mux.Handle("GET /admin/events", guard(http.HandlerFunc(h.sseEvents)))
+	mux.Handle("POST /admin/users/{id}/promote", guard(http.HandlerFunc(h.promoteUser)))
+	mux.Handle("POST /admin/users/{id}/demote", guard(http.HandlerFunc(h.demoteUser)))
 }
 
 // ── Base page data ─────────────────────────────────────────────────────────────

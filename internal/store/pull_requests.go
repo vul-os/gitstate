@@ -15,21 +15,21 @@ import (
 
 // PullRequest mirrors the columns returned by PR queries.
 type PullRequest struct {
-	ID             string
-	OrgID          string
-	RepoID         string
-	Platform       string // github | gitlab
-	ExternalID     string
-	Number         int
-	Title          string
-	AuthorLogin    string
-	State          string // open | merged | closed
-	Additions      int
-	Deletions      int
-	ChangedFiles   int
-	FirstCommitAt  time.Time
-	MergedAt       time.Time
-	CreatedAt      time.Time
+	ID            string
+	OrgID         string
+	RepoID        string
+	Platform      string // github | gitlab
+	ExternalID    string
+	Number        int
+	Title         string
+	AuthorLogin   string
+	State         string // open | merged | closed
+	Additions     int
+	Deletions     int
+	ChangedFiles  int
+	FirstCommitAt time.Time
+	MergedAt      time.Time
+	CreatedAt     time.Time
 }
 
 // UpsertPR inserts or updates a pull_request row identified by (org_id, repo_id, external_id).

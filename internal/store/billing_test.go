@@ -6,9 +6,6 @@
 //     is robust to other rows already in the instance).
 //   - UpsertSubscription + GetSubscription round-trip (shape, free-plan nil period,
 //     and the SET LOCAL/set_config fix for RLS context).
-//   - IsUniqueViolation + the NextClientInvoiceNumber retry contract: a duplicate
-//     INV number raises 23505, IsUniqueViolation classifies it, and recomputing the
-//     number yields the next free slot.
 package store
 
 import (
@@ -250,75 +247,6 @@ func TestGetSubscription_NotFound(t *testing.T) {
 	}
 }
 
-// TestInvoiceNumber_UniqueViolationRetry simulates the lost-race the retry contract
-// guards: NextClientInvoiceNumber returns INV-YYYY-001; we insert it; a second
-// insert of the SAME number raises 23505; IsUniqueViolation classifies it; and a
-// fresh NextClientInvoiceNumber now returns INV-YYYY-002.
-func TestInvoiceNumber_UniqueViolationRetry(t *testing.T) {
-	pool := billingTestPool(t)
-	ctx := context.Background()
-	orgID, cleanup := makeOrg(t, ctx, pool)
-	defer cleanup()
-
-	year := 2099 // unlikely to collide with seed data
-	insInvoice := func(tx pgx.Tx, n string) error {
-		_, e := tx.Exec(ctx,
-			`INSERT INTO client_invoices
-			   (org_id, number, status, period_start, period_end, currency, subtotal_cents, total_cents)
-			 VALUES ($1,$2,'draft', now(), now(), 'USD', 0, 0)`,
-			orgID, n)
-		return e
-	}
-
-	// Tx 1: compute the next number (001) and persist it.
-	var firstNum string
-	withOrgCtx(t, ctx, pool, orgID, func(tx pgx.Tx) {
-		n, err := NextClientInvoiceNumber(ctx, tx, orgID, year)
-		if err != nil {
-			t.Fatalf("NextClientInvoiceNumber: %v", err)
-		}
-		if want := fmt.Sprintf("INV-%d-001", year); n != want {
-			t.Fatalf("first number = %q, want %q", n, want)
-		}
-		firstNum = n
-		if err := insInvoice(tx, n); err != nil {
-			t.Fatalf("insert first invoice: %v", err)
-		}
-	})
-
-	// Tx 2 (separate, so the abort doesn't poison the others): re-inserting the
-	// same number raises 23505, which IsUniqueViolation must classify — this is the
-	// lost-race the retry contract guards.
-	{
-		tx, err := pool.Begin(ctx)
-		if err != nil {
-			t.Fatalf("begin dup tx: %v", err)
-		}
-		if _, err := tx.Exec(ctx, "SELECT set_config('app.current_org', $1, true)", orgID); err != nil {
-			t.Fatalf("set org: %v", err)
-		}
-		dupErr := insInvoice(tx, firstNum)
-		_ = tx.Rollback(ctx) // the violation aborts the tx; roll it back explicitly
-		if dupErr == nil {
-			t.Fatal("duplicate number insert succeeded, want unique violation")
-		}
-		if !IsUniqueViolation(dupErr) {
-			t.Fatalf("IsUniqueViolation(%v) = false, want true", dupErr)
-		}
-	}
-
-	// Tx 3: after the first invoice committed, the recomputed number advances to 002.
-	withOrgCtx(t, ctx, pool, orgID, func(tx pgx.Tx) {
-		num2, err := NextClientInvoiceNumber(ctx, tx, orgID, year)
-		if err != nil {
-			t.Fatalf("NextClientInvoiceNumber #2: %v", err)
-		}
-		if want := fmt.Sprintf("INV-%d-002", year); num2 != want {
-			t.Errorf("retry number = %q, want %q", num2, want)
-		}
-	})
-}
-
 // TestWallet_CreditDebitBalance exercises the wallet ledger: an empty wallet reads
 // 0; a credit then a debit compute the correct balance_after on each row and the
 // correct running balance; and ListWalletTransactions returns newest-first.
@@ -516,13 +444,4 @@ func TestUsageByModel_GroupsAndSums(t *testing.T) {
 			t.Error("blank-model row leaked into UsageByModel")
 		}
 	})
-}
-
-func TestIsUniqueViolation_Classification(t *testing.T) {
-	if IsUniqueViolation(nil) {
-		t.Error("IsUniqueViolation(nil) = true, want false")
-	}
-	if IsUniqueViolation(context.Canceled) {
-		t.Error("IsUniqueViolation(non-pg error) = true, want false")
-	}
 }

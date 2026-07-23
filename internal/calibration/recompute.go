@@ -141,9 +141,9 @@ func buildCurves(ctx context.Context, tx pgx.Tx, orgID string, samples []store.S
 // from estimates that have BOTH a prediction and an actual.
 func buildAccuracy(ctx context.Context, tx pgx.Tx, orgID string, outcomes []store.EstimateOutcome) error {
 	type acc struct {
-		n        int
-		absErr   float64
-		biasSum  float64 // sum of predicted/actual
+		n       int
+		absErr  float64
+		biasSum float64 // sum of predicted/actual
 	}
 	groups := map[string]*acc{}
 	for _, o := range outcomes {

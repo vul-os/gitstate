@@ -25,21 +25,21 @@ import (
 // AgentRun mirrors the agent_runs row (camelCase JSON for the API + CLI). Nullable
 // columns surface as pointers so "unset" is distinguishable from a zero value.
 type AgentRun struct {
-	ID           string       `json:"id"`
-	OrgID        string       `json:"orgId"`
-	RepoID       *string      `json:"repoId,omitempty"`
-	Goal         string       `json:"goal"`
-	DiffSummary  DiffSummary  `json:"diffSummary"`
-	TestsPassed  *bool        `json:"testsPassed,omitempty"`
-	HumanAction  string       `json:"humanAction,omitempty"`
-	Iterations   *int         `json:"iterations,omitempty"`
-	CostUSD      *float64     `json:"costUsd,omitempty"`
-	SupervisorID *string      `json:"supervisorId,omitempty"`
-	PRID         *string      `json:"prId,omitempty"`
-	IssueID      *string      `json:"issueId,omitempty"`
-	AgentName    string       `json:"agentName,omitempty"`
-	Branch       string       `json:"branch,omitempty"`
-	CreatedAt    time.Time    `json:"createdAt"`
+	ID           string      `json:"id"`
+	OrgID        string      `json:"orgId"`
+	RepoID       *string     `json:"repoId,omitempty"`
+	Goal         string      `json:"goal"`
+	DiffSummary  DiffSummary `json:"diffSummary"`
+	TestsPassed  *bool       `json:"testsPassed,omitempty"`
+	HumanAction  string      `json:"humanAction,omitempty"`
+	Iterations   *int        `json:"iterations,omitempty"`
+	CostUSD      *float64    `json:"costUsd,omitempty"`
+	SupervisorID *string     `json:"supervisorId,omitempty"`
+	PRID         *string     `json:"prId,omitempty"`
+	IssueID      *string     `json:"issueId,omitempty"`
+	AgentName    string      `json:"agentName,omitempty"`
+	Branch       string      `json:"branch,omitempty"`
+	CreatedAt    time.Time   `json:"createdAt"`
 }
 
 // AgentRunInput carries the fields needed to log a new agent run. RepoID/PRID/

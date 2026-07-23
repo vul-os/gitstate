@@ -88,7 +88,7 @@ func WeeklyThroughput(ctx context.Context, tx pgx.Tx, orgID string, weeks int) (
 // RecentActivityItem is a lightweight summary of recent PR/issue/commit activity
 // used both for the dashboard feed and as input to llm.SynthesizeStatus.
 type RecentActivityItem struct {
-	Kind      string    // "pr" | "issue" | "commit"
+	Kind      string // "pr" | "issue" | "commit"
 	Title     string
 	Author    string
 	State     string

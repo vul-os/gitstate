@@ -288,8 +288,8 @@ func TestError_HTTPStatus(t *testing.T) {
 
 func TestNewJiraClient_Validation(t *testing.T) {
 	cases := []struct {
-		name  string
-		creds JiraCredentials
+		name    string
+		creds   JiraCredentials
 		wantErr bool
 	}{
 		{"valid", JiraCredentials{BaseURL: "https://acme.atlassian.net", Email: "a@b.com", APIToken: "tok"}, false},
