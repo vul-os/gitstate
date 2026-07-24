@@ -28,6 +28,7 @@ gitstate-git = { path = "crates/gitstate-git" }
 gitstate-forge = { path = "crates/gitstate-forge" }
 gitstate-classify = { path = "crates/gitstate-classify" }
 gitstate-store = { path = "crates/gitstate-store" }
+gitstate-tracker = { path = "crates/gitstate-tracker" }
 gitstate-daemon = { path = "crates/gitstate-daemon" }
 gitstate-cli = { path = "crates/gitstate-cli" }
 # gitstate-sync is intentionally NOT a workspace dependency here: it is

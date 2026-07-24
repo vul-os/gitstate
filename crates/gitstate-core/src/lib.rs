@@ -13,6 +13,7 @@ pub mod analytics;
 pub mod derive;
 pub mod domain;
 pub mod error;
+pub mod health;
 pub mod ids;
 pub mod taxonomy;
 pub mod traits;

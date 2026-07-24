@@ -91,6 +91,7 @@ async function request(method, path, body, options = {}) {
 
 export function get(path, options) { return request('GET', path, null, options) }
 export function post(path, body, options) { return request('POST', path, body, options) }
+export function put(path, body, options) { return request('PUT', path, body, options) }
 export function patch(path, body, options) { return request('PATCH', path, body, options) }
 export function del(path, options) { return request('DELETE', path, null, options) }
 
@@ -167,6 +168,69 @@ export function contributors() { return get('/api/contributors') }
  */
 export function analytics({ repo_id, days, from, to } = {}) {
   return get(`/api/analytics${qs({ repo_id, days, from, to })}`)
+}
+
+// Contribution weights --------------------------------------------------------
+
+/** GET /api/weights — the six-dimension composite weights. */
+export function weights() { return get('/api/weights') }
+
+/** PUT /api/weights — persist new weights; the daemon returns them normalized. */
+export function saveWeights(body) { return put('/api/weights', body) }
+
+/** POST /api/weights/reset — back to the shipped defaults. */
+export function resetWeights() { return post('/api/weights/reset') }
+
+// Engineering health + involvement ---------------------------------------------
+
+/** GET /api/health-metrics — DORA, bus factor, review and quality rollups. */
+export function healthMetrics({ days, repo_id } = {}) {
+  return get(`/api/health-metrics${qs({ days, repo_id })}`)
+}
+
+/** GET /api/involvement — who touches which repo, both directions. */
+export function involvement({ days, repo_id } = {}) {
+  return get(`/api/involvement${qs({ days, repo_id })}`)
+}
+
+/** GET /api/contributions/rollup — six dimensions merged across every repo. */
+export function contributionRollup({ from, to } = {}) {
+  return get(`/api/contributions/rollup${qs({ from, to })}`)
+}
+
+// Trackers (Jira / Linear, local personal tokens) --------------------------------
+
+/** GET /api/trackers — configured trackers; tokens come back masked. */
+export function trackers() { return get('/api/trackers') }
+
+/** PUT /api/trackers/:kind — save a credential ({ base_url, email, token, project }). */
+export function saveTracker(kind, body) {
+  return put(`/api/trackers/${encodeURIComponent(kind)}`, body)
+}
+
+/** DELETE /api/trackers/:kind — forget the stored credential. */
+export function deleteTracker(kind) {
+  return del(`/api/trackers/${encodeURIComponent(kind)}`)
+}
+
+/** POST /api/trackers/:kind/test — verify without importing. */
+export function testTracker(kind) {
+  return post(`/api/trackers/${encodeURIComponent(kind)}/test`)
+}
+
+/** POST /api/import/preview — fetch a sample without persisting anything. */
+export function importPreview({ kind, limit } = {}) {
+  return post('/api/import/preview', { kind, ...(limit ? { limit } : {}) })
+}
+
+/** POST /api/import/run — fetch and persist against a repo. */
+export function importRun({ kind, repo_id, limit } = {}) {
+  return post('/api/import/run', { kind, repo_id, ...(limit ? { limit } : {}) })
+}
+
+/** POST /api/import/file — offline import from an exported CSV/JSON payload. */
+export function importFile({ source, repo_id, content } = {}) {
+  return post('/api/import/file', { source, repo_id, content })
 }
 
 // Contexts (CRDT-backed saved working sets) --------------------------------------

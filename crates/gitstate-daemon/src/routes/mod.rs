@@ -5,8 +5,10 @@
 mod categories;
 mod classify;
 mod contexts;
+mod health_metrics;
 mod meta;
 mod repos;
+mod trackers;
 
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
@@ -18,8 +20,10 @@ use gitstate_core::Error;
 pub use categories::category_routes;
 pub use classify::classify_routes;
 pub use contexts::context_routes;
+pub use health_metrics::health_routes;
 pub use meta::meta_routes;
 pub use repos::repo_routes;
+pub use trackers::tracker_routes;
 
 /// A JSON error body `{ "error": "...", "code": "snake_code" }` with a status.
 #[derive(Debug)]

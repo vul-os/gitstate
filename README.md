@@ -146,12 +146,33 @@ flowchart TB
 <td width="50%"><img src="docs/screenshots/repo-detail.png" alt="Repo detail: DORA project-state cards, per-repo activity stats, contribution heatmap, commits-per-week and cycle-time charts, and the six-dimension contribution table"><br><sub><em>Repo detail — project state, activity and the six gaming-resistant dimensions</em></sub></td>
 </tr>
 <tr>
+<td width="50%"><img src="docs/screenshots/eng-health.png" alt="Eng Health: DORA cards (cycle p50, change-failure rate, merge frequency), a bus-factor ownership panel, review coverage and quality signals"><br><sub><em>Eng Health — DORA, bus factor, review coverage and quality proxies</em></sub></td>
+<td width="50%"><img src="docs/screenshots/contribution.png" alt="Contribution: six-dimension table across every repo with a live weight tuner"><br><sub><em>Contribution — six gaming-resistant dimensions, with the weights in your hands</em></sub></td>
+</tr>
+<tr>
+<td width="50%"><img src="docs/screenshots/import.png" alt="Import: Jira and Linear credential forms using your own personal API token, plus an offline export-file path"><br><sub><em>Import — Jira &amp; Linear with <strong>your</strong> token, from your machine; or fully offline from an export</em></sub></td>
 <td width="50%"><img src="docs/screenshots/contexts.png" alt="Contexts view: saved working sets of repos, pull requests, tags and notes"><br><sub><em>Contexts — saved working sets that sync peer-to-peer over CRDT</em></sub></td>
-<td width="50%"><img src="docs/screenshots/classify.png" alt="Classify view: work items labeled with categories, confidence and rationale from the local heuristic/LLM classifier"><br><sub><em>Classify — work items labeled locally, heuristic fallback shown here</em></sub></td>
 </tr>
 </table>
 
-<sub>All shots are the real desktop app against a deterministic synthetic demo dataset (`gitstate seed --demo`) — a fake org, fake pseudonymous contributors, never real git/forge history. See <a href="docs/screenshots/">docs/screenshots/</a> for the full set (including <a href="docs/screenshots/categories.png">Categories</a>, <a href="docs/screenshots/repos.png">Repos</a> and <a href="docs/screenshots/dashboard-light.png">light-mode</a> shots) and <code>web/scripts/screenshots.mjs</code> to regenerate.</sub>
+<sub>All shots are the real desktop app against a deterministic synthetic demo dataset (`gitstate seed --demo`) — a fake org, fake pseudonymous contributors, never real git/forge history. See <a href="docs/screenshots/">docs/screenshots/</a> for the full set (including <a href="docs/screenshots/involvement.png">Involvement</a>, <a href="docs/screenshots/people.png">People</a>, <a href="docs/screenshots/board.png">Board</a>, <a href="docs/screenshots/categories.png">Categories</a> and <a href="docs/screenshots/dashboard-light.png">light-mode</a> shots) and <code>web/scripts/screenshots.mjs</code> to regenerate.</sub>
+
+### Importing from Jira or Linear
+
+Both are **local-first, like everything else**. Jira and Linear each issue *personal*
+API tokens, so gitstate calls their public HTTPS API **from your machine with your own
+credential** — the same posture it already takes with your `gh`/`glab` login. There is
+no broker, no OAuth callback, and no gitstate server in the path. The token lives in
+your local SQLite file, is never returned by the API once saved (reads are redacted),
+and is sent only to the vendor it belongs to.
+
+If a token isn't an option — an air-gapped machine, a locked-down Jira Server/DC
+instance, or you'd simply rather not store a credential — paste or drop a Jira/Linear
+**CSV/JSON export** instead. That path performs no network requests at all.
+
+Imported issues land as ordinary work items, so classification, effort judging and
+every analytics rollup treat them exactly like native ones. Ids are derived from
+`(source, key)`, so re-importing updates in place rather than accumulating duplicates.
 
 ---
 

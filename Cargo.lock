@@ -616,6 +616,7 @@ dependencies = [
  "gitstate-forge",
  "gitstate-git",
  "gitstate-store",
+ "gitstate-tracker",
  "serde",
  "serde_json",
  "tempfile",
@@ -658,6 +659,18 @@ dependencies = [
  "serde_json",
  "tempfile",
  "time",
+]
+
+[[package]]
+name = "gitstate-tracker"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "gitstate-core",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]

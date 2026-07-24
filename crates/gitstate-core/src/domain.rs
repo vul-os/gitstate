@@ -213,7 +213,7 @@ pub struct ProjectState {
 
 /// The six dimensions — the gitstate essence. Each normalized 0–100 within the
 /// repo cohort; never a leaderboard by itself.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct Dimensions {
     pub shipped: f64,
     pub review: f64,
@@ -224,7 +224,7 @@ pub struct Dimensions {
 }
 
 /// Pre-normalization evidence behind [`Dimensions`].
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct DimensionRaw {
     pub merged_prs: u32,
     pub closed_issues: u32,

@@ -18,7 +18,9 @@ pub fn build_router(state: AppState) -> Router {
         .merge(routes::repo_routes())
         .merge(routes::context_routes())
         .merge(routes::category_routes())
-        .merge(routes::classify_routes());
+        .merge(routes::classify_routes())
+        .merge(routes::health_routes())
+        .merge(routes::tracker_routes());
 
     api.fallback(serve_static::static_handler)
         .with_state(state)

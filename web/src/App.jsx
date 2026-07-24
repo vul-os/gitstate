@@ -9,6 +9,12 @@ const Dashboard = lazy(() => import('./pages/Dashboard.jsx'))
 const Repos = lazy(() => import('./pages/Repos.jsx'))
 const RepoDetail = lazy(() => import('./pages/RepoDetail.jsx'))
 const Insights = lazy(() => import('./pages/Insights.jsx'))
+const Contribution = lazy(() => import('./pages/Contribution.jsx'))
+const EngHealth = lazy(() => import('./pages/EngHealth.jsx'))
+const Involvement = lazy(() => import('./pages/Involvement.jsx'))
+const People = lazy(() => import('./pages/People.jsx'))
+const Board = lazy(() => import('./pages/Board.jsx'))
+const Import = lazy(() => import('./pages/Import.jsx'))
 const Contexts = lazy(() => import('./pages/Contexts.jsx'))
 const Categories = lazy(() => import('./pages/Categories.jsx'))
 const Classify = lazy(() => import('./pages/Classify.jsx'))
@@ -74,6 +80,12 @@ export default function App() {
                 <Route path="/repos" element={<Repos />} />
                 <Route path="/repos/:id" element={<RepoDetail />} />
                 <Route path="/insights" element={<Insights />} />
+                <Route path="/contribution" element={<Contribution />} />
+                <Route path="/eng-health" element={<EngHealth />} />
+                <Route path="/involvement" element={<Involvement />} />
+                <Route path="/people" element={<People />} />
+                <Route path="/board" element={<Board />} />
+                <Route path="/import" element={<Import />} />
                 <Route path="/contexts" element={<Contexts />} />
                 <Route path="/categories" element={<Categories />} />
                 <Route path="/classify" element={<Classify />} />

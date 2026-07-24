@@ -21,6 +21,7 @@ gitstate-git = { workspace = true }
 gitstate-forge = { workspace = true }
 gitstate-classify = { workspace = true }
 gitstate-store = { workspace = true }
+gitstate-tracker = { workspace = true }
 
 [dev-dependencies]
 tempfile = "3"

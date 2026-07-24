@@ -133,6 +133,12 @@ const CHART = 'svg[data-chart]'
 const PAGES = [
   { route: '/dashboard', name: 'dashboard', waitFor: CHART },
   { route: '/insights', name: 'insights', waitFor: CHART, fullPage: true },
+  { route: '/contribution', name: 'contribution', fullPage: true },
+  { route: '/eng-health', name: 'eng-health', fullPage: true },
+  { route: '/involvement', name: 'involvement' },
+  { route: '/people', name: 'people' },
+  { route: '/board', name: 'board' },
+  { route: '/import', name: 'import' },
   { route: '/repos', name: 'repos' },
   { route: '/contexts', name: 'contexts' },
   { route: '/categories', name: 'categories' },

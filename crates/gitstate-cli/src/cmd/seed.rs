@@ -310,6 +310,17 @@ const PR_TITLES: &[&str] = &[
     "Batch the notification fan-out",
 ];
 
+/// Remediation work — reverts, hotfixes and rollbacks. Kept separate from
+/// `PR_TITLES` so the seed can hit an explicit change-failure rate rather than
+/// depending on where these happen to land in a rotation.
+const REMEDIATION_TITLES: &[&str] = &[
+    "Revert \"Rework the cache eviction policy\"",
+    "Hotfix: restore the previous rate-limit defaults",
+    "Roll back the scheduler migration",
+    "Revert the plugin lazy-load change",
+    "Hotfix: guard the null assignee path",
+];
+
 const ISSUE_TITLES: &[&str] = &[
     "Search results occasionally return stale data",
     "Webhook retries can duplicate deliveries",
@@ -364,6 +375,10 @@ const COMMIT_SUMMARIES: &[&str] = &[
     "cut allocations in the serializer cold path",
     "support cursor pagination on exports",
     "add OpenTelemetry spans to ingest",
+    // A little remediation work, so the revert/quality signals aren't a
+    // permanent zero in the demo dataset.
+    "revert \"switch cache eviction to LRU\"",
+    "revert the scheduler migration",
 ];
 
 const FILES: &[&str] = &[
@@ -592,7 +607,18 @@ fn build_work_items(repo: &Repo, ri: usize) -> (Vec<WorkItem>, WorkCounts) {
         let updated_at = merged_at.clone().unwrap_or_else(|| created_at.clone());
         let author =
             &CONTRIBUTORS[(det_u64(&format!("{key}:author")) as usize) % CONTRIBUTORS.len()];
-        let title = PR_TITLES[(ri * 3 + i) % PR_TITLES.len()];
+        // Roughly one merged PR in eight is remediation, drawn independently of
+        // the title rotation. Relying on where the revert titles happened to
+        // fall in the list clustered them in ancient history, leaving the UI's
+        // default trailing window at a flat 0% change-failure rate.
+        let title = if matches!(state, WorkState::Merged)
+            && det_u64(&format!("{key}:remediation")) % 100 < 13
+        {
+            REMEDIATION_TITLES
+                [(det_u64(&format!("{key}:remedy")) as usize) % REMEDIATION_TITLES.len()]
+        } else {
+            PR_TITLES[(det_u64(&format!("{key}:title")) as usize) % PR_TITLES.len()]
+        };
 
         items.push(WorkItem {
             id: WorkItemId::from(det_uuid(&key)),
@@ -616,6 +642,48 @@ fn build_work_items(repo: &Repo, ri: usize) -> (Vec<WorkItem>, WorkCounts) {
                 FILES[(ri + i + 3) % FILES.len()].to_string(),
             ],
         });
+
+        // Reviews on merged PRs, keyed the way `gitstate-forge::list_reviews`
+        // keys them (`#<pr>-review-<n>`), so review health has real signal.
+        // Most merged work is reviewed; a deliberate minority is not, so the
+        // "unreviewed merged" figure isn't a permanent zero.
+        if matches!(state, WorkState::Merged) {
+            let reviews = match det_u64(&format!("{key}:reviews")) % 10 {
+                0 => 0, // ~10% merged with no review at all
+                1..=6 => 1,
+                _ => 2,
+            };
+            for n in 1..=reviews {
+                let rkey = format!("{key}:review:{n}");
+                // A reviewer is never the PR's own author.
+                let mut idx = (det_u64(&format!("{rkey}:who")) as usize) % CONTRIBUTORS.len();
+                if CONTRIBUTORS[idx].login == author.login {
+                    idx = (idx + 1) % CONTRIBUTORS.len();
+                }
+                let reviewer = &CONTRIBUTORS[idx];
+                let at = at_day(
+                    (created_offset - 1).max(0),
+                    det_range(&format!("{rkey}:h"), 9, 18) as u8,
+                    det_range(&format!("{rkey}:m"), 0, 59) as u8,
+                );
+                items.push(WorkItem {
+                    id: WorkItemId::from(det_uuid(&rkey)),
+                    repo_id: repo.id.clone(),
+                    kind: WorkKind::Review,
+                    external_ref: format!("#{number}-review-{n}"),
+                    title: format!("review on #{number}"),
+                    body: "Synthetic demo review.".to_string(),
+                    state: WorkState::Done,
+                    author_login: Some(reviewer.login.to_string()),
+                    labels: vec![],
+                    created_at: at.clone(),
+                    updated_at: at,
+                    merged_at: None,
+                    closed_at: None,
+                    files_touched: vec![],
+                });
+            }
+        }
     }
 
     let issue_stride = (HISTORY_DAYS - 4) as f64 / issue_count.max(1) as f64;
@@ -644,7 +712,7 @@ fn build_work_items(repo: &Repo, ri: usize) -> (Vec<WorkItem>, WorkCounts) {
         });
         let updated_at = closed_at.clone().unwrap_or_else(|| created_at.clone());
         let author = &CONTRIBUTORS[(ri + j + 1) % CONTRIBUTORS.len()];
-        let title = ISSUE_TITLES[(ri * 2 + j) % ISSUE_TITLES.len()];
+        let title = ISSUE_TITLES[(det_u64(&format!("{key}:title")) as usize) % ISSUE_TITLES.len()];
 
         items.push(WorkItem {
             id: WorkItemId::from(det_uuid(&format!("{}:issue:{number}", repo.slug))),
@@ -1083,6 +1151,86 @@ mod tests {
         // Categorical breakdowns have several slices to colour.
         assert!(a.labels.len() >= 5, "labels: {:?}", a.labels);
         assert!(a.totals.additions > 0 && a.totals.deletions > 0);
+    }
+
+    /// Review health is only meaningful if the demo data actually contains
+    /// reviews keyed the way the forge clients key them.
+    #[test]
+    fn demo_dataset_has_reviews_wired_to_their_prs() {
+        use gitstate_core::health;
+
+        let store = SqliteStore::open_in_memory().expect("open in-memory store");
+        seed_demo(&store).expect("seed demo");
+        let items = store.list_all_work_items().expect("work items");
+
+        let reviews: Vec<_> = items
+            .iter()
+            .filter(|w| w.kind == WorkKind::Review)
+            .collect();
+        assert!(reviews.len() > 50, "only {} reviews seeded", reviews.len());
+        assert!(
+            reviews.iter().all(|r| r.external_ref.contains("-review-")),
+            "reviews must use the forge's #<pr>-review-<n> convention"
+        );
+
+        let rh = health::review_health(&items);
+        assert!(rh.merged_prs > 0);
+        assert!(
+            rh.reviewed_pr_share > 0.5,
+            "most merged work should be reviewed, got {}",
+            rh.reviewed_pr_share
+        );
+        assert!(
+            rh.reviewed_pr_share < 1.0,
+            "a visible minority should be unreviewed, got {}",
+            rh.reviewed_pr_share
+        );
+        assert!(rh.unreviewed_merged > 0);
+
+        // Reviews are matched per (repo, pr), so the share must reflect the
+        // ~10% of merged PRs the seed deliberately leaves unreviewed rather
+        // than borrowing another repo's identically-numbered PR.
+        assert!(
+            rh.reviewed_pr_share < 0.97,
+            "share {} looks like cross-repo contamination",
+            rh.reviewed_pr_share
+        );
+    }
+
+    /// Delivery metrics are only interesting if the data contains remediation
+    /// work; a permanent 0% change-failure rate teaches the reader nothing.
+    #[test]
+    fn demo_dataset_contains_remediation_work() {
+        use gitstate_core::health;
+
+        let store = SqliteStore::open_in_memory().expect("open in-memory store");
+        seed_demo(&store).expect("seed demo");
+        let items = store.list_all_work_items().expect("work items");
+        let commits = store.list_commits(None).expect("commits");
+
+        let (from, to) =
+            gitstate_core::analytics::range_ending(DEMO_ANCHOR, HISTORY_DAYS as u32).unwrap();
+        let d = health::dora(&items, &commits, &from, &to);
+        let cfr = d.change_failure_rate.expect("merged PRs exist");
+        assert!(cfr > 0.0, "change-failure rate should not be a flat zero");
+        assert!(
+            cfr < 0.35,
+            "…but reverts should still be the minority, got {cfr}"
+        );
+
+        let q = health::quality(&commits, &items, &from, &to);
+        assert!(q.revert_commits > 0, "some commits should read as reverts");
+
+        // Remediation must be spread through time, not clustered in ancient
+        // history — a trailing 90-day window is what the UI shows by default,
+        // and a permanent 0% there is indistinguishable from a broken metric.
+        let (from90, to90) = gitstate_core::analytics::range_ending(DEMO_ANCHOR, 90).unwrap();
+        let recent = health::dora(&items, &commits, &from90, &to90);
+        assert!(
+            recent.change_failure_rate.is_some_and(|r| r > 0.0),
+            "the trailing 90 days should contain some remediation, got {:?}",
+            recent.change_failure_rate
+        );
     }
 
     #[test]

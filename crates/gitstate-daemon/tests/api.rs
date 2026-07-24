@@ -343,3 +343,405 @@ async fn analytics_clamps_an_absurd_window() {
     let v = json(resp).await;
     assert_eq!(v["range"]["days"], gitstate_daemon::ops::MAX_ANALYTICS_DAYS);
 }
+
+// ───────────────────── weights / trackers / import ─────────────────────
+
+fn put(uri: &str, body: serde_json::Value) -> Request<Body> {
+    Request::builder()
+        .method("PUT")
+        .uri(uri)
+        .header("content-type", "application/json")
+        .body(Body::from(body.to_string()))
+        .unwrap()
+}
+
+fn delete(uri: &str) -> Request<Body> {
+    Request::builder()
+        .method("DELETE")
+        .uri(uri)
+        .body(Body::empty())
+        .unwrap()
+}
+
+/// Register a repo so imports have somewhere to land.
+fn seed_repo(st: &AppState, id: &str) -> RepoId {
+    let rid = RepoId::from(id.to_string());
+    st.store
+        .upsert_repo(&Repo {
+            id: rid.clone(),
+            slug: format!("demo/{id}"),
+            path: String::new(),
+            remote_url: None,
+            forge: Forge::Local,
+            default_branch: "main".into(),
+            last_scanned_at: None,
+            added_at: "2026-01-01T00:00:00Z".into(),
+        })
+        .unwrap();
+    rid
+}
+
+#[tokio::test]
+async fn weights_default_then_normalize_on_put_then_reset() {
+    let st = state();
+
+    let v = json(
+        Daemon::new(st.clone())
+            .router()
+            .oneshot(get("/api/weights"))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert!(v["shipped"].as_f64().unwrap() > 0.0);
+
+    // Unnormalized input comes back summing to 1, so the UI shows exactly what
+    // the composite is actually computed with.
+    let resp = Daemon::new(st.clone())
+        .router()
+        .oneshot(put(
+            "/api/weights",
+            serde_json::json!({
+                "shipped": 2.0, "review": 2.0, "effort": 2.0,
+                "quality": 2.0, "ownership": 1.0, "durability": 1.0
+            }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let v = json(resp).await;
+    let sum: f64 = [
+        "shipped",
+        "review",
+        "effort",
+        "quality",
+        "ownership",
+        "durability",
+    ]
+    .iter()
+    .map(|k| v[k].as_f64().unwrap())
+    .sum();
+    assert!(
+        (sum - 1.0).abs() < 1e-9,
+        "weights should normalize, summed {sum}"
+    );
+
+    // And they persist.
+    let v = json(
+        Daemon::new(st.clone())
+            .router()
+            .oneshot(get("/api/weights"))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert!((v["shipped"].as_f64().unwrap() - 0.2).abs() < 1e-9);
+
+    let v = json(
+        Daemon::new(st)
+            .router()
+            .oneshot(post("/api/weights/reset", serde_json::json!({})))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert!(v["shipped"].as_f64().is_some());
+}
+
+#[tokio::test]
+async fn weights_reject_negative_and_zero_sum() {
+    for bad in [
+        serde_json::json!({"shipped":-1.0,"review":1.0,"effort":1.0,"quality":1.0,"ownership":1.0,"durability":1.0}),
+        serde_json::json!({"shipped":0.0,"review":0.0,"effort":0.0,"quality":0.0,"ownership":0.0,"durability":0.0}),
+    ] {
+        let resp = Daemon::new(state())
+            .router()
+            .oneshot(put("/api/weights", bad))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+}
+
+#[tokio::test]
+async fn a_saved_tracker_token_can_never_be_read_back() {
+    let st = state();
+    let secret = "super-secret-token-9999";
+
+    let resp = Daemon::new(st.clone())
+        .router()
+        .oneshot(put(
+            "/api/trackers/jira",
+            serde_json::json!({
+                "base_url": "https://acme.atlassian.net",
+                "email": "dev@example.com",
+                "token": secret,
+                "project": "ENG"
+            }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let saved = json(resp).await;
+    assert_ne!(
+        saved["token"], secret,
+        "the write response must not echo the secret"
+    );
+
+    let list = json(
+        Daemon::new(st)
+            .router()
+            .oneshot(get("/api/trackers"))
+            .await
+            .unwrap(),
+    )
+    .await;
+    let body = list.to_string();
+    assert!(
+        !body.contains(secret),
+        "the token leaked through /api/trackers: {body}"
+    );
+    let jira = list
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["kind"] == "jira")
+        .unwrap();
+    assert_eq!(jira["configured"], true);
+    assert_eq!(jira["base_url"], "https://acme.atlassian.net");
+    assert_eq!(jira["token"], "…9999", "only a masked hint is exposed");
+}
+
+#[tokio::test]
+async fn an_empty_token_edit_preserves_the_stored_secret() {
+    let st = state();
+    Daemon::new(st.clone())
+        .router()
+        .oneshot(put(
+            "/api/trackers/linear",
+            serde_json::json!({ "token": "lin_api_abcd", "project": "ENG" }),
+        ))
+        .await
+        .unwrap();
+
+    // Edit only the team key — the UI must not force a re-paste of the secret.
+    let v = json(
+        Daemon::new(st.clone())
+            .router()
+            .oneshot(put(
+                "/api/trackers/linear",
+                serde_json::json!({ "token": "", "project": "OPS" }),
+            ))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(v["project"], "OPS");
+    assert_eq!(v["configured"], true, "the credential survived the edit");
+    assert_eq!(v["token"], "…abcd");
+}
+
+#[tokio::test]
+async fn deleting_a_tracker_clears_it() {
+    let st = state();
+    Daemon::new(st.clone())
+        .router()
+        .oneshot(put(
+            "/api/trackers/jira",
+            serde_json::json!({ "token": "t" }),
+        ))
+        .await
+        .unwrap();
+
+    let resp = Daemon::new(st.clone())
+        .router()
+        .oneshot(delete("/api/trackers/jira"))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let list = json(
+        Daemon::new(st)
+            .router()
+            .oneshot(get("/api/trackers"))
+            .await
+            .unwrap(),
+    )
+    .await;
+    let jira = list
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["kind"] == "jira")
+        .unwrap();
+    assert_eq!(jira["configured"], false);
+    assert_eq!(jira["token"], "");
+}
+
+#[tokio::test]
+async fn an_unknown_tracker_kind_is_a_400() {
+    let resp = Daemon::new(state())
+        .router()
+        .oneshot(put(
+            "/api/trackers/asana",
+            serde_json::json!({ "token": "x" }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    let v = json(resp).await;
+    assert_eq!(v["code"], "invalid");
+}
+
+#[tokio::test]
+async fn import_from_a_jira_csv_export_persists_work_items() {
+    let st = state();
+    let repo = seed_repo(&st, "repo-import");
+
+    let csv = "Issue key,Summary,Status,Assignee,Labels,Created,Updated,Resolved\n\
+               ENG-1,Fix the parser,Done,ada@example.com,\"bug,parser\",2026-05-01,2026-06-01,2026-06-01\n\
+               ENG-2,Add pagination,In Progress,femi@example.com,api,2026-05-02,2026-06-02,\n";
+
+    let v = json(
+        Daemon::new(st.clone())
+            .router()
+            .oneshot(post(
+                "/api/import/file",
+                serde_json::json!({ "source": "jira", "repo_id": repo.0, "content": csv }),
+            ))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(v["imported"], 2);
+
+    let items = st.store.list_work_items(&repo).unwrap();
+    assert_eq!(items.len(), 2);
+    // Tracker tickets are issues, never PRs — otherwise they would corrupt the
+    // cycle-time series, which measures open→merge on pull requests.
+    assert!(items.iter().all(|w| w.kind == WorkKind::Issue));
+    assert!(items.iter().all(|w| w.merged_at.is_none()));
+    let done = items.iter().find(|w| w.external_ref == "ENG-1").unwrap();
+    assert_eq!(done.state, WorkState::Done);
+    assert_eq!(done.labels, vec!["bug".to_string(), "parser".to_string()]);
+}
+
+#[tokio::test]
+async fn reimporting_the_same_export_updates_in_place() {
+    let st = state();
+    let repo = seed_repo(&st, "repo-idem");
+    let json_export = serde_json::json!({
+        "issues": [{
+            "key": "ENG-9",
+            "fields": {
+                "summary": "Ship it",
+                "status": { "statusCategory": { "key": "done" } },
+                "created": "2026-05-01T09:00:00.000+0000",
+                "updated": "2026-06-01T09:00:00.000+0000"
+            }
+        }]
+    })
+    .to_string();
+
+    for _ in 0..3 {
+        Daemon::new(st.clone())
+            .router()
+            .oneshot(post(
+                "/api/import/file",
+                serde_json::json!({ "repo_id": repo.0, "content": json_export }),
+            ))
+            .await
+            .unwrap();
+    }
+
+    let items = st.store.list_work_items(&repo).unwrap();
+    assert_eq!(
+        items.len(),
+        1,
+        "ids are deterministic, so syncs must not duplicate"
+    );
+}
+
+#[tokio::test]
+async fn importing_into_a_missing_repo_is_404() {
+    let resp = Daemon::new(state())
+        .router()
+        .oneshot(post(
+            "/api/import/file",
+            serde_json::json!({ "repo_id": "nope", "content": "Issue key,Summary\nE-1,x\n" }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    assert_eq!(json(resp).await["code"], "not_found");
+}
+
+#[tokio::test]
+async fn importing_from_an_unconfigured_tracker_explains_itself() {
+    let st = state();
+    let repo = seed_repo(&st, "repo-unconfigured");
+    let resp = Daemon::new(st)
+        .router()
+        .oneshot(post(
+            "/api/import/run",
+            serde_json::json!({ "kind": "jira", "repo_id": repo.0 }),
+        ))
+        .await
+        .unwrap();
+    // No credential ⇒ a clear 400, not a network attempt or a 500.
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    let msg = json(resp).await["error"].as_str().unwrap().to_string();
+    assert!(msg.contains("not configured"), "{msg}");
+}
+
+// ─────────────────── health metrics / involvement ───────────────────
+
+#[tokio::test]
+async fn health_metrics_on_an_empty_store_are_finite() {
+    let v = json(
+        Daemon::new(state())
+            .router()
+            .oneshot(get("/api/health-metrics?days=30"))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(v["bus_factor"]["count"], 0);
+    assert_eq!(v["review"]["reviewed_pr_share"], 0.0);
+    assert_eq!(v["quality"]["test_touch_rate"], 0.0);
+    assert!(v["dora"]["cycle_p50_hours"].is_null());
+}
+
+#[tokio::test]
+async fn health_metrics_and_involvement_reflect_seeded_activity() {
+    let st = state();
+    seed_activity(&st);
+
+    let v = json(
+        Daemon::new(st.clone())
+            .router()
+            .oneshot(get("/api/health-metrics?days=30"))
+            .await
+            .unwrap(),
+    )
+    .await;
+    // One author holds every commit ⇒ bus factor 1, full concentration.
+    assert_eq!(v["bus_factor"]["count"], 1);
+    assert_eq!(v["bus_factor"]["top_share"], 1.0);
+    assert_eq!(v["review"]["merged_prs"], 1);
+    assert_eq!(v["review"]["unreviewed_merged"], 1);
+    assert!(v["dora"]["cycle_p50_hours"].as_f64().unwrap() > 0.0);
+
+    let inv = json(
+        Daemon::new(st)
+            .router()
+            .oneshot(get("/api/involvement?days=30"))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(inv["repos"].as_array().unwrap().len(), 1);
+    assert_eq!(inv["people"].as_array().unwrap().len(), 1);
+    assert_eq!(inv["people"][0]["total_commits"], 3);
+    assert_eq!(inv["people"][0]["repo_count"], 1);
+}
