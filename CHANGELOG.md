@@ -34,7 +34,7 @@ billing-collection cloud. It runs on your machine.
   React `web/` UI — the desktop app and the headless daemon serve the *same* JSON API.
 - **Signed taxonomy** — a versioned, content-addressed, ed25519-signed category tree shipped as data,
   verified fail-closed against a pinned key.
-- New static marketing/docs `site/`, folded into `vulos-cloud` and served at `gitstate.<vulos-domain>`.
+- New static marketing/docs `site/`, published at `vulos.org/products/gitstate`.
 
 ### Removed
 - SaaS deploy artifacts: `Dockerfile`, `docker-compose.yml`, `deploy/` (fly.toml + systemd unit), and

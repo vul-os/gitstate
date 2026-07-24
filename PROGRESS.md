@@ -18,7 +18,7 @@ avoid collisions.
 | **rust-integration** | `gitstate-git`, `gitstate-forge`, `gitstate-daemon`, `gitstate-cli`, `gitstate-sync`, `apps/desktop` | 🔄 in progress |
 | **web** | repoint React `web/` at the daemon JSON API; remove auth/org/billing surfaces | 🔄 in progress |
 | **site** | new static marketing/docs site in the suite house style | 🔄 in progress |
-| **cloud-gh** | CI (rust + web, no Postgres); register `gitstate` in vulos-cloud site collection | 🔄 in progress |
+| **cloud-gh** | CI (rust + web, no Postgres); register `gitstate` in the vulos.org site collection | 🔄 in progress |
 | **verify** | compile + trait/API coherence + endpoints match the spec; taxonomy dev keypair | 🔄 in progress |
 
 ## Kept in-tree (staged port — do NOT edit)

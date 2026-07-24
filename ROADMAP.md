@@ -44,7 +44,7 @@ vulos suite style (`slipscan` / `ofisi` / `wede`).
 - [ ] Rust Cargo workspace (`crates/*`) modeled on `slipscan` — core, git, forge, classify, store, daemon, cli, sync.
 - [ ] Tauri shell (`apps/desktop`) that boots the daemon and reuses the React `web/` UI.
 - [ ] Repoint `web/` at the daemon JSON API; remove the multi-tenant auth/org/billing surfaces.
-- [ ] New static marketing/docs site (`site/`) folded into `vulos-cloud` at `gitstate.<vulos-domain>`.
+- [ ] New static marketing/docs site (`site/`) published at `vulos.org/products/gitstate`.
 - [x] Keep `internal/`, `cmd/`, `migrations/`, `go.mod`, `go.sum` compiling for the staged port; the billing/invoicing/accounting/COGS layer was cut outright (no port planned).
 
 Live status: [PROGRESS.md](PROGRESS.md).
@@ -107,7 +107,7 @@ a domain is ported, the Go source stays in-tree as the reference (never edited).
 
 - [ ] Tauri installers for macOS (`.dmg`), Windows (`.msi` / setup), Linux (`.AppImage` / `.deb`) + standalone CLI/daemon binaries.
 - [ ] Tag-triggered release CI (version-match guard, draft releases).
-- [ ] `site/` static marketing + docs in the suite house style; folded into `vulos-cloud` and served at `gitstate.<vulos-domain>`.
+- [ ] `site/` static marketing + docs in the suite house style; published at `vulos.org/products/gitstate`.
 - [ ] Real screenshots of the desktop app (replacing the legacy SaaS captures).
 
 ---
