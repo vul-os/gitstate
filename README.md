@@ -101,6 +101,7 @@ configured — your forge (`gh`/`glab` or a token) and, optionally, your local L
 local repo makes **zero** network calls.
 
 ```mermaid
+%%{init: {'theme':'base','themeVariables':{'fontFamily':'ui-monospace, SFMono-Regular, Menlo, monospace','primaryColor':'transparent','primaryBorderColor':'#14b8a6','primaryTextColor':'#8f969e','lineColor':'#8a8f98','nodeBorder':'#5f8f8a','edgeLabelBackground':'transparent','clusterBorder':'#3f8f86','clusterBkg':'transparent'}}}%%
 flowchart LR
     subgraph machine["your machine"]
         direction LR
@@ -127,6 +128,7 @@ working set of repos, PRs, notes, tags) and **categories**, synced **peer-to-pee
 peers converge with no authority in the middle. Your commits, diffs, and code never leave your box.
 
 ```mermaid
+%%{init: {'theme':'base','themeVariables':{'fontFamily':'ui-monospace, SFMono-Regular, Menlo, monospace','primaryColor':'transparent','primaryBorderColor':'#14b8a6','primaryTextColor':'#8f969e','lineColor':'#8a8f98','nodeBorder':'#5f8f8a','edgeLabelBackground':'transparent','clusterBorder':'#3f8f86','clusterBkg':'transparent'}}}%%
 flowchart TB
     a["Alice's node<br/>(desktop or headless peer)"]
     b["Ben's node"]
