@@ -312,3 +312,10 @@ Want to hack on it? See [CONTRIBUTING.md](CONTRIBUTING.md). Found a vulnerabilit
 [SECURITY.md](SECURITY.md).
 
 <div align="center"><sub>Git is the real ledger. Stop typing it twice — and keep it on your own machine.</sub></div>
+
+---
+
+<p align="center">
+  <a href="https://vulos.org"><img src="site/assets/vulos-logo.png" alt="vulos" height="20"></a><br>
+  <sub><a href="https://vulos.org"><b>vulos</b></a> — open by design</sub>
+</p>
