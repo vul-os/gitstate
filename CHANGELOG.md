@@ -23,8 +23,28 @@ billing-collection cloud. It runs on your machine.
   applies. Its history remains in git.
 - Rewrote the project identity — README, roadmap, decisions, docs — to the standalone local-first +
   P2P story.
+- CLI commands that take a repo now accept the full id, an unambiguous id prefix, or the slug
+  (`gitstate state atlas-api`); an ambiguous reference lists the candidates instead of guessing.
+- `gitstate contributions` prints merged display names (agents marked) rather than raw contributor ids.
 
 ### Added
+- **Analytics in one round-trip** — `/api/analytics` (heatmap, weekly volume, cycle-time and
+  throughput series, work-kind/state/label slices, headline totals) behind the Dashboard and Insights
+  screens, with the window anchored on the newest commit rather than wall-clock now.
+- **Eng Health** (`/api/health-metrics`) — DORA-flavoured cycle time, a change-failure *text* proxy,
+  merge frequency, a labelled deploy proxy, bus factor, review coverage and quality signals.
+- **Involvement** (`/api/involvement`) and a cross-repo **contribution rollup**, plus persisted
+  six-dimension weights (`GET`/`PUT /api/weights`, `POST /api/weights/reset`) driving a live tuner in
+  the UI and `gitstate contributions --weights`.
+- **Derived Board** — open / in progress / merged / done, read-only by design.
+- **People** — identities merged from commit emails, each `@username` shown with its linked addresses.
+- **`gitstate-tracker`** — Jira and Linear import: their public APIs called from your machine with
+  your own personal token (stored locally, redacted on read), plus a CSV/JSON export path that makes
+  no network calls at all.
+- **`gitstate seed --demo`** — a deterministic synthetic dataset, and a Playwright pipeline
+  (`web/scripts/screenshots.mjs`) that captures every screen from it in dark and light.
+- Read-only `GET /api/repos/{id}/classifications` and `/api/repos/{id}/effort`, so the Classify screen
+  shows what has already been judged instead of an empty state.
 - **Rust Cargo workspace** (`crates/*`) modeled on `slipscan`: `gitstate-core` (pure domain + traits),
   `gitstate-git` (git2-rs derivation), `gitstate-forge` (`gh`/`glab` + REST/GraphQL), `gitstate-classify`
   (local LLM + signed taxonomy + heuristic fallback + local personalization), `gitstate-store`
@@ -43,8 +63,8 @@ billing-collection cloud. It runs on your machine.
 
 ### Kept (staged port)
 - `internal/`, `cmd/`, `migrations/`, `go.mod`, `go.sum` are retained **byte-for-byte** as the
-  reference source for a staged port of the remaining Go domains (DORA parity, effort/estimation,
-  involvement, evidence-invoice-as-local-report, NL→report) into the Rust crates. See
+  reference source for a staged port of the remaining Go domains (evidence-invoice-as-local-report and
+  NL→report; DORA, effort and involvement have since been ported) into the Rust crates. See
   [docs/MIGRATION-NOTES.md](docs/MIGRATION-NOTES.md). Nothing under those paths is edited until its
   Rust replacement passes parity.
 

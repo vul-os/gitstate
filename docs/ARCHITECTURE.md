@@ -28,6 +28,7 @@ Product slug `gitstate`, served at `gitstate.<vulos-domain>`.
 | **gitstate-git** | git2-rs: open/walk/diff, blame survival, SZZ bug-intro, project-state + six-dimension contribution derivation. | core |
 | **gitstate-forge** | GitHub + GitLab via `gh`/`glab` (REST/GraphQL token fallback). | core |
 | **gitstate-classify** | `Classifier`: local LLM (llmux/OpenAI-compatible) + signed taxonomy + heuristic + local personalization. | core, store |
+| **gitstate-tracker** | `TrackerClient` for Jira + Linear: their public APIs called with *your* personal token from this machine, plus an offline CSV/JSON export parser. Emits ordinary `WorkItem`s. | core |
 | **gitstate-store** | rusqlite persistence: contexts, categories, derived caches, CRDT op log. | core |
 | **gitstate-daemon** | axum: serves `web/dist` (SPA) + the JSON API. The headless always-on peer. | all above |
 | **gitstate-cli** | clap CLI (`bin: gitstate`). | all above |
@@ -39,9 +40,10 @@ flowchart TB
     git["gitstate-git"] --> core
     forge["gitstate-forge"] --> core
     classify["gitstate-classify"] --> core
+    tracker["gitstate-tracker"] --> core
     store["gitstate-store"] --> core
     sync["gitstate-sync<br/>(excluded · sync-dmtap)"] --> core
-    daemon["gitstate-daemon (axum)"] --> git & forge & classify & store
+    daemon["gitstate-daemon (axum)"] --> git & forge & classify & tracker & store
     cli["gitstate-cli (clap)"] --> daemon
     tauri["apps/desktop (Tauri)"] --> daemon
     web["web/ (React)"] -->|"HTTP JSON"| daemon
@@ -75,6 +77,9 @@ both the git engine and tests can rely on them.
 - **EffortEstimate** — judged diff-difficulty (1–13, fibonacci-ish), method (`LlmJudged` |
   `Heuristic`), rationale, confidence. Never a line count.
 - **Context / Category** — the CRDT-backed, sharable units (see [P2P-CONTEXTS.md](P2P-CONTEXTS.md)).
+- **Analytics / EngHealth / Involvement** — windowed rollups over the cached commits and work items:
+  heatmap and trend series, DORA-flavoured delivery metrics (with the proxies labelled as proxies),
+  bus factor, review coverage, quality signals, and per-repo/per-person involvement.
 
 ## One daemon, two front doors
 
@@ -110,7 +115,20 @@ All JSON, snake_case throughout (matching the domain serde). Errors are `{ "erro
 | POST | `/api/classify`, `/api/classify/feedback` | classify items / record a correction |
 | POST | `/api/effort` | judge diff-difficulty |
 | GET/POST | `/api/taxonomy`, `/api/taxonomy/verify` | the signed doc / verify a doc |
+| GET | `/api/repos/{id}/classifications`, `/api/repos/{id}/effort` | read what has already been judged (no classifier pass) |
+| GET | `/api/analytics?repo_id=&days=&from=&to=` | the one round-trip behind Dashboard + Insights |
+| GET | `/api/health-metrics?…` | `EngHealth` — DORA proxies, bus factor, review coverage, quality |
+| GET | `/api/involvement?…` | who touches which repo, read from both directions |
+| GET | `/api/contributions/rollup?from=&to=` | one six-dimension line per contributor across all repos |
+| GET/PUT/POST | `/api/weights`, `/api/weights/reset` | composite weights (normalized on write) |
+| GET/PUT/DELETE/POST | `/api/trackers[/{kind}[/test]]` | Jira/Linear credentials (token always redacted on read) |
+| POST | `/api/import/preview`, `/api/import/run`, `/api/import/file` | fetch without writing / import / offline export import |
 | GET/POST | `/api/sync/status`, `/api/sync/publish` | sync status / publish (`sync_disabled` when off) |
+
+The four windowed reads (`/api/analytics`, `/api/health-metrics`, `/api/involvement`,
+`/api/contributions/rollup`) resolve their range identically — explicit `from`/`to` win, else a
+trailing `days` window (default 180) anchored on the **newest commit in the store** rather than
+wall-clock now — so no two screens disagree about the same period.
 
 ## web/ client contract
 

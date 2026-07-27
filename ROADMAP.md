@@ -33,7 +33,7 @@ And one delivery flip that defines this rebuild: **it runs on your machine, not 
 
 ---
 
-## Phase 0 — The transform ✅ / in progress
+## Phase 0 — The transform ✅
 
 Turn the legacy Go+React+Postgres multi-tenant SaaS into a standalone local-first desktop app in the
 vulos suite style (`slipscan` / `ofisi` / `wede`).
@@ -41,52 +41,52 @@ vulos suite style (`slipscan` / `ofisi` / `wede`).
 - [x] Relicense **AGPL-3.0 → MIT OR Apache-2.0**; drop the `ee/` commercial Enterprise tier.
 - [x] Remove SaaS deploy artifacts (`Dockerfile`, `docker-compose.yml`, `deploy/`, `config.example.yaml`).
 - [x] Rewrite the project identity (README, roadmap, decisions, docs) to local-first + P2P.
-- [ ] Rust Cargo workspace (`crates/*`) modeled on `slipscan` — core, git, forge, classify, store, daemon, cli, sync.
-- [ ] Tauri shell (`apps/desktop`) that boots the daemon and reuses the React `web/` UI.
-- [ ] Repoint `web/` at the daemon JSON API; remove the multi-tenant auth/org/billing surfaces.
-- [ ] New static marketing/docs site (`site/`) published at `vulos.org/products/gitstate`.
+- [x] Rust Cargo workspace (`crates/*`) modeled on `slipscan` — core, git, forge, classify, tracker, store, daemon, cli, sync.
+- [x] Tauri shell (`apps/desktop`) that boots the daemon and reuses the React `web/` UI.
+- [x] Repoint `web/` at the daemon JSON API; remove the multi-tenant auth/org/billing surfaces.
+- [x] New static marketing/docs site (`site/`) published at `vulos.org/products/gitstate`.
 - [x] Keep `internal/`, `cmd/`, `migrations/`, `go.mod`, `go.sum` compiling for the staged port; the billing/invoicing/accounting/COGS layer was cut outright (no port planned).
 
 Live status: [PROGRESS.md](PROGRESS.md).
 
 ---
 
-## Phase 1 — Standalone local app (near-term)
+## Phase 1 — Standalone local app ✅
 
 The foundation everything plugs into: a machine that derives, classifies, and stores locally.
 
-- [ ] **gitstate-core** — domain types + the four traits (`ForgeClient`, `Classifier`, `Store`, `SyncEngine`) + pure derivation helpers, no I/O.
-- [ ] **gitstate-git** — git2-rs: open/walk/diff, blame survival, SZZ bug-intro, project-state and six-dimension contribution derivation.
-- [ ] **gitstate-forge** — GitHub + GitLab via `gh`/`glab` (REST/GraphQL token fallback): PRs, issues, reviews. Typed error when the CLI is missing.
-- [ ] **gitstate-store** — rusqlite persistence, forward-only migrations, WAL, a data dir resolved from the OS + `GITSTATE_DATA_DIR`.
-- [ ] **gitstate-daemon** — axum server: JSON API + SPA static serving; `serve` (fixed port) and `serve_ephemeral` (Tauri) paths.
-- [ ] **gitstate-cli** — clap: `serve`, `repo`, `state`, `contributions`, `classify`, `effort`, `context`, `category`, `taxonomy`, `data`.
-- [ ] **apps/desktop** — Tauri shell over the daemon; the React UI resolves the daemon base URL injected at startup.
-- [ ] **web/** — the kept React app, repointed at the daemon; auth/org/billing hooks removed or no-op'd (single-user local app).
+- [x] **gitstate-core** — domain types + the four traits (`ForgeClient`, `Classifier`, `Store`, `SyncEngine`) + pure derivation helpers, no I/O.
+- [x] **gitstate-git** — git2-rs: open/walk/diff, blame survival, SZZ bug-intro, project-state and six-dimension contribution derivation.
+- [x] **gitstate-forge** — GitHub + GitLab via `gh`/`glab` (REST/GraphQL token fallback): PRs, issues, reviews. Typed error when the CLI is missing.
+- [x] **gitstate-store** — rusqlite persistence, forward-only migrations, WAL, a data dir resolved from the OS + `GITSTATE_DATA_DIR`.
+- [x] **gitstate-daemon** — axum server: JSON API + SPA static serving; `serve` (fixed port) and `serve_ephemeral` (Tauri) paths.
+- [x] **gitstate-cli** — clap: `serve`, `repo`, `state`, `contributions`, `classify`, `effort`, `context`, `category`, `taxonomy`, `data`.
+- [x] **apps/desktop** — Tauri shell over the daemon; the React UI resolves the daemon base URL injected at startup.
+- [x] **web/** — the kept React app, repointed at the daemon; auth/org/billing hooks removed or no-op'd (single-user local app).
 
 ---
 
-## Phase 2 — Classification, effort &amp; the signed taxonomy
+## Phase 2 — Classification, effort &amp; the signed taxonomy ✅
 
 Honest, local, decentralized labeling.
 
-- [ ] **gitstate-classify** — `LlmClassifier` (llmux / OpenAI-compatible, env-driven) + `HeuristicClassifier` (always available, deterministic).
-- [ ] **LLM diff-difficulty** — judge the *shape* of a change (1–13, fibonacci-ish), never line count; heuristic fallback.
-- [ ] **Signed taxonomy** — versioned, content-addressed, ed25519-signed category tree shipped as embedded data; `verify()` against a pinned key, **fail-closed**.
-- [ ] **Local personalization** — corrections train a per-box prior that re-ranks classifications; replaces any pooled fine-tuning.
-- [ ] Runtime taxonomy override via `GITSTATE_TAXONOMY_PATH`; production re-signs with the release key.
+- [x] **gitstate-classify** — `LlmClassifier` (llmux / OpenAI-compatible, env-driven) + `HeuristicClassifier` (always available, deterministic).
+- [x] **LLM diff-difficulty** — judge the *shape* of a change (1–13, fibonacci-ish), never line count; heuristic fallback.
+- [x] **Signed taxonomy** — versioned, content-addressed, ed25519-signed category tree shipped as embedded data; `verify()` against a pinned key, **fail-closed**.
+- [x] **Local personalization** — corrections train a per-box prior that re-ranks classifications; replaces any pooled fine-tuning.
+- [x] Runtime taxonomy override via `GITSTATE_TAXONOMY_PATH`; production re-signs with the release key.
 
 ---
 
-## Phase 3 — Peer-to-peer contexts &amp; categories
+## Phase 3 — Peer-to-peer contexts &amp; categories (model done, transport open)
 
 Share the smarts (working sets and labels), never the code.
 
-- [ ] **CRDT model in core** — `SyncOp` op envelope; contexts and categories as LWW scalars + OR-Sets with a hybrid logical clock; add-wins, tombstones, resurrection.
-- [ ] **gitstate-sync** (excluded crate, feature `sync-dmtap`) — `CrdtSyncEngine`, op derivation, idempotent merge; one path for local edits and remote merges.
+- [x] **CRDT model in core** — `SyncOp` op envelope; contexts and categories as LWW scalars + OR-Sets with a hybrid logical clock; add-wins, tombstones, resurrection.
+- [x] **gitstate-sync** (excluded crate, feature `sync-dmtap`) — `CrdtSyncEngine`, op derivation, idempotent merge; one path for local edits and remote merges.
 - [ ] **Transport** — P2P over the shared vulos/DMTAP sync substrate rather than a bespoke stack; signed, no central hub.
-- [ ] **Context export/import** — a portable JSON working set, shareable out-of-band even without the sync feature built.
-- [ ] Convergence tests — commutative + idempotent op application; replay in any order yields identical state.
+- [x] **Context export/import** — a portable JSON working set, shareable out-of-band even without the sync feature built.
+- [x] Convergence tests — commutative + idempotent op application; replay in any order yields identical state.
 
 ---
 
@@ -95,20 +95,20 @@ Share the smarts (working sets and labels), never the code.
 Retire the in-tree Go server by porting its still-valuable logic to Rust, one domain at a time. Until
 a domain is ported, the Go source stays in-tree as the reference (never edited).
 
-- [ ] **DORA parity** — cycle-time p50/p90 and change-failure rate fully derived in `gitstate-git` (partly in Phase 1); match the legacy `internal/metrics` outputs.
-- [ ] **Effort/estimation parity** — port `internal/llm` diff-difficulty prompts and calibration into `gitstate-classify`.
-- [ ] **Involvement parity** — port `internal/metrics` multi-dimension involvement (texture, no score) into the six-dimension model.
+- [x] **DORA parity** — cycle-time p50/p90 and a labelled change-failure proxy derived in `gitstate-git` + `gitstate-core::health`, alongside bus factor, review coverage and quality signals.
+- [x] **Effort/estimation parity** — diff-difficulty judging in `gitstate-classify` (LLM + deterministic heuristic). Open follow-up: resolve real per-PR add/delete counts against the worktree so the heuristic has more than path signal.
+- [x] **Involvement parity** — per-repo and per-person involvement plus the six-dimension model with tunable weights and a cross-repo rollup.
 - [ ] **Reporting / NL→report** — port the SELECT-only queryable report path against the local SQLite store.
 - [ ] Once a domain's Rust port passes parity, remove the corresponding Go source in a dedicated commit.
 
 ---
 
-## Phase 5 — Packaging &amp; the site
+## Phase 5 — Packaging &amp; the site (current)
 
 - [ ] Tauri installers for macOS (`.dmg`), Windows (`.msi` / setup), Linux (`.AppImage` / `.deb`) + standalone CLI/daemon binaries.
 - [ ] Tag-triggered release CI (version-match guard, draft releases).
-- [ ] `site/` static marketing + docs in the suite house style; published at `vulos.org/products/gitstate`.
-- [ ] Real screenshots of the desktop app (replacing the legacy SaaS captures).
+- [x] `site/` static marketing + docs on the app's own design tokens; published at `vulos.org/products/gitstate`.
+- [x] Real screenshots of the desktop app, captured by `web/scripts/screenshots.mjs` against `gitstate seed --demo` (dark + light), replacing the legacy SaaS captures.
 
 ---
 

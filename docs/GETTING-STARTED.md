@@ -44,15 +44,29 @@ gitstate resolves an OS-appropriate data directory (overridable with `GITSTATE_D
 contributors, derived caches, contexts, categories, and the CRDT op log. Back it up by copying that
 folder; move it with `--data-dir`.
 
+## The fastest first look (no repo required)
+
+```bash
+gitstate seed --demo     # deterministic synthetic dataset — a fake org, fake people
+gitstate serve           # http://127.0.0.1:7473
+```
+
+Derived rows from the demo dataset carry a visible `synthetic demo data` warning, so a demo database
+can never be mistaken for real history.
+
 ## Your first scan (local only, no network)
 
 ```bash
 gitstate repo add ~/code/my-project      # register a worktree
-gitstate repo list                       # see the repo id
-gitstate repo scan <repo_id> --no-forge  # walk git only — zero network calls
-gitstate state <repo_id>                 # print the derived ProjectState
-gitstate contributions <repo_id>         # the six-dimension texture table
+gitstate repo list                       # id, slug, forge, last scan
+gitstate repo scan my-project --no-forge # walk git only — zero network calls
+gitstate state my-project                # print the derived ProjectState
+gitstate contributions my-project        # the six-dimension texture table
 ```
+
+Anywhere a repo is expected, you can pass the full id, an unambiguous id prefix, or the slug
+(`demo-org/atlas-api`, or just `atlas-api` when that is unique). An ambiguous reference is an error
+listing the candidates rather than a silent guess.
 
 ## Adding forge data
 
@@ -106,9 +120,10 @@ output where applicable).
 
 ```
 gitstate serve                      # headless daemon peer
+gitstate seed --demo                # synthetic demo dataset
 gitstate repo add|list|rm|scan      # manage repos, derive from git (+forge)
 gitstate state <repo_id>            # ProjectState
-gitstate contributions <repo_id>    # six-dimension contribution table
+gitstate contributions <repo_id>    # six-dimension table (--weights tunes the composite)
 gitstate contributors               # merged identities
 gitstate classify <repo_id>         # classify work items
 gitstate effort <repo_id>           # judge diff-difficulty

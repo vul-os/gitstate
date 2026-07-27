@@ -7,12 +7,12 @@
 
 # gitstate
 
-### Derive true project state from YOUR git — on your own machine.
+### Your git already knows. Stop typing it twice.
 
-gitstate reads your repositories and **derives** project state, effort, contribution, and
-classification directly from git and your forge. No tickets to maintain, no numbers to invent.
-It runs **locally**: a Rust core over plain SQLite, wrapped in a Tauri desktop app — no SaaS
-backend, no multi-tenant server, no cloud account. What you run is what you own.
+gitstate reads your repositories and **derives** project state, effort, contribution and
+classification straight from git and your forge. No tickets to groom, no story points to invent, no
+stand-up to reconstruct. It runs **on your machine**: a Rust core over one SQLite file, wrapped in a
+Tauri desktop app — no SaaS backend, no multi-tenant server, no account. What you run is what you own.
 
 <br>
 
@@ -42,7 +42,7 @@ backend, no multi-tenant server, no cloud account. What you run is what you own.
 
 <br>
 
-<img src="docs/screenshots/dashboard.png" alt="gitstate desktop app dashboard — commit, merged-PR, cycle-time and contributor stat cards, a cycle-time trend chart, a contribution heatmap and a contributor leaderboard, all derived from git" width="900">
+<img src="docs/screenshots/dashboard.png" alt="gitstate desktop app dashboard — commit, merged-PR, cycle-time and contributor stat cards, a cycle-time trend chart, a contribution heatmap and a top-contributor list, all derived from git" width="900">
 
 </div>
 
@@ -84,21 +84,25 @@ repo cohort so seniors, reviewers, and maintainers are never zeroed:
 | **Shipped** | merged PRs, closed issues |
 | **Review** | reviews performed on others' work |
 | **Effort** | Σ judged diff-difficulty (LLM reads the change; falls back to a deterministic heuristic) |
-| **Quality** | inverted from reverts caused, bug introductions (SZZ), and cycle time |
+| **Quality** | inverted from reverts caused and SZZ-linked bug introductions (the model also supports a cycle-time factor, not yet fed per contributor) |
 | **Ownership** | areas of the codebase authored/maintained |
 | **Durability** | surviving lines ÷ authored lines (git blame) |
 
+The composite is a weighted mean, and **you own the weights** — a live tuner in the UI, `PUT
+/api/weights`, or `gitstate contributions --weights shipped=2,review=1,…`. That is the argument, not a
+convenience: any ordering of people is an artefact of the weights someone chose, so gitstate hands
+them over rather than shipping a leaderboard and calling its ranking objective.
+
 Agent identities (Claude Code, Dependabot, …) are **first-class**: every contribution carries an
-`agent_pct`, so autonomous work is counted honestly rather than hidden. The composite is a *texture
-value*, displayed as evidence — never a leaderboard.
+`agent_pct`, so autonomous work is counted honestly rather than hidden.
 
 ---
 
 ## How it works
 
 Everything runs on your machine. The only network endpoints in the picture are ones **you**
-configured — your forge (`gh`/`glab` or a token) and, optionally, your local LLM. A plain scan of a
-local repo makes **zero** network calls.
+configured — your forge (`gh`/`glab` or a token), optionally your local LLM, and optionally a tracker
+you import from. A plain scan of a local repo makes **zero** network calls.
 
 ```mermaid
 %%{init: {'theme':'base','themeVariables':{'fontFamily':'ui-monospace, SFMono-Regular, Menlo, monospace','primaryColor':'transparent','primaryBorderColor':'#14b8a6','primaryTextColor':'#8f969e','lineColor':'#8a8f98','nodeBorder':'#5f8f8a','edgeLabelBackground':'transparent','clusterBorder':'#3f8f86','clusterBkg':'transparent'}}}%%
@@ -144,20 +148,20 @@ flowchart TB
 
 <table>
 <tr>
-<td width="50%"><img src="docs/screenshots/insights.png" alt="Insights view: ten headline stat cards, a year-long contribution heatmap, commit-volume, lines-added, cycle-time and throughput trend charts, plus a contributor table"><br><sub><em>Insights — a year of delivery, derived from git rather than self-reported</em></sub></td>
-<td width="50%"><img src="docs/screenshots/repo-detail.png" alt="Repo detail: DORA project-state cards, per-repo activity stats, contribution heatmap, commits-per-week and cycle-time charts, and the six-dimension contribution table"><br><sub><em>Repo detail — project state, activity and the six gaming-resistant dimensions</em></sub></td>
+<td width="50%"><img src="docs/screenshots/board.png" alt="Board: four derived columns — open, in progress, merged, done — where every card is a PR, issue or review"><br><sub><em>Board — read-only and derived; a column you can drag is a column that can lie</em></sub></td>
+<td width="50%"><img src="docs/screenshots/eng-health.png" alt="Eng Health: cycle time, change-failure rate, merge frequency and deploy-proxy cards, a bus-factor ownership panel, review coverage and quality signals"><br><sub><em>Eng Health — DORA-flavoured metrics, bus factor and review coverage, each labelled with how it was derived</em></sub></td>
 </tr>
 <tr>
-<td width="50%"><img src="docs/screenshots/eng-health.png" alt="Eng Health: DORA cards (cycle p50, change-failure rate, merge frequency), a bus-factor ownership panel, review coverage and quality signals"><br><sub><em>Eng Health — DORA, bus factor, review coverage and quality proxies</em></sub></td>
+<td width="50%"><img src="docs/screenshots/insights.png" alt="Insights view: ten headline stat cards, a year-long contribution heatmap, commit-volume, lines-added, cycle-time and throughput trend charts, plus a contributor table"><br><sub><em>Insights — a year of delivery, derived rather than self-reported</em></sub></td>
 <td width="50%"><img src="docs/screenshots/contribution.png" alt="Contribution: six-dimension table across every repo with a live weight tuner"><br><sub><em>Contribution — six gaming-resistant dimensions, with the weights in your hands</em></sub></td>
 </tr>
 <tr>
+<td width="50%"><img src="docs/screenshots/classify.png" alt="Classify: work items labelled against the signed taxonomy with confidence, method and rationale, plus a difficulty score per item"><br><sub><em>Classify — labels and difficulty judged locally, every row showing its method and rationale</em></sub></td>
 <td width="50%"><img src="docs/screenshots/import.png" alt="Import: Jira and Linear credential forms using your own personal API token, plus an offline export-file path"><br><sub><em>Import — Jira &amp; Linear with <strong>your</strong> token, from your machine; or fully offline from an export</em></sub></td>
-<td width="50%"><img src="docs/screenshots/contexts.png" alt="Contexts view: saved working sets of repos, pull requests, tags and notes"><br><sub><em>Contexts — saved working sets that sync peer-to-peer over CRDT</em></sub></td>
 </tr>
 </table>
 
-<sub>All shots are the real desktop app against a deterministic synthetic demo dataset (`gitstate seed --demo`) — a fake org, fake pseudonymous contributors, never real git/forge history. See <a href="docs/screenshots/">docs/screenshots/</a> for the full set (including <a href="docs/screenshots/involvement.png">Involvement</a>, <a href="docs/screenshots/people.png">People</a>, <a href="docs/screenshots/board.png">Board</a>, <a href="docs/screenshots/categories.png">Categories</a> and <a href="docs/screenshots/dashboard-light.png">light-mode</a> shots) and <code>web/scripts/screenshots.mjs</code> to regenerate.</sub>
+<sub>All shots are the real desktop app against a deterministic synthetic demo dataset (`gitstate seed --demo`) — a fake org, fake pseudonymous contributors, never real git/forge history. See <a href="docs/screenshots/">docs/screenshots/</a> for the full set (including <a href="docs/screenshots/dashboard.png">Dashboard</a>, <a href="docs/screenshots/involvement.png">Involvement</a>, <a href="docs/screenshots/people.png">People</a>, <a href="docs/screenshots/contexts.png">Contexts</a>, <a href="docs/screenshots/taxonomy.png">Taxonomy</a> and <a href="docs/screenshots/dashboard-light.png">light-mode</a> shots), and <code>web/scripts/screenshots.mjs</code> to regenerate them.</sub>
 
 ### Importing from Jira or Linear
 
@@ -180,12 +184,12 @@ every analytics rollup treat them exactly like native ones. Ids are derived from
 
 ## Quick start
 
-> **Status: transform in progress.** gitstate is being rebuilt from a multi-tenant Go+Postgres SaaS
-> into this standalone local-first desktop app. The Rust workspace (`crates/*`), the Tauri shell
-> (`apps/desktop`), and the repointed React UI (`web/`) are landing now; the legacy Go server under
-> `internal/` and `cmd/` is **kept in-tree, untouched**, for a staged port (see
-> [docs/MIGRATION-NOTES.md](docs/MIGRATION-NOTES.md)). Check [PROGRESS.md](PROGRESS.md) for what is
-> wired today.
+> **Status: v0.1, built in the open.** The Rust core, the daemon, the CLI, the desktop shell and every
+> screen above work today. Packaged installers are still to come, a few analytics domains are still
+> being ported from the legacy Go implementation under `internal/` (kept in-tree as the reference for a
+> staged port — see [docs/MIGRATION-NOTES.md](docs/MIGRATION-NOTES.md)), and P2P sync stays behind its
+> feature flag until the transport settles. [ROADMAP.md](ROADMAP.md) and [PROGRESS.md](PROGRESS.md) say
+> which is which.
 
 ### Prerequisites
 
@@ -214,18 +218,28 @@ cd apps/desktop && npm install && npm run tauri dev
 `cargo build` never touches the P2P sync crate — `gitstate-sync` is **excluded** from the default
 workspace and lives behind an optional `sync-dmtap` feature, so a bare build has no network stack.
 
-### Try it (CLI)
+### See every screen in 30 seconds
+
+```bash
+gitstate seed --demo      # deterministic synthetic dataset — no repo required
+gitstate serve            # http://127.0.0.1:7473
+```
+
+Derived rows from the demo dataset carry a visible `synthetic demo data` warning, so it can never be
+mistaken for real history.
+
+### Try it for real (CLI)
 
 ```bash
 # Register a repo and derive its state (git only — no forge, no network)
 gitstate repo add ~/code/my-project
-gitstate repo scan <repo_id> --no-forge
-gitstate state <repo_id>
+gitstate repo scan my-project --no-forge
+gitstate state my-project
 
 # Pull PRs/issues/reviews via your gh/glab login, then derive contributions
-gitstate repo scan <repo_id>
-gitstate contributions <repo_id>          # the six-dimension texture table
-gitstate classify <repo_id>               # local LLM if configured, else heuristic
+gitstate repo scan my-project
+gitstate contributions my-project         # the six-dimension texture table
+gitstate classify my-project              # local LLM if configured, else heuristic
 
 # Save a working set and share it P2P (sync built with --features sync-dmtap)
 gitstate context create --name "Q3 refactor" --repo <repo_id> --pr vul-os/gitstate#42 --tag refactor
@@ -235,6 +249,9 @@ gitstate context list
 gitstate serve            # binds 127.0.0.1:7473 (GITSTATE_ADDR / GITSTATE_PORT)
 gitstate data path        # where your local database lives
 ```
+
+Commands that take a repo accept the full id, an unambiguous id prefix, or the slug — `gitstate repo
+list` shows all three.
 
 Full CLI reference: [docs/GETTING-STARTED.md](docs/GETTING-STARTED.md). Forge setup (gh/glab and
 tokens): [docs/FORGE-SETUP.md](docs/FORGE-SETUP.md).
@@ -248,13 +265,14 @@ the middle, I/O crates at the edges, one daemon that serves both the desktop she
 
 | Crate | Role |
 |---|---|
-| **gitstate-core** | Pure domain — types (`Repo`, `Commit`, `Contribution`, `ProjectState`, `Context`, `Category`, `Taxonomy`, …) and the four traits (`ForgeClient`, `Classifier`, `Store`, `SyncEngine`). No I/O. |
+| **gitstate-core** | Pure domain — types (`Repo`, `Commit`, `Contribution`, `ProjectState`, `Context`, `Category`, `Taxonomy`, `Analytics`, `EngHealth`, …) and the four traits (`ForgeClient`, `Classifier`, `Store`, `SyncEngine`). No I/O. |
 | **gitstate-git** | git2-rs derivation engine — walk history, diff, blame survival, SZZ bug-intro, and the six-dimension contribution math. |
 | **gitstate-forge** | GitHub + GitLab via shelling `gh`/`glab` (REST/GraphQL fallback with a token) — PRs, issues, reviews. |
 | **gitstate-classify** | Classifier — local LLM (llmux / any OpenAI-compatible endpoint) + a signed taxonomy + local personalization, with a deterministic heuristic fallback. |
+| **gitstate-tracker** | Jira + Linear import: their public APIs called from your machine with your own personal token, plus an offline CSV/JSON export parser. |
 | **gitstate-store** | rusqlite persistence — contexts, categories, derived caches, the CRDT op log. |
-| **gitstate-daemon** | axum HTTP server — serves `web/dist` (SPA) **and** the JSON API. The headless always-on peer. |
-| **gitstate-cli** | clap CLI (`serve`, `repo`, `state`, `contributions`, `classify`, `effort`, `context`, `category`, `taxonomy`, `sync`, `data`). |
+| **gitstate-daemon** | axum HTTP server — serves `web/dist` (SPA) **and** the JSON API, including the analytics, health and involvement rollups. The headless always-on peer. |
+| **gitstate-cli** | clap CLI (`serve`, `seed`, `repo`, `state`, `contributions`, `contributors`, `classify`, `effort`, `context`, `category`, `taxonomy`, `sync`, `data`). |
 | **gitstate-sync** | P2P CRDT sync of contexts + categories. **Excluded from the default workspace**; behind an optional `sync-dmtap` feature so a plain `cargo build` never pulls P2P deps. |
 | **apps/desktop** | Tauri shell. Boots the daemon on an ephemeral local port and loads the **same** React app the headless mode serves — the UI is not forked. |
 | **web/** | The kept React frontend, repointed at the daemon's JSON API (§ [web API contract](docs/ARCHITECTURE.md)); the old multi-tenant auth/org/billing surfaces are removed. |
@@ -298,6 +316,10 @@ belongs to an optional coordinator; everything a git tool is for is local + P2P.
 - [Forge setup](docs/FORGE-SETUP.md) — `gh`/`glab` and token configuration.
 - [Migration notes](docs/MIGRATION-NOTES.md) — why the legacy Go server is still in-tree, and the staged port.
 - [Security model](docs/security.md) · [Roadmap](ROADMAP.md) · [Decisions](decisions.md) · [Changelog](CHANGELOG.md)
+
+The full documentation site — including the derivation model, analytics, the HTTP API and the threat
+model — lives in [`site/`](site/) and reads at
+[vulos.org/products/gitstate](https://vulos.org/products/gitstate).
 
 ---
 

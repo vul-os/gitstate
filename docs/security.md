@@ -31,8 +31,14 @@ The daemon binds `127.0.0.1` by default.
 
 gitstate registers no OAuth application and brokers no tokens. Forge access reuses the credentials
 already on your machine (the `gh`/`glab` session, or a PAT you export). LLM keys are read from the
-environment and used only against the endpoint you set. gitstate persists no forge or LLM secret to
-its database.
+environment and used only against the endpoint you set. **No forge or LLM secret is persisted to the
+database.**
+
+The one exception, stated plainly: **Jira and Linear personal tokens are stored locally**, because
+those products have no CLI to borrow a session from. They live in your SQLite file, are returned by
+the API only as a masked hint (`…9f2c`), and are transmitted only to the vendor they belong to — no
+broker, no OAuth callback, no gitstate server in the path. If you would rather store nothing, the
+import screen's export-file path performs no network I/O and needs no credential at all.
 
 ## 3. Code never leaves the box
 
@@ -83,6 +89,12 @@ own device. Back it up by copying the folder.
       and diff shapes; keep it a conscious, configured choice.
 - [ ] **Taxonomy release key** — replace the development signing key before any signed distribution.
 - [ ] **Sync transport review** — a security pass on the `sync-dmtap` transport before it ships enabled.
+- [ ] **Tracker token storage** — tokens are stored as plaintext in the local SQLite file, protected
+      only by file permissions and disk encryption. Evaluate OS keychain storage (Keychain / Secret
+      Service / DPAPI) so the database stops being the one file that holds a live credential.
+- [ ] **Unauthenticated API surface** — the daemon has no auth by design (loopback + OS user is the
+      boundary), but `GITSTATE_ADDR` will bind any interface. Consider refusing a non-loopback bind
+      unless the operator opts in explicitly.
 
 ---
 
