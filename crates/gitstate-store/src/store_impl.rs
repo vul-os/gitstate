@@ -1061,6 +1061,60 @@ impl Store for SqliteStore {
         .map_err(st)
     }
 
+    fn list_classifications(&self, repo: &RepoId) -> Result<Vec<Classification>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn
+            .prepare(
+                "SELECT c.item_id, c.category_key, c.confidence, c.method, c.rationale
+                 FROM classifications c
+                 JOIN work_items w ON w.id = c.item_id
+                 WHERE w.repo_id = ?1",
+            )
+            .map_err(st)?;
+        let rows = stmt
+            .query_map([&repo.0], |r| {
+                Ok(Classification {
+                    item_id: WorkItemId(r.get(0)?),
+                    category_key: r.get(1)?,
+                    confidence: r.get(2)?,
+                    method: EffortMethod::parse(&r.get::<_, String>(3)?)
+                        .unwrap_or(EffortMethod::Heuristic),
+                    rationale: r.get(4)?,
+                })
+            })
+            .map_err(st)?
+            .collect::<rusqlite::Result<_>>()
+            .map_err(st)?;
+        Ok(rows)
+    }
+
+    fn list_effort(&self, repo: &RepoId) -> Result<Vec<EffortEstimate>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn
+            .prepare(
+                "SELECT e.item_id, e.difficulty, e.method, e.rationale, e.confidence
+                 FROM effort e
+                 JOIN work_items w ON w.id = e.item_id
+                 WHERE w.repo_id = ?1",
+            )
+            .map_err(st)?;
+        let rows = stmt
+            .query_map([&repo.0], |r| {
+                Ok(EffortEstimate {
+                    item_id: WorkItemId(r.get(0)?),
+                    difficulty: r.get(1)?,
+                    method: EffortMethod::parse(&r.get::<_, String>(2)?)
+                        .unwrap_or(EffortMethod::Heuristic),
+                    rationale: r.get(3)?,
+                    confidence: r.get(4)?,
+                })
+            })
+            .map_err(st)?
+            .collect::<rusqlite::Result<_>>()
+            .map_err(st)?;
+        Ok(rows)
+    }
+
     fn upsert_context(&self, c: &Context) -> Result<()> {
         let mut conn = self.conn.lock().unwrap();
         let hlc = next_hlc(&conn)?;

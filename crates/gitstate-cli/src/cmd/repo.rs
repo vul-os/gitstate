@@ -74,8 +74,9 @@ pub async fn run(ctx: &Ctx, cmd: RepoCmd) -> anyhow::Result<()> {
             }
         }
         RepoCmd::Rm { id } => {
-            ops::delete_repo(&state, &RepoId::from(id.clone()))?;
-            println!("removed {id}");
+            let repo = super::resolve_repo(&state, &id)?;
+            ops::delete_repo(&state, &repo)?;
+            println!("removed {}", repo.0);
         }
         RepoCmd::Scan {
             id,
@@ -86,7 +87,7 @@ pub async fn run(ctx: &Ctx, cmd: RepoCmd) -> anyhow::Result<()> {
             let targets: Vec<RepoId> = if all {
                 ops::list_repos(&state)?.into_iter().map(|r| r.id).collect()
             } else if let Some(id) = id {
-                vec![RepoId::from(id)]
+                vec![super::resolve_repo(&state, &id)?]
             } else {
                 anyhow::bail!("provide a repo id or --all");
             };

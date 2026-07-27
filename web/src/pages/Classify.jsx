@@ -7,7 +7,11 @@ import { PageHeader, Spinner, ErrorState, EmptyState } from '../components/commo
 import { useAsync, useAction } from '../lib/hooks.js'
 import {
   listRepos, workItems, listCategories, classify, effort, classifyFeedback,
+  repoClassifications, repoEffort,
 } from '../lib/api.js'
+
+/** [{item_id, …}] → {item_id: row} */
+const byItem = (rows) => Object.fromEntries((rows || []).map((r) => [r.item_id, r]))
 
 function methodBadge(method) {
   return <Badge color={method === 'llm_judged' ? 'indigo' : 'default'}>{method === 'llm_judged' ? 'LLM' : 'heuristic'}</Badge>
@@ -79,25 +83,34 @@ export default function Classify() {
   const [runClassify, { pending: classifying, error: clErr }] = useAction(classify)
   const [runEffort, { pending: judging, error: efErr }] = useAction(effort)
 
+  // Selecting a repo shows what has ALREADY been judged — the two POSTs below
+  // only fill in the gaps. Without this hydrate, a repo classified last week
+  // renders as if nothing had ever been labelled.
   async function selectRepo(id) {
     setRepoId(id)
     setResults({}); setEfforts({})
     if (!id) { setItems([]); return }
-    const [its, cats] = await Promise.all([
+    const [its, cats, cls, eff] = await Promise.all([
       workItems(id, {}).catch(() => []),
       listCategories().catch(() => []),
+      repoClassifications(id).catch(() => []),
+      repoEffort(id).catch(() => []),
     ])
     setItems(its)
     setCategories(cats)
+    setResults(byItem(cls))
+    setEfforts(byItem(eff))
   }
 
+  // Merge rather than replace: `POST /api/classify` returns only the items it
+  // had to judge (the previously-unclassified ones).
   async function doClassify() {
     const rows = await runClassify({ repo_id: repoId })
-    setResults(Object.fromEntries((rows || []).map((r) => [r.item_id, r])))
+    setResults((prev) => ({ ...prev, ...byItem(rows) }))
   }
   async function doEffort() {
     const rows = await runEffort({ repo_id: repoId })
-    setEfforts(Object.fromEntries((rows || []).map((r) => [r.item_id, r])))
+    setEfforts((prev) => ({ ...prev, ...byItem(rows) }))
   }
 
   if (loading) return <div><PageHeader title="Classify" /><Spinner /></div>

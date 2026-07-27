@@ -73,6 +73,11 @@ pub trait Store: Send + Sync {
     fn save_effort(&self, rows: &[EffortEstimate]) -> Result<()>;
     fn save_classifications(&self, rows: &[Classification]) -> Result<()>;
     fn get_classification(&self, item: &WorkItemId) -> Result<Option<Classification>>;
+    /// Every stored classification for a repo's work items. Read-only: unlike
+    /// running the classifier, this judges nothing and writes nothing.
+    fn list_classifications(&self, repo: &RepoId) -> Result<Vec<Classification>>;
+    /// Every stored effort estimate for a repo's work items. Read-only.
+    fn list_effort(&self, repo: &RepoId) -> Result<Vec<EffortEstimate>>;
     // contexts (CRDT-backed)
     fn upsert_context(&self, c: &Context) -> Result<()>;
     fn get_context(&self, id: &ContextId) -> Result<Option<Context>>;

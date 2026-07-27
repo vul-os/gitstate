@@ -153,6 +153,16 @@ export function workItems(id, { kind, state } = {}) {
   return get(`/api/repos/${encodeURIComponent(id)}/work-items${qs({ kind, state })}`)
 }
 
+/** GET /api/repos/:id/classifications — stored labels; judges nothing. */
+export function repoClassifications(id) {
+  return get(`/api/repos/${encodeURIComponent(id)}/classifications`)
+}
+
+/** GET /api/repos/:id/effort — stored difficulty estimates; judges nothing. */
+export function repoEffort(id) {
+  return get(`/api/repos/${encodeURIComponent(id)}/effort`)
+}
+
 /** GET /api/contributors — merged identities across all repos. */
 export function contributors() { return get('/api/contributors') }
 

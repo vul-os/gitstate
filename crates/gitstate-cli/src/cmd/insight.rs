@@ -2,7 +2,7 @@
 
 use clap::Args;
 
-use gitstate_core::{RepoId, Weights};
+use gitstate_core::Weights;
 use gitstate_daemon::ops;
 
 use super::Ctx;
@@ -31,7 +31,8 @@ pub struct ClassifyArgs {
 
 pub fn state(ctx: &Ctx, repo_id: &str) -> anyhow::Result<()> {
     let state = ctx.state()?;
-    let ps = ops::project_state(&state, &RepoId::from(repo_id))?;
+    let repo = super::resolve_repo(&state, repo_id)?;
+    let ps = ops::project_state(&state, &repo)?;
     if ctx.json {
         ctx.print_json(&ps)?;
     } else {
@@ -70,26 +71,37 @@ pub fn contributions(ctx: &Ctx, args: ContribArgs) -> anyhow::Result<()> {
         let w = parse_weights(spec)?;
         ops::save_weights(state.store.as_ref(), &w)?;
     }
-    let rows = ops::contributions(
-        &state,
-        &RepoId::from(args.repo_id),
-        args.from.as_deref(),
-        args.to.as_deref(),
-    )?;
+    let repo = super::resolve_repo(&state, &args.repo_id)?;
+    let rows = ops::contributions(&state, &repo, args.from.as_deref(), args.to.as_deref())?;
     if ctx.json {
         ctx.print_json(&rows)?;
     } else if rows.is_empty() {
         println!("no contributions (scan the repo first: gitstate repo scan <id>)");
     } else {
+        // A raw ContributorId is unreadable in a terminal; resolve it to the
+        // merged identity's display name, falling back to the id when the
+        // contributor row is missing.
+        let names: std::collections::HashMap<String, String> = ops::contributors(&state)?
+            .into_iter()
+            .map(|c| {
+                let name = if c.is_agent {
+                    format!("{} [agent]", c.display_name)
+                } else {
+                    c.display_name
+                };
+                (c.id.to_string(), name)
+            })
+            .collect();
         println!(
-            "{:<38} {:>6} {:>6} {:>6} {:>6} {:>6} {:>6} {:>7} {:>6}",
+            "{:<30} {:>6} {:>6} {:>6} {:>6} {:>6} {:>6} {:>7} {:>6}",
             "contributor", "ship", "rev", "eff", "qual", "own", "dur", "comp", "agent%"
         );
         for c in &rows {
             let d = &c.dimensions;
+            let who = c.contributor_id.to_string();
             println!(
-                "{:<38} {:>6.0} {:>6.0} {:>6.0} {:>6.0} {:>6.0} {:>6.0} {:>7.1} {:>5.0}%",
-                c.contributor_id,
+                "{:<30} {:>6.0} {:>6.0} {:>6.0} {:>6.0} {:>6.0} {:>6.0} {:>7.1} {:>5.0}%",
+                names.get(&who).unwrap_or(&who),
                 d.shipped,
                 d.review,
                 d.effort,
@@ -129,7 +141,8 @@ pub fn contributors(ctx: &Ctx) -> anyhow::Result<()> {
 
 pub async fn classify(ctx: &Ctx, args: ClassifyArgs) -> anyhow::Result<()> {
     let state = ctx.state()?;
-    let out = ops::classify_items(&state, &RepoId::from(args.repo_id), args.items).await?;
+    let repo = super::resolve_repo(&state, &args.repo_id)?;
+    let out = ops::classify_items(&state, &repo, args.items).await?;
     if ctx.json {
         ctx.print_json(&out)?;
     } else if out.is_empty() {
@@ -150,7 +163,8 @@ pub async fn classify(ctx: &Ctx, args: ClassifyArgs) -> anyhow::Result<()> {
 
 pub async fn effort(ctx: &Ctx, args: ClassifyArgs) -> anyhow::Result<()> {
     let state = ctx.state()?;
-    let out = ops::effort_items(&state, &RepoId::from(args.repo_id), args.items).await?;
+    let repo = super::resolve_repo(&state, &args.repo_id)?;
+    let out = ops::effort_items(&state, &repo, args.items).await?;
     if ctx.json {
         ctx.print_json(&out)?;
     } else if out.is_empty() {
