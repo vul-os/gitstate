@@ -32,6 +32,22 @@ gitstate serve [--addr <ip>] [--port <n>] [--web-dist <path>]
 
 ---
 
+## seed
+
+Populate a database with the deterministic synthetic demo dataset — a fake org, fake pseudonymous
+people, never real git or forge history. It is the fastest way to see every screen with data, and it
+is what the [screenshots](screenshots.md) are captured against.
+
+```
+gitstate seed --demo [--db <file>]
+```
+
+By default it writes the same `gitstate.db` that `gitstate serve` opens, so
+`gitstate seed --demo && gitstate serve` needs no extra flags. Derived rows carry a visible
+`synthetic demo data` warning so a demo database can never be mistaken for a real one.
+
+---
+
 ## repo
 
 ```
@@ -55,6 +71,16 @@ gitstate state <repo_id> [--json]
 
 Prints the derived `ProjectState` — DORA cycle time, PR/issue flow, in-progress/done, change-failure.
 
+```
+repo         5d6fe96b-8686-9274-0165-97fbab4325e4
+head         d42d4868a7691cfdbfbfdb0f32664f85c5a066ad
+prs          open=4 merged=40 draft=2
+issues       open=7 closed=21
+flow         in_progress=4 done=61
+cycle time   p50=8.0 p90=17.6 (hours)
+change fail  0.2
+```
+
 ---
 
 ## contributions / contributors
@@ -66,8 +92,16 @@ gitstate contributions <repo_id> [--from <rfc3339>] [--to <rfc3339>] [--json]
 gitstate contributors [--json]          # merged identities
 ```
 
-`contributions` prints the six-dimension texture per contributor across the window. `--weights` only
-tunes the display `composite`; the dimensions themselves are unweighted evidence.
+`contributions` prints the six-dimension texture per contributor across the window, resolving each
+contributor id to its merged display name (agents are marked). `--weights` persists the composite
+weights and tunes the `comp` column; the dimensions themselves are unweighted evidence.
+
+```
+contributor                      ship    rev    eff   qual    own    dur    comp agent%
+Nour Haddad                        73     33     59     86     85     35    61.8     0%
+Wei Zhang                          83     48     36     77     41     70    59.2     0%
+Refactor Agent [agent]             49     89     87     69     25     32    58.5    95%
+```
 
 ---
 

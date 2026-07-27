@@ -30,23 +30,42 @@ Nothing else. No database server, no Docker, no cloud credentials.
 ```bash
 git clone https://github.com/vul-os/gitstate
 cd gitstate
+cargo build --workspace
+```
 
-# register a repo (its worktree path or a remote URL) and derive its state
-cargo run -p gitstate-cli -- repo add .
-cargo run -p gitstate-cli -- repo scan --all
-cargo run -p gitstate-cli -- state vul-os/gitstate
+That builds the core, the CLI and the daemon. A bare `cargo build` never pulls the P2P stack —
+`gitstate-sync` is excluded from the default workspace and lives behind the optional `sync-dmtap`
+feature.
 
-# run the always-on peer — serves the web UI and the JSON API on :7473
-cargo run -p gitstate-cli -- serve
+### See every screen in 30 seconds
 
-# or launch the desktop app
+```bash
+cargo run -p gitstate-cli -- seed --demo    # synthetic dataset, no repo needed
+cargo run -p gitstate-cli -- serve          # http://127.0.0.1:7473
+```
+
+The demo dataset is a fake org with pseudonymous contributors; derived rows carry a visible
+`synthetic demo data` warning so it can never be mistaken for real history.
+
+### Point it at something real
+
+```bash
+# register a repo (worktree path or remote URL) and derive its state
+cargo run -p gitstate-cli -- repo add ~/code/my-project
+cargo run -p gitstate-cli -- repo scan my-project      # add --no-forge to stay offline
+cargo run -p gitstate-cli -- state my-project
+
+# or launch the desktop app (boots the daemon in-process)
 cd apps/desktop && npm install && npm run tauri dev
 ```
 
-The first `repo scan` walks history with [git2](https://docs.rs/git2) and — unless you pass
-`--no-forge` — pulls PRs, issues, and reviews through `gh`/`glab`. Everything is cached in a single
-SQLite file under your platform data directory (override with `--data-dir` or `GITSTATE_DATA_DIR`).
-Run `gitstate data path` to see exactly where.
+Commands that take a repo accept the full id, an unambiguous id prefix, or the slug
+(`demo-org/atlas-api`, or just `atlas-api` when that's unique) — `gitstate repo list` shows all three.
+
+`repo scan` walks history with [git2](https://docs.rs/git2) and — unless you pass `--no-forge` — pulls
+PRs, issues and reviews through `gh`/`glab`. Everything is cached in a single SQLite file under your
+platform data directory (override with `--data-dir` or `GITSTATE_DATA_DIR`). Run `gitstate data path`
+to see exactly where.
 
 ---
 
@@ -54,13 +73,19 @@ Run `gitstate data path` to see exactly where.
 
 Once a repo is scanned:
 
-- **Project state** — DORA cycle time (first-commit → merge), change-failure rate, and
-  in-progress/done counts, all derived. See [Derivation model](derivation.md).
-- **Involvement** — six-dimension contribution *texture* per contributor, never a single rank. See
+- **Dashboard / Insights** — headline counts, the cycle-time trend, a year-long heatmap and the
+  contributors behind it. See [Analytics & health](analytics.md).
+- **Board** — open / in progress / merged / done, derived from the ledger and read-only on purpose.
+- **Eng Health** — DORA-flavoured delivery metrics, bus factor, review coverage and quality proxies,
+  each labelled with how it was derived.
+- **Contribution / Involvement / People** — six-dimension contribution *texture* per contributor with
+  the weights in your hands, who touches which repo, and identities merged from commit emails. See
   [Derivation model](derivation.md).
-- **Classify / Effort** — work items tagged against a signed taxonomy and effort judged from the diff.
-  See [Classification & effort](classification.md).
-- **Contexts** — saved working sets of repos, PRs, tags, and notes that you can keep private or share
+- **Classify / Taxonomy** — work items tagged against a signed taxonomy with effort judged from the
+  diff. See [Classification & effort](classification.md).
+- **Import** — pull Jira and Linear issues in with your own token, or from an export file offline. See
+  [Jira & Linear import](import.md).
+- **Contexts** — saved working sets of repos, PRs, tags and notes that you can keep private or share
   peer-to-peer. See [Contexts & P2P sync](contexts-sync.md).
 
 ---
@@ -72,7 +97,7 @@ Classification and effort judging use whatever OpenAI-compatible endpoint you po
 ```bash
 export VULOS_LLMUX_URL="http://127.0.0.1:8080/v1"   # or OPENAI_BASE_URL
 export GITSTATE_CLASSIFY_MODEL="your-model"          # optional
-cargo run -p gitstate-cli -- classify vul-os/gitstate
+cargo run -p gitstate-cli -- classify my-project
 ```
 
 Leave the endpoint unset and gitstate falls back to a deterministic keyword/path heuristic — offline,
@@ -80,4 +105,13 @@ reproducible, and always available. Details in [Configuration](configuration.md)
 
 ---
 
-Next: [Architecture](architecture.md) · [CLI reference](cli.md) · [HTTP API](api.md)
+---
+
+## Status
+
+gitstate is **v0.1 and built in the open**. The Rust core, the daemon, the CLI, the desktop shell and
+every screen in the [screenshot gallery](screenshots.md) work today. Packaged installers and a few
+remaining ported analytics domains are still landing, and the P2P sync crate stays behind its feature
+flag until the transport settles — the [roadmap](roadmap.md) says which is which.
+
+Next: [Configuration](configuration.md) · [CLI reference](cli.md) · [Architecture](architecture.md)

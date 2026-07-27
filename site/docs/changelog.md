@@ -3,10 +3,35 @@
 All notable changes to gitstate. Format loosely follows [Keep a Changelog](https://keepachangelog.com);
 this project uses [Semantic Versioning](https://semver.org).
 
+## [Unreleased]
+
+### Added
+
+- **Analytics in one round-trip** — `/api/analytics` (heatmap, weekly volume, cycle time, throughput,
+  work-kind/state/label slices, headline totals) behind the Dashboard and Insights screens.
+- **Eng Health** — `/api/health-metrics`: DORA-flavoured cycle time, a change-failure text proxy,
+  merge frequency, a labelled deploy proxy, bus factor, review coverage and quality signals.
+- **Involvement** and a cross-repo **contribution rollup**, plus persisted six-dimension
+  [weights](analytics.md) with a live tuner in the UI (`GET`/`PUT /api/weights`, `--weights` on the CLI).
+- **Derived Board** — open / in progress / merged / done, read-only by design.
+- **People** — identities merged from commit emails, each `@username` shown with its linked addresses.
+- **Jira & Linear import** (`gitstate-tracker`): the vendors' APIs called from your machine with your
+  own personal token, plus a fully offline CSV/JSON export path. See [import](import.md).
+- **`gitstate seed --demo`** — a deterministic synthetic dataset, and a Playwright pipeline that
+  captures every screen from it in both themes.
+- Read-only `GET /api/repos/{id}/classifications` and `/effort`, so the Classify screen can show what
+  has already been judged without triggering a new pass.
+
+### Changed
+
+- CLI commands that take a repo now accept the full id, an unambiguous id prefix, or the slug —
+  `gitstate state atlas-api` instead of pasting a uuid.
+- `gitstate contributions` prints merged display names (agents marked) instead of raw contributor ids.
+
 ## [0.1.0] — 2026-07-23
 
 The **standalone, local-first transform**. gitstate went from a Go + React + Postgres multi-tenant SaaS
-to a Rust desktop app in the VulOS suite style — keeping the essence (derive true project state,
+to a Rust desktop app in the Vulos suite style — keeping the essence (derive true project state,
 effort, contribution, and classification from your own git + forge) and flipping the delivery.
 
 ### Added
@@ -28,7 +53,7 @@ effort, contribution, and classification from your own git + forge) and flipping
 
 ### Changed
 
-- Relicensed from AGPL-3.0 (+ commercial EE tier) to **MIT OR Apache-2.0**, matching the VulOS suite.
+- Relicensed from AGPL-3.0 (+ commercial EE tier) to **MIT OR Apache-2.0**, matching the Vulos suite.
 - Frontend kept as React, repointed from the multi-tenant SaaS backend to the local daemon JSON API;
   org/JWT/billing surfaces removed.
 

@@ -19,6 +19,11 @@ returns a `Classification` per item:
 - **`method`** is `llm_judged` when an LLM endpoint is configured, otherwise `heuristic`.
 - **`rationale`** is always present, so a classification is never a black box.
 
+With no `item_ids`, classification processes only the **uncategorized** items and returns just those —
+re-running it is cheap and never overwrites a label you corrected. To read what has already been
+judged without triggering a pass, use `GET /api/repos/{id}/classifications` and
+`GET /api/repos/{id}/effort`; that is what the Classify screen does when you select a repo.
+
 ### Two classifiers
 
 | Classifier | When | How |
@@ -46,6 +51,16 @@ dimension as `effort_points = Σ difficulty`.
 
 > Why not lines? A 500-line generated migration is trivial; a 20-line lock-ordering fix is not. Line
 > count rewards volume; difficulty rewards judgment.
+
+### What the judge actually sees today
+
+The `DiffSummary` for a forge work item is built from its metadata — the files it touched, their
+paths and languages, and its title and body. Exact per-PR add/delete counts would mean resolving each
+PR's base and head against your local worktree; that is on the [roadmap](roadmap.md), not in the code
+yet. The consequence is worth being blunt about: **without an LLM endpoint, the heuristic has file and
+path signal only, and items with little of it collapse toward difficulty 1.0.** With an endpoint
+configured, the model reads titles, bodies and paths and spreads the scale properly. Either way the
+`method` and `confidence` fields tell you which one you're looking at.
 
 ---
 

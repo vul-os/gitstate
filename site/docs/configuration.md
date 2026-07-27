@@ -49,7 +49,7 @@ partial result.
 | Variable | Meaning |
 |---|---|
 | `VULOS_LLMUX_URL` / `OPENAI_BASE_URL` | OpenAI-compatible base URL. If unset, the heuristic classifier is used. |
-| `VULOS_LLMUX_API_KEY` / `OPENAI_API_KEY` | API key for the endpoint, if it requires one. |
+| `VULOS_LLMUX_API_KEY` / `OPENAI_API_KEY` / `GITSTATE_CLASSIFY_API_KEY` | API key for the endpoint, if it requires one (checked in that order). |
 | `GITSTATE_CLASSIFY_MODEL` | Model name to request. |
 
 Point these at your own [llmux](https://vulos.org) instance or any local model. Classification and
@@ -71,13 +71,24 @@ never silently trusts an unverified tree. See [Signed taxonomy](taxonomy.md).
 
 ## Sync (optional)
 
-Peer-to-peer transport is an opt-in build feature:
+Peer-to-peer transport is an opt-in build of a crate that is **excluded from the workspace entirely**,
+so that a plain `git clone && cargo build` never resolves — let alone fetches — a network dependency:
 
 ```bash
-cargo build -p gitstate-cli --features sync-dmtap
+cargo build --manifest-path crates/gitstate-sync/Cargo.toml --features sync-dmtap
 ```
 
 Without it, `sync status` reports `enabled:false` and `sync publish` is a no-op — but contexts and
-categories still work fully offline. See [Contexts & P2P sync](contexts-sync.md).
+categories still work fully offline, and the CRDT op log is still written, so turning sync on later
+replays cleanly. See [Contexts & P2P sync](contexts-sync.md).
+
+---
+
+## Trackers (optional)
+
+Jira and Linear credentials are **not** environment variables — they are entered in the Import screen
+(or via `PUT /api/trackers/{kind}`) and stored in your local database. Reads are redacted to a masked
+hint, and a token is only ever sent to the vendor it belongs to. See
+[Jira & Linear import](import.md).
 
 Next: [CLI reference](cli.md) · [Threat model](threat-model.md)

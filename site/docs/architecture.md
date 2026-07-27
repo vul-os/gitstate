@@ -1,7 +1,7 @@
 # Architecture
 
 gitstate is a Rust **Cargo workspace** plus a Tauri desktop shell and a kept React frontend. It is
-modeled on its VulOS siblings (slipscan, ofisi): a pure domain core, thin integration crates, one
+modelled on its Vulos siblings (slipscan, ofisi): a pure domain core, thin integration crates, one
 SQLite file, and a daemon that serves the same UI whether you run it headless or inside the desktop
 app.
 
@@ -14,19 +14,22 @@ flowchart TD
     Git["gitstate-git<br/>git2 derivation"]
     Forge["gitstate-forge<br/>gh / glab / REST"]
     Classify["gitstate-classify<br/>LLM + heuristic"]
+    Tracker["gitstate-tracker<br/>Jira / Linear"]
     Store["gitstate-store<br/>SQLite"]
     Core["gitstate-core<br/>types + traits"]
   end
   ExtForge["GitHub / GitLab"]
   ExtLLM["llmux / OpenAI-compatible"]
+  ExtTracker["Jira / Linear"]
   Peer["Another gitstate peer"]
 
   Tauri -->|starts + injects base URL| Daemon
   UI -->|JSON /api| Daemon
-  Daemon --> Git & Forge & Classify & Store
+  Daemon --> Git & Forge & Classify & Tracker & Store
   Git & Forge & Classify & Store -.implements traits.-> Core
   Forge -->|local CLI / token| ExtForge
   Classify -->|optional| ExtLLM
+  Tracker -->|your personal token, or an export file| ExtTracker
   Store <-->|CRDT ops, optional feature| Peer
 ```
 
@@ -40,6 +43,7 @@ flowchart TD
 | **gitstate-git** | git2-rs derivation engine — history walk, blame survival, SZZ bug-introduction linking, diff summaries, and the high-level `derive_project_state` / `derive_contributions`. |
 | **gitstate-forge** | GitHub + GitLab clients that shell `gh` / `glab` (falling back to REST/GraphQL with a token). A local-repo scan makes no network calls. |
 | **gitstate-classify** | `Classifier` implementations — a local LLM client and a deterministic heuristic — plus taxonomy verification and on-box personalization. |
+| **gitstate-tracker** | The `TrackerClient` seam for Jira and Linear: their public APIs called from your machine with your own personal token, plus an offline CSV/JSON export parser. Imported issues become ordinary `WorkItem`s. |
 | **gitstate-store** | rusqlite persistence for repos, caches, contexts, categories, and the CRDT op log. |
 | **gitstate-daemon** | axum server — serves `web/dist` with SPA fallback and the JSON API. This is the headless always-on peer. |
 | **gitstate-cli** | clap CLI (`gitstate`), wiring the same state the daemon uses. |
@@ -77,9 +81,15 @@ summaries, never source code.
 The previous gitstate was a Go + React + Postgres multi-tenant SaaS with a commercial EE tier. The
 transform kept the *essence* — derive truth from git — and flipped the delivery:
 
-- No multi-tenant server, no Postgres, no billing-collection cloud, no org/seat model.
-- The Go `internal/` and `cmd/` trees remain in-tree, untouched, for a staged port — they are not built
-  by the Rust workspace.
+- No multi-tenant server, no Postgres, no billing-collection cloud, no org/seat model. The billing,
+  invoicing and accounting layer was removed outright rather than staged — it had no role in a
+  single-tenant local app.
+- The Go `internal/` and `cmd/` trees remain in-tree, untouched, as the reference for a staged port of
+  the domains still being moved to Rust. They are **not** built by the Rust workspace, and each one is
+  deleted only once its Rust replacement passes parity.
+- Two migration sets coexist and must not be confused: the legacy Postgres migrations at the repo root
+  (kept, unread by Rust) and the SQLite migrations inside `crates/gitstate-store/migrations/` — the
+  only place the store looks.
 - Licensing moved from AGPL-3.0 + a commercial EE tier to the suite standard **MIT OR Apache-2.0**.
 
-Next: [Derivation model](derivation.md) · [Contexts & P2P sync](contexts-sync.md)
+Next: [Derivation model](derivation.md) · [HTTP API](api.md) · [Contexts & P2P sync](contexts-sync.md)

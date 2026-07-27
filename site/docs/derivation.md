@@ -15,8 +15,16 @@ git and your forge, with the parts git can't see left explicitly visible rather 
 | `open_issues` / `closed_issues` | forge issue states |
 | `in_progress` | open PR ⇒ in progress |
 | `done` | merged PR / closed issue ⇒ done |
-| `cycle_time_p50_hours` / `p90` | first-commit → merge, the DORA lead time — **not** a story-point input |
-| `change_failure_rate` | reverts + SZZ-linked fixes over shipped changes |
+| `cycle_time_p50_hours` / `p90` | PR opened → merged, in hours — a measurement, **not** a story-point input |
+| `change_failure_rate` | merged PRs whose title reads as a revert, over merged PRs. `null` when there is nothing merged to judge |
+
+A closed-but-unmerged PR is counted as neither open nor done — it is work that was abandoned, and
+rolling it into either bucket would be a small lie.
+
+`change_failure_rate` is a **text proxy**, and the docs say so wherever it appears: it catches changes
+that announce themselves as reverts. The heavier SZZ analysis below feeds the *quality* dimension
+instead, where the extra cost is justified. The Eng Health screen widens the same proxy to titles *and*
+labels (revert / hotfix / rollback) — see [Analytics & health](analytics.md).
 
 Anything git and the forge cannot observe (meetings, research, product decisions) is surfaced in
 `warnings`, never silently rolled into a number.
@@ -40,6 +48,18 @@ single leaderboard score, never a bonus formula.
 Each dimension carries its **raw evidence** (`DimensionRaw`) alongside the 0–100 normalized value, so a
 score is always traceable to counts. A `composite` is available as a *texture* summary but is display
 only — gitstate deliberately does not rank people.
+
+### The composite, and why you own the weights
+
+```
+composite = Σ(wᵢ · dᵢ) / Σwᵢ
+```
+
+Weights default to 1.0 each and are yours to change — in the Contribution screen's live tuner, over
+`PUT /api/weights`, or with `gitstate contributions --weights shipped=2,review=1,…`. That is not a
+convenience feature; it is the point. Any ordering of people is an artefact of the weights someone
+chose, so gitstate hands you the weights rather than shipping a leaderboard and implying its ranking
+is objective.
 
 ### Normalization
 
@@ -73,4 +93,4 @@ commits are counted **separately** and shown as a share (`agent_pct`) — gitsta
 autonomous runs are first-class units and humans are the oversight layer, but the two are never blended
 into a single figure.
 
-Next: [Classification & effort](classification.md) · [Contexts & P2P sync](contexts-sync.md)
+Next: [Classification & effort](classification.md) · [Analytics & health](analytics.md) · [Contexts & P2P sync](contexts-sync.md)

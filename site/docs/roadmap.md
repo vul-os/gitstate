@@ -4,9 +4,9 @@ gitstate's direction follows one rule: **only "needs a view of strangers you'll 
 an optional coordinator; everything a git tool is actually for is local + P2P.** The roadmap is shaped
 by that line, not by a subscription funnel.
 
-## Phase 0 — Standalone transform (current)
+## Phase 0 — Standalone transform (done)
 
-- [x] Rust workspace modeled on the VulOS siblings — pure `gitstate-core`, integration crates, one
+- [x] Rust workspace modelled on the Vulos siblings — pure `gitstate-core`, integration crates, one
   SQLite file.
 - [x] Local-first delivery: desktop (Tauri) + headless daemon serving one JSON API, no Postgres, no
   multi-tenant server.
@@ -17,20 +17,40 @@ by that line, not by a subscription funnel.
 - [x] Contexts and categories as CRDT documents in the op log.
 - [x] MIT OR Apache-2.0 relicense; EE tier and SaaS deploy artifacts removed.
 
-## Phase 1 — Sharpen the derivation
+## Phase 1 — Full UI parity (done)
+
+- [x] Analytics in one round-trip: dashboard + insights (heatmap, trends, cycle time, throughput).
+- [x] Eng Health — DORA-flavoured metrics, bus factor, review coverage, quality proxies, each labelled
+  with how it was derived.
+- [x] Contribution weight tuner, backed by persisted weights and a cross-repo rollup.
+- [x] Derived Board, Involvement and merged-identity People views.
+- [x] Jira and Linear import with your own token, plus a fully offline export-file path.
+- [x] A deterministic demo dataset (`gitstate seed --demo`) and a Playwright capture pipeline, so the
+  screenshots are real and stay current.
+
+## Phase 2 — Ship it like an app (current)
+
+- [ ] Packaged installers (macOS `.dmg`, Linux `.AppImage`/`.deb`, Windows `.msi`) and signed releases.
+- [ ] Finish the [staged port](architecture.md) of the remaining legacy Go domains, then delete them.
+- [ ] First-run experience: add a repo, scan, and land on a populated dashboard without touching a
+  terminal.
+- [ ] Effort judging that resolves real diff stats per PR against the local worktree, so the heuristic
+  has more than file-count signal to work with.
+
+## Phase 3 — Sharpen the derivation
 
 - [ ] Richer SZZ heuristics and configurable caps for very large monorepos.
 - [ ] Ownership from directory-level blame concentration, tunable boundaries.
 - [ ] Per-language effort priors to calibrate the heuristic without an LLM.
 - [ ] Cycle-time breakdowns (coding vs. review vs. idle) surfaced in the UI.
 
-## Phase 2 — Peer-to-peer, for real
+## Phase 4 — Peer-to-peer, for real
 
 - [ ] Wire the optional `sync-dmtap` transport end to end (device-to-device context + category sync).
 - [ ] Signed context exports with provenance, so an imported working set is verifiable.
 - [ ] Conflict-resolution surfacing in the UI (what merged, what was superseded).
 
-## Phase 3 — Local learning & taxonomy tooling
+## Phase 5 — Local learning & taxonomy tooling
 
 - [ ] Stronger on-box personalization — per-repo priors, not just global.
 - [ ] A signing/verification toolchain for publishing your own taxonomy versions.

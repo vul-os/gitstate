@@ -3,215 +3,448 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>gitstate docs</title>
-<meta name="description" content="gitstate documentation — local-first project-state derivation from git + forge">
+<title>gitstate docs — local-first project state from your own git</title>
+<meta name="description" content="Documentation for gitstate: getting started, the derivation model, classification and the signed taxonomy, contexts and P2P sync, the CLI, the HTTP API, configuration and the threat model.">
+<meta name="theme-color" content="#0B1120">
 <link rel="icon" href="./assets/brand/favicon.svg">
-<style>*,*::before,*::after{box-sizing:border-box}
+<style>
+/* Self-hosted faces — the same three the desktop app ships with. */
+@font-face{font-family:'Bricolage Grotesque';src:url('./assets/fonts/bricolage-grotesque-latin-wght-normal.woff2') format('woff2-variations');font-weight:200 800;font-display:swap}
+@font-face{font-family:'Hanken Grotesk';src:url('./assets/fonts/hanken-grotesk-latin-wght-normal.woff2') format('woff2-variations');font-weight:100 900;font-display:swap}
+@font-face{font-family:'JetBrains Mono';src:url('./assets/fonts/jetbrains-mono-latin-400-normal.woff2') format('woff2');font-weight:400;font-display:swap}
+@font-face{font-family:'JetBrains Mono';src:url('./assets/fonts/jetbrains-mono-latin-500-normal.woff2') format('woff2');font-weight:500;font-display:swap}
+
 :root{
-  --bg:#09090B; --bg-soft:#0E0E10; --panel:#131316; --panel-2:#18181B;
-  --border:rgba(255,255,255,.08); --border-2:rgba(255,255,255,.13);
-  --text:#FAFAFA; --muted:#A1A1AA; --faint:#71717A;
-  --radius:16px; --max:1120px;
-  --mono:ui-monospace,SFMono-Regular,"SF Mono","Geist Mono",Menlo,Consolas,monospace;
-  --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,Helvetica,Arial,sans-serif;
+  --bg:#0B1120; --surface:#101827; --surface2:#172032; --surface3:#1d2b41;
+  --border:#1c2a40; --border2:#22334e;
+  --text:#e2e8f0; --dim:#cbd5e1; --muted:#94a3b8; --faint:#8593a8;
+  --teal:#2DD4BF; --indigo:#6366F1; --ok:#34D399; --warn:#FBBF24; --bad:#F87171;
+  --display:'Bricolage Grotesque',system-ui,sans-serif;
+  --body:'Hanken Grotesk',system-ui,sans-serif;
+  --mono:'JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,monospace;
+  --grad:linear-gradient(120deg,var(--teal),var(--indigo));
+  --max:1320px;
 }
+*,*::before,*::after{box-sizing:border-box}
 html{scroll-behavior:smooth}
-body{margin:0;font-family:var(--sans);background:var(--bg);color:var(--text);line-height:1.6;-webkit-font-smoothing:antialiased;font-size:16px}
-body::before{content:"";position:fixed;inset:0;z-index:-1;background:
-  radial-gradient(1100px 600px at 80% -10%, color-mix(in srgb,var(--accent) 10%, transparent), transparent 60%),
-  radial-gradient(900px 500px at -10% 10%, color-mix(in srgb,var(--accent-2) 8%, transparent), transparent 55%),
-  var(--bg);}
+@media (prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
+body{margin:0;background:var(--bg);color:var(--text);font-family:var(--body);font-size:16px;line-height:1.68;
+  -webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale}
+body::after{content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;
+  background:radial-gradient(760px 420px at 88% -6%, rgba(99,102,241,.10), transparent 62%),
+             radial-gradient(700px 400px at 2% 2%, rgba(45,212,191,.07), transparent 60%)}
 a{color:inherit;text-decoration:none}
-img{max-width:100%;display:block}
+img{max-width:100%;height:auto;display:block}
+::selection{background:rgba(45,212,191,.25);color:#fff}
 .wrap{max-width:var(--max);margin:0 auto;padding:0 24px}
-.accent{color:var(--accent)}
 
-/* Header */
-.site-header{position:sticky;top:0;z-index:50;backdrop-filter:blur(12px);background:color-mix(in srgb,var(--bg) 72%, transparent);border-bottom:1px solid var(--border)}
-.nav{display:flex;align-items:center;gap:18px;height:64px}
-.brand{display:flex;align-items:center;gap:11px;font-weight:600;font-size:18px;letter-spacing:-.03em}
-.brand .tile{width:34px;height:34px;border-radius:9px;overflow:hidden;box-shadow:0 1px 0 rgba(255,255,255,.12) inset, 0 4px 14px rgba(0,0,0,.35)}
-.brand .tile img{width:100%;height:100%;object-fit:contain}
-.brand .hl{color:var(--accent)}
-.nav-spacer{flex:1}
-.nav-links{display:flex;align-items:center;gap:22px}
-.nav-links a{color:var(--muted);font-size:14.5px;font-weight:500;transition:color .15s}
-.nav-links a:hover{color:var(--text)}
-.vulos-badge{display:inline-flex;align-items:center;gap:8px;padding:6px 12px;border:1px solid var(--border-2);border-radius:999px;font-size:13px;color:var(--muted);transition:border-color .15s,color .15s}
-.vulos-badge:hover{border-color:var(--accent);color:var(--text)}
-.vulos-badge img{width:16px;height:16px;border-radius:4px}
-@media(max-width:760px){.nav-links{display:none}}
+/* ── Header (identical grammar to the landing) ────────────────────────────── */
+header.top{position:sticky;top:0;z-index:60;background:color-mix(in srgb,var(--bg) 80%,transparent);
+  backdrop-filter:blur(14px) saturate(140%);border-bottom:1px solid var(--border)}
+header.top .bar{display:flex;align-items:center;gap:20px;height:64px}
+.brand{display:flex;align-items:center;gap:10px;font-family:var(--mono);font-weight:500;font-size:17px}
+.brand svg{width:30px;height:30px;flex:none}
+.brand .tag{font-family:var(--mono);font-size:11px;color:var(--faint);border-left:1px solid var(--border2);padding-left:10px;margin-left:2px}
+.spacer{flex:1}
+nav.links{display:flex;gap:24px}
+nav.links a{font-size:14px;color:var(--muted);transition:color .16s}
+nav.links a:hover{color:var(--text)}
+.ghost-link{display:inline-flex;align-items:center;gap:8px;padding:7px 13px;border-radius:999px;
+  border:1px solid var(--border2);font-size:13px;color:var(--dim);transition:.18s}
+.ghost-link:hover{border-color:color-mix(in srgb,var(--teal) 55%,var(--border2));color:var(--text);background:var(--surface)}
+@media (max-width:900px){nav.links{display:none}}
+@media (max-width:560px){.brand .tag{display:none}}
 
-/* Footer */
-.site-footer{border-top:1px solid var(--border);margin-top:40px;padding:40px 0}
-.foot{display:flex;flex-wrap:wrap;gap:18px;align-items:center;justify-content:space-between}
-.foot .left{display:flex;align-items:center;gap:10px;color:var(--muted);font-size:14px}
-.foot .left img{width:20px;height:20px;border-radius:5px}
-.foot .links{display:flex;gap:20px;flex-wrap:wrap}
-.foot .links a{color:var(--muted);font-size:14px}
-.foot .links a:hover{color:var(--text)}
+/* ── Shell ────────────────────────────────────────────────────────────────── */
+.shell{display:grid;grid-template-columns:250px minmax(0,1fr) 208px;gap:40px;align-items:start;padding:34px 0 90px}
+@media (max-width:1180px){.shell{grid-template-columns:240px minmax(0,1fr);gap:32px}.toc{display:none}}
+@media (max-width:900px){.shell{grid-template-columns:1fr;gap:22px;padding-top:20px}}
 
-/* Docs viewer */
-.docs-shell{display:grid;grid-template-columns:248px 1fr;gap:36px;align-items:start;padding:34px 0 70px}
-@media(max-width:860px){.docs-shell{grid-template-columns:1fr}}
-.docs-nav{position:sticky;top:84px;border:1px solid var(--border);border-radius:var(--radius);background:var(--panel);padding:14px}
-.docs-nav .label{font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--faint);padding:6px 10px}
-.docs-nav a{display:block;padding:8px 11px;border-radius:9px;color:var(--muted);font-size:14.5px;font-weight:500;transition:.15s}
-.docs-nav a:hover{background:rgba(255,255,255,.04);color:var(--text)}
-.docs-nav a.active{background:color-mix(in srgb,var(--accent) 14%, transparent);color:var(--text)}
-@media(max-width:860px){.docs-nav{position:static}}
-.docs-main{min-width:0}
-.markdown{font-size:16px}
-.markdown>*:first-child{margin-top:0}
-.markdown h1{font-size:34px;letter-spacing:-.03em;margin:.2em 0 .5em;border-bottom:1px solid var(--border);padding-bottom:.3em}
-.markdown h2{font-size:25px;letter-spacing:-.02em;margin:1.6em 0 .6em;border-bottom:1px solid var(--border);padding-bottom:.25em}
-.markdown h3{font-size:19px;margin:1.4em 0 .5em}
-.markdown h4{font-size:16px;margin:1.3em 0 .4em;color:var(--text)}
-.markdown p,.markdown li{color:#D4D4D8}
-.markdown a{color:var(--accent);text-decoration:none}
-.markdown a:hover{text-decoration:underline}
-.markdown code{font-family:var(--mono);font-size:.88em;background:rgba(255,255,255,.07);padding:2px 6px;border-radius:6px}
-.markdown pre{background:#0C0C0E;border:1px solid var(--border-2);border-radius:12px;padding:16px 18px;overflow:auto}
-.markdown pre code{background:none;padding:0;font-size:13.5px;line-height:1.7;color:#D4D4D8}
-.markdown blockquote{margin:1em 0;padding:.4em 1em;border-left:3px solid var(--accent);background:rgba(255,255,255,.03);color:var(--muted);border-radius:0 8px 8px 0}
-.markdown table{border-collapse:collapse;width:100%;margin:1.2em 0;font-size:14.5px;display:block;overflow:auto}
-.markdown th,.markdown td{border:1px solid var(--border-2);padding:9px 12px;text-align:left}
-.markdown th{background:var(--panel);font-weight:600}
-.markdown img{border-radius:10px;margin:1em 0;border:1px solid var(--border)}
-.markdown hr{border:none;border-top:1px solid var(--border);margin:2em 0}
-.markdown .mermaid{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:18px;margin:1.2em 0;text-align:center;overflow:auto}
-.docs-title{font-size:13px;color:var(--faint);margin-bottom:6px}
-.docs-error{color:#FCA5A5;background:rgba(220,38,38,.08);border:1px solid rgba(220,38,38,.25);padding:14px 16px;border-radius:10px}
+/* Sidebar */
+.side{position:sticky;top:86px;max-height:calc(100vh - 110px);overflow:auto;padding-right:6px}
+@media (max-width:900px){.side{position:static;max-height:none}}
+.side .search{position:relative;margin-bottom:16px}
+.side .search input{width:100%;padding:9px 12px 9px 32px;border-radius:9px;background:var(--surface);
+  border:1px solid var(--border2);color:var(--text);font-family:var(--body);font-size:14px;outline:none}
+.side .search input:focus{border-color:color-mix(in srgb,var(--teal) 60%,var(--border2));box-shadow:0 0 0 3px rgba(45,212,191,.12)}
+.side .search svg{position:absolute;left:10px;top:50%;transform:translateY(-50%);color:var(--faint)}
+.side .search kbd{position:absolute;right:9px;top:50%;transform:translateY(-50%);font-family:var(--mono);font-size:10px;
+  color:var(--faint);border:1px solid var(--border2);border-radius:4px;padding:1px 5px;background:var(--surface2)}
+.side .group{font-family:var(--mono);font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--faint);
+  padding:16px 10px 7px}
+.side a{display:block;padding:7px 11px;border-radius:8px;color:var(--muted);font-size:14.5px;transition:.15s}
+.side a:hover{background:var(--surface);color:var(--text)}
+.side a.active{background:rgba(45,212,191,.10);color:var(--teal);box-shadow:inset 2px 0 0 var(--teal)}
+.side a.hidden{display:none}
+.side .empty{padding:10px;color:var(--faint);font-size:13.5px}
+
+/* Right rail — on-page contents */
+.toc{position:sticky;top:86px;max-height:calc(100vh - 110px);overflow:auto}
+.toc b{display:block;font-family:var(--mono);font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;
+  color:var(--faint);margin-bottom:10px}
+.toc a{display:block;padding:5px 0 5px 12px;border-left:1px solid var(--border);color:var(--muted);font-size:13.5px;
+  line-height:1.45;transition:.15s}
+.toc a:hover{color:var(--text);border-color:var(--border2)}
+.toc a.h3{padding-left:24px;font-size:13px}
+.toc a.active{color:var(--teal);border-color:var(--teal)}
+
+/* ── Article ──────────────────────────────────────────────────────────────── */
+main{min-width:0}
+.crumb{font-family:var(--mono);font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--faint);margin-bottom:14px}
+.crumb span{color:var(--teal)}
+.md{font-size:16.2px;color:var(--dim)}
+.md>*:first-child{margin-top:0}
+.md h1{font-family:var(--display);font-size:clamp(30px,4.2vw,42px);letter-spacing:-.03em;line-height:1.08;
+  color:var(--text);margin:.1em 0 .55em;font-weight:600}
+.md h2{font-family:var(--display);font-size:25px;letter-spacing:-.022em;color:var(--text);font-weight:600;
+  margin:2.1em 0 .6em;padding-bottom:.3em;border-bottom:1px solid var(--border)}
+.md h3{font-family:var(--display);font-size:19px;letter-spacing:-.015em;color:var(--text);font-weight:600;margin:1.7em 0 .5em}
+.md h4{font-size:16px;color:var(--text);margin:1.4em 0 .4em;font-weight:600}
+.md h2 .anchor,.md h3 .anchor{opacity:0;margin-left:10px;font-family:var(--mono);font-size:.7em;color:var(--teal);transition:opacity .15s}
+.md h2:hover .anchor,.md h3:hover .anchor{opacity:1}
+.md p,.md li{color:var(--dim)}
+.md li{margin:.28em 0}
+.md strong{color:var(--text);font-weight:600}
+.md a{color:var(--teal);border-bottom:1px solid rgba(45,212,191,.3)}
+.md a:hover{border-bottom-color:var(--teal)}
+.md code{font-family:var(--mono);font-size:.86em;background:var(--surface2);border:1px solid var(--border);
+  padding:1.5px 6px;border-radius:5px;color:var(--text)}
+.md pre{position:relative;background:#070C16;border:1px solid var(--border2);border-radius:11px;padding:16px 18px;overflow:auto;margin:1.2em 0}
+.md pre code{background:none;border:none;padding:0;font-size:13px;line-height:1.8;color:var(--dim)}
+.md pre .copy{position:absolute;top:9px;right:9px;font-family:var(--mono);font-size:10.5px;color:var(--faint);
+  background:var(--surface2);border:1px solid var(--border2);border-radius:5px;padding:3px 8px;cursor:pointer;
+  opacity:0;transition:opacity .15s,color .15s}
+.md pre:hover .copy,.md pre .copy:focus{opacity:1}
+.md pre .copy:hover{color:var(--teal);border-color:rgba(45,212,191,.4)}
+.md blockquote{margin:1.3em 0;padding:14px 18px;border-left:2px solid var(--teal);background:rgba(45,212,191,.05);
+  border-radius:0 10px 10px 0;color:var(--muted)}
+.md blockquote p{color:var(--muted)}
+.md table{border-collapse:collapse;width:100%;margin:1.3em 0;font-size:14.5px;display:block;overflow-x:auto}
+.md th,.md td{border:1px solid var(--border);padding:10px 13px;text-align:left;vertical-align:top}
+.md th{background:var(--surface2);color:var(--text);font-weight:600;font-family:var(--body);white-space:nowrap}
+/* API tables carry long JSON literals; let them wrap instead of clipping. */
+.md td code{white-space:pre-wrap;word-break:break-word}
+.md tr:nth-child(even) td{background:rgba(23,32,50,.4)}
+.md img{border-radius:11px;margin:1.3em 0;border:1px solid var(--border2)}
+.md hr{border:none;border-top:1px solid var(--border);margin:2.4em 0}
+.md .mermaid{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:20px;margin:1.4em 0;text-align:center;overflow:auto}
+.md kbd{font-family:var(--mono);font-size:12px;border:1px solid var(--border2);border-bottom-width:2px;border-radius:5px;padding:1px 6px;background:var(--surface2)}
+
+/* Prev / next */
+.pager{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:56px;padding-top:26px;border-top:1px solid var(--border)}
+@media (max-width:620px){.pager{grid-template-columns:1fr}}
+.pager a{border:1px solid var(--border);border-radius:11px;background:var(--surface);padding:14px 18px;transition:.18s}
+.pager a:hover{border-color:color-mix(in srgb,var(--teal) 45%,var(--border));background:var(--surface2)}
+.pager a span{display:block;font-family:var(--mono);font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--faint);margin-bottom:5px}
+.pager a b{font-family:var(--display);font-size:16px;font-weight:600;letter-spacing:-.02em;color:var(--text)}
+.pager a.next{text-align:right}
+.pager .void{border:1px dashed var(--border);border-radius:11px;opacity:.35}
+
+.err{color:#fca5a5;background:rgba(248,113,113,.08);border:1px solid rgba(248,113,113,.24);padding:16px 18px;border-radius:11px}
+.err code{font-family:var(--mono)}
+
+footer.site{border-top:1px solid var(--border);padding:30px 0 46px}
+footer.site .in{display:flex;flex-wrap:wrap;gap:16px;align-items:center;justify-content:space-between}
+footer.site .in .l{display:flex;align-items:center;gap:10px;color:var(--faint);font-size:13.5px}
+footer.site .in .l img{width:18px;height:18px;border-radius:4px}
+footer.site nav{display:flex;gap:20px;flex-wrap:wrap}
+footer.site nav a{color:var(--muted);font-size:13.5px}
+footer.site nav a:hover{color:var(--text)}
 </style>
-<style>:root{--accent:#2DD4BF;--accent-2:#0D9488}</style>
 <script src="./assets/vendor/marked.umd.js"></script>
 <script src="./assets/vendor/mermaid.min.js"></script>
 </head>
 <body>
-<header class="site-header"><div class="wrap nav">
-    <a class="brand" href="./index.html"><span class="tile"><img src="./assets/brand/logo-mark.svg" alt="gitstate mark"></span>git<span class="hl">state</span></a>
-    <div class="nav-spacer"></div>
-    <nav class="nav-links">
-      <a href="./index.html#features">Features</a>
-      <a href="./index.html#local-first">Local-first</a>
-      <a href="./docs.html">Docs</a>
-      <a href="https://github.com/vul-os/gitstate" target="_blank" rel="noopener">GitHub</a>
-    </nav>
-    <a class="vulos-badge" href="https://vulos.org" target="_blank" rel="noopener" title="Part of VulOS">
-      <img src="./assets/vulos-logo.png" alt="VulOS">Part of VulOS
+
+<header class="top">
+  <div class="wrap bar">
+    <a class="brand" href="./index.html" aria-label="gitstate home">
+      <svg viewBox="0 0 72 72" fill="none" aria-hidden="true">
+        <defs><linearGradient id="gsm" x1="8" y1="8" x2="64" y2="64" gradientUnits="userSpaceOnUse">
+          <stop stop-color="#2DD4BF"/><stop offset="1" stop-color="#6366F1"/></linearGradient></defs>
+        <rect x="4" y="4" width="64" height="64" rx="16" fill="#0B1120"/>
+        <path d="M22 52 V20" stroke="url(#gsm)" stroke-width="4" stroke-linecap="round"/>
+        <path d="M22 34 C22 26 30 26 38 26 C46 26 50 30 50 38 C50 46 46 50 38 50 C30 50 22 50 22 42" stroke="url(#gsm)" stroke-width="4" fill="none" stroke-linecap="round"/>
+        <circle cx="22" cy="20" r="5" fill="#0B1120" stroke="url(#gsm)" stroke-width="4"/>
+        <circle cx="22" cy="52" r="5" fill="#0B1120" stroke="url(#gsm)" stroke-width="4"/>
+        <circle cx="50" cy="38" r="9" fill="url(#gsm)"/>
+        <path d="M46 38 l3 3 l5 -6" stroke="#0B1120" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+      </svg>
+      <span>git<span style="color:var(--teal)">state</span></span>
+      <span class="tag">docs</span>
     </a>
-  </div></header>
-<div class="wrap docs-shell">
-  <aside class="docs-nav">
-    <div class="label">gitstate docs</div>
-        <a data-slug="getting-started" href="#getting-started">Getting started</a>
-        <a data-slug="architecture" href="#architecture">Architecture</a>
-        <a data-slug="derivation" href="#derivation">Derivation model</a>
-        <a data-slug="classification" href="#classification">Classification &amp; effort</a>
-        <a data-slug="contexts-sync" href="#contexts-sync">Contexts &amp; P2P sync</a>
-        <a data-slug="taxonomy" href="#taxonomy">Signed taxonomy</a>
-        <a data-slug="cli" href="#cli">CLI reference</a>
-        <a data-slug="api" href="#api">HTTP API</a>
-        <a data-slug="configuration" href="#configuration">Configuration</a>
-        <a data-slug="threat-model" href="#threat-model">Threat model</a>
-        <a data-slug="screenshots" href="#screenshots">Screenshots</a>
-        <a data-slug="faq" href="#faq">FAQ</a>
-        <a data-slug="roadmap" href="#roadmap">Roadmap</a>
-        <a data-slug="changelog" href="#changelog">Changelog</a>
-  </aside>
-  <main class="docs-main">
-    <div class="docs-title" id="crumb"></div>
-    <article class="markdown" id="content">Loading…</article>
-  </main>
-</div>
-<footer class="site-footer"><div class="wrap foot">
-    <div class="left"><img src="./assets/vulos-logo.png" alt="VulOS"> <span>Part of <a href="https://vulos.org" target="_blank" rel="noopener" style="color:var(--text)">VulOS</a> — open, self-hostable apps. Standalone by design.</span></div>
-    <div class="links">
-      <a href="./docs.html">Docs</a>
-      <a href="https://github.com/vul-os/gitstate" target="_blank" rel="noopener">GitHub</a>
-      <a href="./LICENSE.txt">License</a>
-      <a href="https://vulos.org" target="_blank" rel="noopener">vulos.org</a>
+    <div class="spacer"></div>
+    <nav class="links">
+      <a href="./index.html">Overview</a>
+      <a href="./index.html#screens">Screens</a>
+      <a href="./index.html#start">Quick start</a>
+      <a href="#getting-started">Docs</a>
+    </nav>
+    <a class="ghost-link" href="https://github.com/vul-os/gitstate" target="_blank" rel="noopener">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"/></svg>
+      GitHub
+    </a>
+  </div>
+</header>
+
+<div class="wrap shell">
+  <aside class="side">
+    <div class="search">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+      <input id="filter" type="search" placeholder="Filter pages" aria-label="Filter documentation pages" autocomplete="off">
+      <kbd>/</kbd>
     </div>
-  </div></footer>
+    <nav id="nav" aria-label="Documentation"></nav>
+    <p class="empty" id="nav-empty" hidden>No page matches that.</p>
+  </aside>
+
+  <main>
+    <div class="crumb" id="crumb"></div>
+    <article class="md" id="content">Loading…</article>
+    <nav class="pager" id="pager" aria-label="Page navigation"></nav>
+  </main>
+
+  <aside class="toc" id="toc" aria-label="On this page"></aside>
+</div>
+
+<footer class="site">
+  <div class="wrap in">
+    <div class="l"><img src="./assets/vulos-logo.png" alt="" aria-hidden="true">
+      <span>gitstate — part of <a href="https://vulos.org" target="_blank" rel="noopener" style="color:var(--dim)">Vulos</a>. Local-first, standalone, MIT OR Apache-2.0.</span></div>
+    <nav>
+      <a href="./index.html">Overview</a>
+      <a href="https://github.com/vul-os/gitstate" target="_blank" rel="noopener">GitHub</a>
+      <a href="./LICENSE.txt">Licence</a>
+      <a href="https://vulos.org" target="_blank" rel="noopener">vulos.org</a>
+    </nav>
+  </div>
+</footer>
+
 <script>
-// The site is served statically; docs render straight from this repo's own markdown.
-const DOCS = [
-  {"slug":"getting-started","title":"Getting started","path":"./docs/getting-started.md"},
-  {"slug":"architecture","title":"Architecture","path":"./docs/architecture.md"},
-  {"slug":"derivation","title":"Derivation model","path":"./docs/derivation.md"},
-  {"slug":"classification","title":"Classification & effort","path":"./docs/classification.md"},
-  {"slug":"contexts-sync","title":"Contexts & P2P sync","path":"./docs/contexts-sync.md"},
-  {"slug":"taxonomy","title":"Signed taxonomy","path":"./docs/taxonomy.md"},
-  {"slug":"cli","title":"CLI reference","path":"./docs/cli.md"},
-  {"slug":"api","title":"HTTP API","path":"./docs/api.md"},
-  {"slug":"configuration","title":"Configuration","path":"./docs/configuration.md"},
-  {"slug":"threat-model","title":"Threat model","path":"./docs/threat-model.md"},
-  {"slug":"screenshots","title":"Screenshots","path":"./docs/screenshots.md"},
-  {"slug":"faq","title":"FAQ","path":"./docs/faq.md"},
-  {"slug":"roadmap","title":"Roadmap","path":"./docs/roadmap.md"},
-  {"slug":"changelog","title":"Changelog","path":"./docs/changelog.md"}
-];
-const bySlug = Object.fromEntries(DOCS.map(d=>[d.slug,d]));
-const byFile = Object.fromEntries(DOCS.map(d=>[d.path.split('/').pop().toLowerCase(),d]));
-const content = document.getElementById('content');
-const crumb = document.getElementById('crumb');
-let mermaidReady = false;
-try { mermaid.initialize({ startOnLoad:false, theme:'dark', securityLevel:'loose', themeVariables:{ fontFamily:'var(--sans)' } }); mermaidReady = true; } catch(e){}
+/* The site is static: pages render straight from this repo's own markdown. */
+const GROUPS = [
+  { label: 'Start here', docs: [
+    { slug: 'getting-started', title: 'Getting started' },
+    { slug: 'configuration',   title: 'Configuration' },
+    { slug: 'cli',             title: 'CLI reference' },
+  ]},
+  { label: 'How it derives', docs: [
+    { slug: 'derivation',      title: 'Derivation model' },
+    { slug: 'classification',  title: 'Classification & effort' },
+    { slug: 'analytics',       title: 'Analytics & health' },
+    { slug: 'import',          title: 'Jira & Linear import' },
+  ]},
+  { label: 'Sharing without a server', docs: [
+    { slug: 'taxonomy',        title: 'Signed taxonomy' },
+    { slug: 'contexts-sync',   title: 'Contexts & P2P sync' },
+  ]},
+  { label: 'Under the hood', docs: [
+    { slug: 'architecture',    title: 'Architecture' },
+    { slug: 'api',             title: 'HTTP API' },
+    { slug: 'threat-model',    title: 'Threat model' },
+  ]},
+  { label: 'Reference', docs: [
+    { slug: 'screenshots',     title: 'Screenshots' },
+    { slug: 'faq',             title: 'FAQ' },
+    { slug: 'roadmap',         title: 'Roadmap' },
+    { slug: 'changelog',       title: 'Changelog' },
+  ]},
+]
+const DOCS = GROUPS.flatMap((g) => g.docs.map((d) => ({ ...d, path: `./docs/${d.slug}.md` })))
+const bySlug = Object.fromEntries(DOCS.map((d) => [d.slug, d]))
+const byFile = Object.fromEntries(DOCS.map((d) => [`${d.slug}.md`, d]))
 
-if (window.marked && marked.setOptions) marked.setOptions({ gfm:true, breaks:false });
+const navEl = document.getElementById('nav')
+const emptyEl = document.getElementById('nav-empty')
+const contentEl = document.getElementById('content')
+const crumbEl = document.getElementById('crumb')
+const tocEl = document.getElementById('toc')
+const pagerEl = document.getElementById('pager')
 
-function setActive(slug){
-  document.querySelectorAll('.docs-nav a').forEach(a=>a.classList.toggle('active', a.dataset.slug===slug));
+navEl.innerHTML = GROUPS.map((g) => `
+  <div class="group">${g.label}</div>
+  ${g.docs.map((d) => `<a data-slug="${d.slug}" href="#${d.slug}">${d.title}</a>`).join('')}`).join('')
+
+let mermaidReady = false
+try {
+  mermaid.initialize({
+    startOnLoad: false, theme: 'base', securityLevel: 'loose',
+    themeVariables: {
+      fontFamily: "'JetBrains Mono', ui-monospace, monospace",
+      primaryColor: 'transparent', primaryBorderColor: '#2DD4BF', primaryTextColor: '#cbd5e1',
+      lineColor: '#5f8f8a', nodeBorder: '#3f8f86', edgeLabelBackground: 'transparent',
+      clusterBorder: '#22334e', clusterBkg: 'rgba(45,212,191,0.03)', secondaryColor: '#172032',
+      tertiaryColor: '#101827', textColor: '#cbd5e1',
+    },
+  })
+  mermaidReady = true
+} catch { /* diagrams degrade to code blocks */ }
+
+if (window.marked?.setOptions) marked.setOptions({ gfm: true, breaks: false })
+
+const slugify = (s) => s.toLowerCase().trim().replace(/[^\w\s-]/g, '').replace(/\s+/g, '-')
+
+function setActive(slug) {
+  navEl.querySelectorAll('a').forEach((a) => a.classList.toggle('active', a.dataset.slug === slug))
 }
 
-async function renderMermaid(){
-  if(!mermaidReady) return;
-  const blocks = [...content.querySelectorAll('code.language-mermaid')];
-  blocks.forEach((code,i)=>{
-    const div = document.createElement('div');
-    div.className='mermaid';
-    div.textContent = code.textContent;
-    code.closest('pre').replaceWith(div);
-  });
-  const nodes = content.querySelectorAll('.mermaid');
-  if(nodes.length){ try { await mermaid.run({ nodes }); } catch(e){ console.warn('mermaid', e); } }
+async function renderMermaid() {
+  if (!mermaidReady) return
+  contentEl.querySelectorAll('code.language-mermaid').forEach((code) => {
+    const div = document.createElement('div')
+    div.className = 'mermaid'
+    div.textContent = code.textContent
+    code.closest('pre').replaceWith(div)
+  })
+  const nodes = contentEl.querySelectorAll('.mermaid')
+  if (nodes.length) { try { await mermaid.run({ nodes }) } catch (e) { console.warn('mermaid', e) } }
 }
 
-async function load(slug){
-  const doc = bySlug[slug] || DOCS[0];
-  setActive(doc.slug);
-  crumb.textContent = doc.title;
-  content.innerHTML = 'Loading…';
-  try {
-    const res = await fetch(doc.path, {cache:'no-cache'});
-    if(!res.ok) throw new Error('HTTP '+res.status);
-    const md = await res.text();
-    content.innerHTML = marked.parse(md);
-    content.querySelectorAll('img').forEach(img=>{
-      const s=img.getAttribute('src')||'';
-      if(/^https?:/i.test(s)) return;
-      const m=s.match(/(?:\.\.\/)*(?:docs\/)?screenshots\/(.+)$/);
-      if(m) img.setAttribute('src','./screenshots/'+m[1]);
-    });
-    // Cross-doc links (e.g. cli.md, ./roadmap.md#phase-1) become sidebar navigation.
-    content.querySelectorAll('a[href]').forEach(a=>{
-      const h=a.getAttribute('href')||'';
-      if(/^(https?:|#|mailto:)/i.test(h)) return;
-      const m=h.match(/([^\/]+\.md)(#.*)?$/i);
-      const target = m && byFile[m[1].toLowerCase()];
-      if(target) a.setAttribute('href','#'+target.slug);
-    });
-    content.querySelectorAll('a[href^="http"]').forEach(a=>{a.target='_blank';a.rel='noopener';});
-    await renderMermaid();
-    window.scrollTo({top:0});
-  } catch(err){
-    content.innerHTML = '<div class="docs-error">Could not load <code>'+doc.path.split('/').pop()+'</code> — '+err.message+'</div>';
+function buildToc() {
+  const heads = [...contentEl.querySelectorAll('h2, h3')]
+  if (heads.length < 2) { tocEl.innerHTML = ''; return }
+  tocEl.innerHTML = '<b>On this page</b>' + heads.map((h) => {
+    if (!h.id) h.id = slugify(h.textContent)
+    return `<a href="#${location.hash.replace('#','').split('/')[0] || 'getting-started'}" data-to="${h.id}" class="${h.tagName === 'H3' ? 'h3' : ''}">${h.textContent.replace('#','')}</a>`
+  }).join('')
+  tocEl.querySelectorAll('a').forEach((a) => {
+    a.addEventListener('click', (e) => {
+      e.preventDefault()
+      document.getElementById(a.dataset.to)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    })
+  })
+  // Highlight the section currently on screen.
+  if ('IntersectionObserver' in window) {
+    const links = new Map([...tocEl.querySelectorAll('a')].map((a) => [a.dataset.to, a]))
+    const io = new IntersectionObserver((entries) => {
+      entries.forEach((en) => {
+        if (!en.isIntersecting) return
+        links.forEach((l) => l.classList.remove('active'))
+        links.get(en.target.id)?.classList.add('active')
+      })
+    }, { rootMargin: '-80px 0px -70% 0px' })
+    heads.forEach((h) => io.observe(h))
   }
 }
 
-function current(){ return (location.hash||'').replace('#','') || DOCS[0].slug; }
-window.addEventListener('hashchange', ()=>load(current()));
-load(current());
+function addAnchors() {
+  contentEl.querySelectorAll('h2, h3').forEach((h) => {
+    if (!h.id) h.id = slugify(h.textContent)
+    const a = document.createElement('a')
+    a.className = 'anchor'
+    a.href = `#${location.hash.replace('#','') || 'getting-started'}`
+    a.textContent = '#'
+    a.setAttribute('aria-label', `Link to ${h.textContent}`)
+    a.addEventListener('click', (e) => {
+      e.preventDefault()
+      history.replaceState(null, '', `${location.pathname}${location.hash}`)
+      h.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    })
+    h.appendChild(a)
+  })
+}
+
+function addCopyButtons() {
+  contentEl.querySelectorAll('pre').forEach((pre) => {
+    const btn = document.createElement('button')
+    btn.className = 'copy'
+    btn.type = 'button'
+    btn.textContent = 'copy'
+    btn.addEventListener('click', async () => {
+      if (!navigator.clipboard) return
+      try {
+        await navigator.clipboard.writeText(pre.querySelector('code')?.innerText ?? pre.innerText)
+        btn.textContent = 'copied'
+        setTimeout(() => { btn.textContent = 'copy' }, 1400)
+      } catch { /* clipboard blocked */ }
+    })
+    pre.appendChild(btn)
+  })
+}
+
+function buildPager(slug) {
+  const i = DOCS.findIndex((d) => d.slug === slug)
+  const prev = DOCS[i - 1]
+  const next = DOCS[i + 1]
+  pagerEl.innerHTML =
+    (prev ? `<a href="#${prev.slug}"><span>← previous</span><b>${prev.title}</b></a>` : '<div class="void"></div>') +
+    (next ? `<a class="next" href="#${next.slug}"><span>next →</span><b>${next.title}</b></a>` : '<div class="void"></div>')
+}
+
+async function load(slug) {
+  const doc = bySlug[slug] || DOCS[0]
+  setActive(doc.slug)
+  crumbEl.innerHTML = `docs <span>/</span> ${doc.title}`
+  document.title = `${doc.title} — gitstate docs`
+  contentEl.innerHTML = 'Loading…'
+  try {
+    const res = await fetch(doc.path, { cache: 'no-cache' })
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    contentEl.innerHTML = marked.parse(await res.text())
+
+    // Screenshots live beside this file, whatever path the markdown used.
+    contentEl.querySelectorAll('img').forEach((img) => {
+      const s = img.getAttribute('src') || ''
+      if (/^https?:/i.test(s)) return
+      const m = s.match(/(?:\.\.\/)*(?:docs\/)?screenshots\/(.+)$/)
+      if (m) img.setAttribute('src', `./screenshots/${m[1]}`)
+      img.loading = 'lazy'
+    })
+    // Cross-doc markdown links become in-page navigation.
+    contentEl.querySelectorAll('a[href]').forEach((a) => {
+      const h = a.getAttribute('href') || ''
+      if (/^(https?:|#|mailto:)/i.test(h)) return
+      const m = h.match(/([^/]+\.md)(#.*)?$/i)
+      const target = m && byFile[m[1].toLowerCase()]
+      if (target) a.setAttribute('href', `#${target.slug}`)
+    })
+    contentEl.querySelectorAll('a[href^="http"]').forEach((a) => { a.target = '_blank'; a.rel = 'noopener' })
+
+    await renderMermaid()
+    addAnchors()
+    addCopyButtons()
+    buildToc()
+    buildPager(doc.slug)
+    window.scrollTo({ top: 0 })
+  } catch (err) {
+    contentEl.innerHTML =
+      `<div class="err">Could not load <code>${doc.path.split('/').pop()}</code> — ${err.message}.` +
+      ` Docs are fetched at runtime, so open this page over HTTP (for example <code>npx serve site</code>)` +
+      ` rather than from the filesystem.</div>`
+    tocEl.innerHTML = ''
+    pagerEl.innerHTML = ''
+  }
+}
+
+/* Sidebar filter — plain substring match over the page titles. */
+const filterEl = document.getElementById('filter')
+filterEl.addEventListener('input', () => {
+  const q = filterEl.value.trim().toLowerCase()
+  let shown = 0
+  navEl.querySelectorAll('a').forEach((a) => {
+    const hit = !q || a.textContent.toLowerCase().includes(q)
+    a.classList.toggle('hidden', !hit)
+    if (hit) shown++
+  })
+  navEl.querySelectorAll('.group').forEach((g) => {
+    let n = g.nextElementSibling
+    let any = false
+    while (n && n.tagName === 'A') { if (!n.classList.contains('hidden')) any = true; n = n.nextElementSibling }
+    g.style.display = any ? '' : 'none'
+  })
+  emptyEl.hidden = shown > 0
+})
+addEventListener('keydown', (e) => {
+  if (e.key === '/' && !/^(INPUT|TEXTAREA)$/.test(document.activeElement?.tagName)) {
+    e.preventDefault()
+    filterEl.focus()
+    filterEl.select()
+  }
+})
+
+const current = () => (location.hash || '').replace('#', '') || DOCS[0].slug
+addEventListener('hashchange', () => load(current()))
+load(current())
 </script>
 </body>
 </html>
