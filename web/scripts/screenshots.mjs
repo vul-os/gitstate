@@ -85,7 +85,7 @@ async function capture(page, name, { fullPage = false } = {}) {
  * heading — otherwise the shot lands mid-spinner while /api/analytics is still
  * in flight and the whole point of the capture is missing.
  */
-async function shoot(page, route, name, { fullPage = false, waitFor } = {}) {
+async function shoot(page, route, name, { fullPage = false, waitFor, prepare } = {}) {
   try {
     console.log(`→ ${route}  →  ${name}.png`)
     await page.goto(`${BASE_URL}${route}`, {
@@ -96,6 +96,16 @@ async function shoot(page, route, name, { fullPage = false, waitFor } = {}) {
       await page.waitForSelector('h1', { state: 'visible', timeout: 15_000 })
     } catch {
       /* fall through — capture whatever is there */
+    }
+    // Some screens only show their real surface once something is picked (a
+    // repo, a tab). Without this they capture as an empty state, which is a
+    // misleading shot for the README and the site gallery.
+    if (prepare) {
+      try {
+        await prepare(page)
+      } catch (err) {
+        console.warn(`  ⚠ prepare(${name}) — ${err?.message || err}`)
+      }
     }
     if (waitFor) {
       try {
@@ -130,6 +140,21 @@ async function newContext(browser, theme) {
  * shot could otherwise be taken while the charts were still loading.
  */
 const CHART = 'svg[data-chart]'
+
+/**
+ * Pick the first repo in the page's leading <select>. The page then hydrates
+ * the labels and difficulty already stored for that repo — no classifier pass
+ * is triggered, so the capture shows real state rather than an empty state.
+ */
+async function prepareClassify(page) {
+  const select = page.locator('select').first()
+  await select.waitFor({ state: 'visible', timeout: 20_000 })
+  const value = await select.locator('option').nth(1).getAttribute('value')
+  if (!value) return
+  await select.selectOption(value)
+  await page.waitForSelector('text=/difficulty|Correct label/', { timeout: 20_000 })
+}
+
 const PAGES = [
   { route: '/dashboard', name: 'dashboard', waitFor: CHART },
   { route: '/insights', name: 'insights', waitFor: CHART, fullPage: true },
@@ -142,7 +167,7 @@ const PAGES = [
   { route: '/repos', name: 'repos' },
   { route: '/contexts', name: 'contexts' },
   { route: '/categories', name: 'categories' },
-  { route: '/classify', name: 'classify' },
+  { route: '/classify', name: 'classify', prepare: prepareClassify },
   { route: '/taxonomy', name: 'taxonomy' },
   { route: '/settings', name: 'settings' },
 ]
@@ -159,7 +184,11 @@ async function main() {
     const ctx = await newContext(browser, 'dark')
     const page = await ctx.newPage()
     for (const p of PAGES) {
-      await shoot(page, p.route, p.name, { fullPage: p.fullPage, waitFor: p.waitFor })
+      await shoot(page, p.route, p.name, {
+        fullPage: p.fullPage,
+        waitFor: p.waitFor,
+        prepare: p.prepare,
+      })
     }
     // The first repo's detail page — reached by clicking through, since its id
     // is a generated uuid rather than a fixed route.
