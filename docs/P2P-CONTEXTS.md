@@ -64,9 +64,18 @@ apply whether merged locally or from a remote peer.
 - **Convergence** → op application is commutative and idempotent; replaying `sync_ops_since` in any
   order yields identical state. `updated_at` is the max `Hlc.wall_ms` rendered as RFC3339.
 
-Local edits and remote merges share **one** path: `upsert_context` / `upsert_category` decompose a full
-object into the minimal op set with a freshly-minted `Hlc`, append to the op log, and apply — exactly
-what a merged remote op does.
+Local edits and remote merges share the **same rules and the same tables**, reached by two entry
+points. A local edit (`Store::upsert_context` / `upsert_category`) writes the object with a
+freshly-minted `Hlc` and appends the minimal op set to the log. A remote op arrives at
+`Store::merge_sync_op` (via `gitstate_sync::apply_op`), which replays it into those same rows under
+the rules above — per-field clocks, member add/remove clocks, tombstone clock — and records it in the
+log, in one transaction. Because a local edit stamps every clock it touches with its own `Hlc`, the
+two meet in the same comparison: whichever clock is higher wins, whether it came from this machine or
+a peer.
+
+`sync_ops_since` returns the log in **arrival order** (`seq`), not clock order. That is deliberate:
+merging is commutative and idempotent, so a peer handed the log in any order converges on the same
+rows, and re-delivering an op is a no-op for both the rows and the log.
 
 ## The sync engine (opt-in)
 
@@ -77,8 +86,9 @@ usable without it. Transport rides the shared vulos/DMTAP sync substrate rather 
 it is signed and hub-less.
 
 ```bash
-# Build with sync enabled
-cargo build -p gitstate-sync --features sync-dmtap
+# Build with sync enabled. The crate is excluded from the workspace, so `-p`
+# cannot address it — use its manifest path (or `make sync-dmtap`).
+cargo build --manifest-path crates/gitstate-sync/Cargo.toml --features sync-dmtap
 
 gitstate sync status               # { enabled, peer_id, peers, last_op_hlc }
 gitstate sync publish              # broadcast local ops (no-op / disabled when built without the feature)

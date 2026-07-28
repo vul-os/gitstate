@@ -75,7 +75,9 @@ invent a number, or would move a user's code/data off their machine, open an iss
 
 ```bash
 cargo build --workspace          # must NOT pull the sync/P2P stack
-cargo build -p gitstate-sync --features sync-dmtap   # the excluded crate, explicitly
+# The sync crate is EXCLUDED from the workspace, so `-p` cannot reach it —
+# it is addressed by manifest path (this is what `make sync-dmtap` runs):
+cargo build --manifest-path crates/gitstate-sync/Cargo.toml --features sync-dmtap
 cargo test --workspace
 cargo fmt --all && cargo clippy --workspace
 

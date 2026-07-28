@@ -1,16 +1,24 @@
 //! Decomposition of a full [`Context`]/[`Category`] into its minimal
 //! [`SyncOp`] set, and the merge semantics they obey (§5).
 //!
-//! # Merge rules (implemented by the Store's op-log replay + [`super::apply_op`])
+//! # Merge rules
 //!
 //! * **Scalar fields** (`name`, `description`, `notes`; `label`, `color`,
-//!   `parent_key`): last-writer-wins by `Hlc`.
+//!   `parent_key`): last-writer-wins by `Hlc`, per field.
 //! * **Set members** (`tags`, `repo_ids`, `pr_refs`): OR-Set, add-wins on tie.
 //! * **Deletion**: a document-level tombstone that a later higher-`Hlc` write
 //!   resurrects (whole-doc LWW). Tombstones are retained, never hard-deleted.
 //!
-//! Op application is commutative + idempotent, so replaying the log in any
-//! order converges.
+//! The functions in THIS module only decompose a local object into ops. The
+//! rules above are applied on the receiving side by `Store::merge_sync_op`
+//! (see [`super::apply_op`]), which is the only thing that moves rows: it
+//! compares each op's clock against the per-field clock map, the OR-Set member
+//! clocks and the tombstone clock the store keeps beside every context and
+//! category.
+//!
+//! Because every rule is "take the max clock", applying ops is commutative and
+//! idempotent — a peer converges on the same rows whatever order the ops reach
+//! it in, and re-delivering one changes nothing.
 
 use gitstate_core::{CatField, Category, Context, CtxField, SyncOp};
 

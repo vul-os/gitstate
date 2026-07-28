@@ -35,6 +35,13 @@ thiserror = "2"
 #   cargo build --manifest-path crates/gitstate-sync/Cargo.toml --features sync-dmtap
 dmtap-sync = { git = "https://github.com/vul-os/envoir", rev = "12526123cb37e459df5717c2ce243bbecbf5ac23", optional = true }
 
+[dev-dependencies]
+# A real Store to merge into, so `apply_op` is tested against the actual CRDT
+# replay rather than a hand-rolled stand-in. Path-only and test-only: it adds
+# nothing to a normal build of this crate and needs no envoir checkout.
+gitstate-store = { path = "../gitstate-store" }
+tokio = { version = "1", features = ["macros", "rt"] }
+
 [features]
 default = []
 # Additive DMTAP Sync transport. Enabling it changes NO behaviour of the rest of

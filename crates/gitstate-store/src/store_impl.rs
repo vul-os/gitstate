@@ -566,12 +566,13 @@ fn write_category(conn: &Connection, c: &Category, hlc: &Hlc) -> Result<()> {
     )
     .map_err(st)?;
     for f in ["label", "color", "parent_key"] {
-        conn.execute(
-            "INSERT INTO category_field_clocks (category_id, field, hlc) VALUES (?1, ?2, ?3)
-             ON CONFLICT(category_id, field) DO UPDATE SET hlc = excluded.hlc",
-            params![c.id.0, f, hlc.encode()],
-        )
-        .map_err(st)?;
+        set_category_field_clock(conn, &c.id.0, f, hlc)?;
+    }
+    // A local delete must leave the same tombstone clock a remote `CategoryDel`
+    // would, or a later merge would recompute `deleted` from the clock map and
+    // resurrect the row. See `DEL_CLOCK`.
+    if c.deleted {
+        set_category_field_clock(conn, &c.id.0, DEL_CLOCK, hlc)?;
     }
     Ok(())
 }
@@ -633,6 +634,447 @@ fn map_category(r: &rusqlite::Row) -> rusqlite::Result<Category> {
 }
 
 const CAT_COLS: &str = "id, key, label, parent_key, color, source, taxonomy_version, hlc, deleted";
+
+// ──────────────── CRDT: replaying a remote op into the rows ────────────────
+//
+// `append_sync_ops` records history; the functions below are what actually
+// MOVE local state when a peer's op arrives. The merge rules they implement are
+// the ones documented on `gitstate_sync::crdt`:
+//
+//   * scalar fields  — last-writer-wins by `Hlc`, per field, using the
+//     `*_field_clocks` maps the schema already carries;
+//   * set members    — add-wins OR-Set over `context_members.add_hlc` /
+//     `remove_hlc`, exactly the pair `reconstruct_context` reads back;
+//   * deletion       — a whole-document tombstone that a strictly later write
+//     resurrects.
+//
+// Every rule is expressed as "take the max clock", so applying a batch is
+// commutative (any arrival order lands on the same rows) and idempotent
+// (re-applying an op changes nothing). That is what lets `sync_ops_since`
+// return the log in local arrival order without breaking convergence.
+
+/// The reserved key under which a *category's* tombstone clock lives in
+/// `category_field_clocks`. `contexts` has a dedicated `del_hlc` column;
+/// `categories` does not, and that table is already a generic per-document
+/// clock map — so the tombstone clock goes in it under a name no `CatField`
+/// can produce, which keeps both documents on one whole-doc LWW rule without
+/// altering an applied migration.
+const DEL_CLOCK: &str = "__del";
+
+fn context_field_clock(conn: &Connection, id: &str, field: &str) -> Result<Option<Hlc>> {
+    let s: Option<String> = conn
+        .query_row(
+            "SELECT hlc FROM context_field_clocks WHERE context_id = ?1 AND field = ?2",
+            params![id, field],
+            |r| r.get(0),
+        )
+        .optional()
+        .map_err(st)?;
+    dec_hlc(s)
+}
+
+fn category_field_clock(conn: &Connection, id: &str, field: &str) -> Result<Option<Hlc>> {
+    let s: Option<String> = conn
+        .query_row(
+            "SELECT hlc FROM category_field_clocks WHERE category_id = ?1 AND field = ?2",
+            params![id, field],
+            |r| r.get(0),
+        )
+        .optional()
+        .map_err(st)?;
+    dec_hlc(s)
+}
+
+fn set_category_field_clock(conn: &Connection, id: &str, field: &str, hlc: &Hlc) -> Result<()> {
+    conn.execute(
+        "INSERT INTO category_field_clocks (category_id, field, hlc) VALUES (?1, ?2, ?3)
+         ON CONFLICT(category_id, field) DO UPDATE SET hlc = excluded.hlc",
+        params![id, field, hlc.encode()],
+    )
+    .map_err(st)?;
+    Ok(())
+}
+
+/// The highest clock of any *write* recorded against a context — every field
+/// clock plus every member add/remove clock. Deliberately excludes `del_hlc`:
+/// this is the thing a tombstone is compared against.
+fn context_write_clock(conn: &Connection, id: &str) -> Result<Hlc> {
+    let mut max = zero_hlc();
+    let mut push = |s: Option<String>| -> Result<()> {
+        if let Some(h) = dec_hlc(s)? {
+            if h > max {
+                max = h;
+            }
+        }
+        Ok(())
+    };
+
+    let mut stmt = conn
+        .prepare("SELECT hlc FROM context_field_clocks WHERE context_id = ?1")
+        .map_err(st)?;
+    let field_clocks: Vec<String> = stmt
+        .query_map([id], |r| r.get::<_, String>(0))
+        .map_err(st)?
+        .collect::<rusqlite::Result<_>>()
+        .map_err(st)?;
+    drop(stmt);
+    for c in field_clocks {
+        push(Some(c))?;
+    }
+
+    let mut stmt = conn
+        .prepare("SELECT add_hlc, remove_hlc FROM context_members WHERE context_id = ?1")
+        .map_err(st)?;
+    let member_clocks: Vec<(Option<String>, Option<String>)> = stmt
+        .query_map([id], |r| Ok((r.get(0)?, r.get(1)?)))
+        .map_err(st)?
+        .collect::<rusqlite::Result<_>>()
+        .map_err(st)?;
+    drop(stmt);
+    for (a, r) in member_clocks {
+        push(a)?;
+        push(r)?;
+    }
+    Ok(max)
+}
+
+/// The highest clock of any category field write, excluding the tombstone.
+fn category_write_clock(conn: &Connection, id: &str) -> Result<Hlc> {
+    let mut stmt = conn
+        .prepare("SELECT hlc FROM category_field_clocks WHERE category_id = ?1 AND field <> ?2")
+        .map_err(st)?;
+    let clocks: Vec<String> = stmt
+        .query_map(params![id, DEL_CLOCK], |r| r.get::<_, String>(0))
+        .map_err(st)?
+        .collect::<rusqlite::Result<_>>()
+        .map_err(st)?;
+    drop(stmt);
+    let mut max = zero_hlc();
+    for c in clocks {
+        if let Ok(h) = Hlc::decode(&c) {
+            if h > max {
+                max = h;
+            }
+        }
+    }
+    Ok(max)
+}
+
+/// Recompute `contexts.deleted` from the stored clocks — whole-document LWW.
+///
+/// The tombstone stands while its clock is at least the highest write clock;
+/// a strictly later write resurrects the document. `>=` rather than `>` because
+/// a delete and the writes it accompanies are stamped with the SAME clock (see
+/// `write_context` and `ops_for_context`), and the delete must win that tie —
+/// it is one edit, not two racing ones.
+fn refresh_context_deleted(conn: &Connection, id: &str) -> Result<bool> {
+    let del_s: Option<String> = conn
+        .query_row("SELECT del_hlc FROM contexts WHERE id = ?1", [id], |r| {
+            r.get(0)
+        })
+        .optional()
+        .map_err(st)?
+        .flatten();
+    let del = dec_hlc(del_s)?;
+    let writes = context_write_clock(conn, id)?;
+    let deleted = matches!(&del, Some(d) if d >= &writes);
+    conn.execute(
+        "UPDATE contexts SET deleted = ?2 WHERE id = ?1",
+        params![id, deleted as i64],
+    )
+    .map_err(st)?;
+    Ok(deleted)
+}
+
+/// The category mirror of [`refresh_context_deleted`], reading the tombstone
+/// clock out of the clock map under [`DEL_CLOCK`].
+fn refresh_category_deleted(conn: &Connection, id: &str) -> Result<bool> {
+    let del = category_field_clock(conn, id, DEL_CLOCK)?;
+    let writes = category_write_clock(conn, id)?;
+    let deleted = matches!(&del, Some(d) if d >= &writes);
+    conn.execute(
+        "UPDATE categories SET deleted = ?2 WHERE id = ?1",
+        params![id, deleted as i64],
+    )
+    .map_err(st)?;
+    Ok(deleted)
+}
+
+/// Raise `categories.hlc` to `hlc` if that is higher. The column is the
+/// document's high-water clock, which is what `map_category` reports as
+/// `Category::hlc`.
+fn bump_category_hlc(conn: &Connection, id: &str, hlc: &Hlc) -> Result<()> {
+    let cur_s: Option<String> = conn
+        .query_row("SELECT hlc FROM categories WHERE id = ?1", [id], |r| {
+            r.get(0)
+        })
+        .optional()
+        .map_err(st)?;
+    let higher = match dec_hlc(cur_s)? {
+        Some(cur) => hlc > &cur,
+        None => true,
+    };
+    if higher {
+        conn.execute(
+            "UPDATE categories SET hlc = ?2 WHERE id = ?1",
+            params![id, hlc.encode()],
+        )
+        .map_err(st)?;
+    }
+    Ok(())
+}
+
+/// Resolve the local row a category op addresses, creating a placeholder if we
+/// have never seen it.
+///
+/// `idx_cat_key` is UNIQUE on `key`, so `key` — not the id — is a category's
+/// effective identity here: two peers that independently minted a category for
+/// `feature.api` must converge on ONE row, and inserting the second id would
+/// just fail the constraint. Returns the row id whose clocks the caller must
+/// use.
+fn ensure_category_row(conn: &Connection, id: &CategoryId, key: &str, hlc: &Hlc) -> Result<String> {
+    let by_id: Option<String> = conn
+        .query_row("SELECT id FROM categories WHERE id = ?1", [&id.0], |r| {
+            r.get(0)
+        })
+        .optional()
+        .map_err(st)?;
+    if let Some(existing) = by_id {
+        return Ok(existing);
+    }
+    let by_key: Option<String> = conn
+        .query_row("SELECT id FROM categories WHERE key = ?1", [key], |r| {
+            r.get(0)
+        })
+        .optional()
+        .map_err(st)?;
+    if let Some(existing) = by_key {
+        return Ok(existing);
+    }
+    conn.execute(
+        "INSERT INTO categories (id, key, label, parent_key, color, source, taxonomy_version, hlc, deleted)
+         VALUES (?1, ?2, '', NULL, NULL, ?3, NULL, ?4, 0)",
+        params![id.0, key, CategorySource::Peer.as_str(), hlc.encode()],
+    )
+    .map_err(st)?;
+    Ok(id.0.clone())
+}
+
+/// Merge one OR-Set member op. Each side of the element carries its own clock
+/// and only ever moves forward, so the result is independent of arrival order;
+/// `reconstruct_context` then reads the element as present when
+/// `add_hlc >= remove_hlc` (add wins the tie).
+#[allow(clippy::too_many_arguments)]
+fn merge_context_member(
+    conn: &Connection,
+    id: &str,
+    kind: &str,
+    key: &str,
+    note: Option<&str>,
+    add: bool,
+    hlc: &Hlc,
+) -> Result<bool> {
+    let existing: Option<(Option<String>, Option<String>)> = conn
+        .query_row(
+            "SELECT add_hlc, remove_hlc FROM context_members
+             WHERE context_id = ?1 AND member_kind = ?2 AND member_key = ?3",
+            params![id, kind, key],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .optional()
+        .map_err(st)?;
+    let (add_h, rem_h) = match existing {
+        Some((a, r)) => (dec_hlc(a)?, dec_hlc(r)?),
+        None => (None, None),
+    };
+    // The side this op writes only moves forward — an older or repeated op loses.
+    let current = if add { &add_h } else { &rem_h };
+    if matches!(current, Some(c) if c >= hlc) {
+        return Ok(false);
+    }
+    // Two statements, not one with COALESCE: on an ADD the element's `note` is
+    // an LWW scalar carried by the winning add, so it must be written even when
+    // the op clears it to NULL. A REMOVE carries no note and must leave the
+    // stored one alone — a later resurrection keeps the note it had.
+    if add {
+        conn.execute(
+            "INSERT INTO context_members (context_id, member_kind, member_key, note, add_hlc, remove_hlc)
+             VALUES (?1, ?2, ?3, ?4, ?5, NULL)
+             ON CONFLICT(context_id, member_kind, member_key) DO UPDATE SET
+                note    = excluded.note,
+                add_hlc = excluded.add_hlc",
+            params![id, kind, key, note, hlc.encode()],
+        )
+        .map_err(st)?;
+    } else {
+        conn.execute(
+            "INSERT INTO context_members (context_id, member_kind, member_key, note, add_hlc, remove_hlc)
+             VALUES (?1, ?2, ?3, NULL, NULL, ?4)
+             ON CONFLICT(context_id, member_kind, member_key) DO UPDATE SET
+                remove_hlc = excluded.remove_hlc",
+            params![id, kind, key, hlc.encode()],
+        )
+        .map_err(st)?;
+    }
+    Ok(true)
+}
+
+/// Replay a single remote op into the typed rows. Returns whether it changed
+/// anything.
+fn merge_op(conn: &Connection, op: &SyncOp) -> Result<bool> {
+    match op {
+        SyncOp::ContextLww {
+            id,
+            field,
+            value,
+            hlc,
+        } => {
+            ensure_context_row(conn, id, "")?;
+            let name = field.as_str();
+            if let Some(cur) = context_field_clock(conn, &id.0, name)? {
+                if &cur >= hlc {
+                    return Ok(false);
+                }
+            }
+            // One statement per field: the column name is not a bindable
+            // parameter and must never be interpolated from data.
+            let sql = match field {
+                CtxField::Name => "UPDATE contexts SET name = ?2, updated_at = ?3 WHERE id = ?1",
+                CtxField::Description => {
+                    "UPDATE contexts SET description = ?2, updated_at = ?3 WHERE id = ?1"
+                }
+                CtxField::Notes => "UPDATE contexts SET notes = ?2, updated_at = ?3 WHERE id = ?1",
+            };
+            conn.execute(sql, params![id.0, value, now_rfc3339()])
+                .map_err(st)?;
+            set_context_field_clock(conn, id, name, hlc)?;
+            refresh_context_deleted(conn, &id.0)?;
+            Ok(true)
+        }
+        SyncOp::ContextTag { id, tag, add, hlc } => {
+            ensure_context_row(conn, id, "")?;
+            let changed = merge_context_member(conn, &id.0, "tag", tag, None, *add, hlc)?;
+            if changed {
+                refresh_context_deleted(conn, &id.0)?;
+            }
+            Ok(changed)
+        }
+        SyncOp::ContextRepo {
+            id,
+            repo_id,
+            add,
+            hlc,
+        } => {
+            ensure_context_row(conn, id, "")?;
+            let changed = merge_context_member(conn, &id.0, "repo", &repo_id.0, None, *add, hlc)?;
+            if changed {
+                refresh_context_deleted(conn, &id.0)?;
+            }
+            Ok(changed)
+        }
+        SyncOp::ContextPr {
+            id,
+            repo_slug,
+            number,
+            note,
+            add,
+            hlc,
+        } => {
+            ensure_context_row(conn, id, "")?;
+            // Same "slug#number" member key `write_context` writes and
+            // `reconstruct_context` parses back.
+            let key = format!("{repo_slug}#{number}");
+            let changed =
+                merge_context_member(conn, &id.0, "pr", &key, note.as_deref(), *add, hlc)?;
+            if changed {
+                refresh_context_deleted(conn, &id.0)?;
+            }
+            Ok(changed)
+        }
+        SyncOp::ContextDel { id, hlc } => {
+            ensure_context_row(conn, id, "")?;
+            let cur_s: Option<String> = conn
+                .query_row("SELECT del_hlc FROM contexts WHERE id = ?1", [&id.0], |r| {
+                    r.get(0)
+                })
+                .optional()
+                .map_err(st)?
+                .flatten();
+            if matches!(dec_hlc(cur_s)?, Some(c) if &c >= hlc) {
+                return Ok(false);
+            }
+            conn.execute(
+                "UPDATE contexts SET del_hlc = ?2 WHERE id = ?1",
+                params![id.0, hlc.encode()],
+            )
+            .map_err(st)?;
+            // Not unconditionally deleted: a write with a HIGHER clock that
+            // already landed outranks this tombstone.
+            refresh_context_deleted(conn, &id.0)?;
+            Ok(true)
+        }
+        SyncOp::CategoryLww {
+            id,
+            key,
+            field,
+            value,
+            hlc,
+        } => {
+            let row = ensure_category_row(conn, id, key, hlc)?;
+            let name = field.as_str();
+            if let Some(cur) = category_field_clock(conn, &row, name)? {
+                if &cur >= hlc {
+                    return Ok(false);
+                }
+            }
+            // `color` and `parent_key` are nullable; the op envelope carries
+            // "unset" as the empty string (see `ops_for_category`).
+            let sql = match field {
+                CatField::Label => "UPDATE categories SET label = ?2 WHERE id = ?1",
+                CatField::Color => "UPDATE categories SET color = NULLIF(?2, '') WHERE id = ?1",
+                CatField::ParentKey => {
+                    "UPDATE categories SET parent_key = NULLIF(?2, '') WHERE id = ?1"
+                }
+            };
+            conn.execute(sql, params![row, value]).map_err(st)?;
+            set_category_field_clock(conn, &row, name, hlc)?;
+            bump_category_hlc(conn, &row, hlc)?;
+            refresh_category_deleted(conn, &row)?;
+            Ok(true)
+        }
+        SyncOp::CategoryDel { id, hlc } => {
+            // A delete for a category we have never seen still has to be
+            // recorded, or a later resurrection would have nothing to outrank.
+            // `key` is unknown here, so the placeholder is keyed on the id.
+            let row = ensure_category_row(conn, id, &id.0, hlc)?;
+            if let Some(cur) = category_field_clock(conn, &row, DEL_CLOCK)? {
+                if &cur >= hlc {
+                    return Ok(false);
+                }
+            }
+            set_category_field_clock(conn, &row, DEL_CLOCK, hlc)?;
+            bump_category_hlc(conn, &row, hlc)?;
+            refresh_category_deleted(conn, &row)?;
+            Ok(true)
+        }
+    }
+}
+
+/// Is this exact op already in the log? Keeps re-delivery from growing the log
+/// without bound. Narrowed by `idx_sync_hlc` first, so it is an index probe and
+/// not a table scan.
+fn op_already_logged(conn: &Connection, op: &SyncOp) -> Result<bool> {
+    let json = serde_json::to_string(op)?;
+    let hit: Option<i64> = conn
+        .query_row(
+            "SELECT 1 FROM sync_ops WHERE hlc = ?1 AND op_json = ?2 LIMIT 1",
+            params![op.hlc().encode(), json],
+            |r| r.get(0),
+        )
+        .optional()
+        .map_err(st)?;
+    Ok(hit.is_some())
+}
 
 fn append_ops(conn: &Connection, ops: &[SyncOp]) -> Result<()> {
     for op in ops {
@@ -1264,6 +1706,25 @@ impl Store for SqliteStore {
         append_ops(&conn, ops)
     }
 
+    fn merge_sync_op(&self, op: &SyncOp) -> Result<bool> {
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.transaction().map_err(st)?;
+        let changed = merge_op(&tx, op)?;
+        // Row effect and log entry commit together: a peer's op can never be
+        // recorded as "seen" without having moved the rows, nor vice versa.
+        if !op_already_logged(&tx, op)? {
+            append_ops(&tx, std::slice::from_ref(op))?;
+        }
+        tx.commit().map_err(st)?;
+        Ok(changed)
+    }
+
+    /// Returned in `seq` order — the order ops reached THIS node, which is not
+    /// the HLC order. That is deliberate and sufficient: `merge_sync_op` is
+    /// commutative and idempotent, so a peer converges on the same rows
+    /// whatever order it receives them in. Sorting by clock here would buy
+    /// nothing and would break the `since` cursor, which is a watermark over
+    /// arrival, not over wall time.
     fn sync_ops_since(&self, since: Option<&Hlc>) -> Result<Vec<SyncOp>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn
@@ -1445,6 +1906,482 @@ mod tests {
         let got = s.get_category("feature.api").unwrap().unwrap();
         assert_eq!(got.label, "API feature");
         assert_eq!(s.list_categories().unwrap().len(), 1);
+    }
+
+    // ───────────────── remote op replay (merge_sync_op) ─────────────────
+
+    fn hlc_at(wall_ms: u64, peer: &str) -> Hlc {
+        Hlc {
+            wall_ms,
+            counter: 0,
+            peer: PeerId::from(peer),
+        }
+    }
+
+    fn ctx_name(id: &str, value: &str, hlc: Hlc) -> SyncOp {
+        SyncOp::ContextLww {
+            id: ContextId::from(id),
+            field: CtxField::Name,
+            value: value.into(),
+            hlc,
+        }
+    }
+
+    fn ctx_tag(id: &str, tag: &str, add: bool, hlc: Hlc) -> SyncOp {
+        SyncOp::ContextTag {
+            id: ContextId::from(id),
+            tag: tag.into(),
+            add,
+            hlc,
+        }
+    }
+
+    /// A comparable fingerprint of everything a peer is supposed to converge on.
+    fn snapshot(s: &SqliteStore) -> Vec<String> {
+        let mut out = Vec::new();
+        for id in ["c1", "c2"] {
+            if let Some(c) = s.get_context(&ContextId::from(id)).unwrap() {
+                let mut tags = c.tags.clone();
+                tags.sort();
+                let mut repos: Vec<String> = c.repo_ids.iter().map(|r| r.0.clone()).collect();
+                repos.sort();
+                out.push(format!(
+                    "{id}|{}|{}|{}|{:?}|{:?}",
+                    c.name, c.description, c.deleted, tags, repos
+                ));
+            }
+        }
+        for c in s.list_categories().unwrap() {
+            out.push(format!("cat:{}|{}|{:?}", c.key, c.label, c.color));
+        }
+        out
+    }
+
+    fn permutations<T: Clone>(items: &[T]) -> Vec<Vec<T>> {
+        if items.len() <= 1 {
+            return vec![items.to_vec()];
+        }
+        let mut out = Vec::new();
+        for i in 0..items.len() {
+            let mut rest = items.to_vec();
+            let head = rest.remove(i);
+            for mut tail in permutations(&rest) {
+                tail.insert(0, head.clone());
+                out.push(tail);
+            }
+        }
+        out
+    }
+
+    /// THE regression. `apply_op` used to only append remote ops to `sync_ops`,
+    /// so a merged op left contexts and categories exactly as they were: two
+    /// peers exchanged history and neither one's screen changed. Appending is
+    /// history; merging is state, and they are now different calls.
+    #[test]
+    fn appending_a_remote_op_does_not_move_rows_but_merging_does() {
+        let s = store();
+        let op = ctx_name("c1", "from the peer", hlc_at(10, "peer-a"));
+
+        s.append_sync_ops(std::slice::from_ref(&op)).unwrap();
+        assert!(
+            s.get_context(&ContextId::from("c1")).unwrap().is_none(),
+            "append_sync_ops records history only — it must not fabricate rows"
+        );
+
+        assert!(s.merge_sync_op(&op).unwrap(), "merge reports a change");
+        let got = s.get_context(&ContextId::from("c1")).unwrap().unwrap();
+        assert_eq!(got.name, "from the peer", "merge replays into the row");
+    }
+
+    /// Per-field LWW: the higher clock wins regardless of arrival order, and
+    /// only the field it names moves.
+    #[test]
+    fn scalar_fields_are_last_writer_wins_by_clock() {
+        for order in [[0usize, 1], [1, 0]] {
+            let s = store();
+            let ops = [
+                ctx_name("c1", "older", hlc_at(10, "peer-a")),
+                ctx_name("c1", "newer", hlc_at(20, "peer-b")),
+            ];
+            for i in order {
+                s.merge_sync_op(&ops[i]).unwrap();
+            }
+            assert_eq!(
+                s.get_context(&ContextId::from("c1")).unwrap().unwrap().name,
+                "newer",
+                "arrival order {order:?} must not decide the winner"
+            );
+        }
+    }
+
+    /// An op older than what the row already holds is recorded but loses.
+    #[test]
+    fn an_older_remote_write_loses_and_reports_no_change() {
+        let s = store();
+        s.merge_sync_op(&ctx_name("c1", "newer", hlc_at(20, "peer-b")))
+            .unwrap();
+        assert!(
+            !s.merge_sync_op(&ctx_name("c1", "older", hlc_at(10, "peer-a")))
+                .unwrap(),
+            "a losing op reports no state change"
+        );
+        assert_eq!(
+            s.get_context(&ContextId::from("c1")).unwrap().unwrap().name,
+            "newer"
+        );
+    }
+
+    /// OR-Set: add wins a tie against a remove at the same clock, and each side
+    /// only moves forward.
+    #[test]
+    fn set_members_are_an_add_wins_or_set() {
+        // remove at a LOWER clock than the add — the tag stays.
+        let s = store();
+        s.merge_sync_op(&ctx_tag("c1", "keep", false, hlc_at(5, "p")))
+            .unwrap();
+        s.merge_sync_op(&ctx_tag("c1", "keep", true, hlc_at(9, "p")))
+            .unwrap();
+        assert_eq!(
+            s.get_context(&ContextId::from("c1")).unwrap().unwrap().tags,
+            vec!["keep".to_string()]
+        );
+
+        // remove at a HIGHER clock — the tag goes.
+        s.merge_sync_op(&ctx_tag("c1", "keep", false, hlc_at(12, "p")))
+            .unwrap();
+        assert!(s
+            .get_context(&ContextId::from("c1"))
+            .unwrap()
+            .unwrap()
+            .tags
+            .is_empty());
+
+        // add-wins on an exact tie.
+        let s2 = store();
+        s2.merge_sync_op(&ctx_tag("c1", "tie", false, hlc_at(7, "p")))
+            .unwrap();
+        s2.merge_sync_op(&ctx_tag("c1", "tie", true, hlc_at(7, "p")))
+            .unwrap();
+        assert_eq!(
+            s2.get_context(&ContextId::from("c1"))
+                .unwrap()
+                .unwrap()
+                .tags,
+            vec!["tie".to_string()],
+            "add wins the tie"
+        );
+    }
+
+    /// Whole-doc tombstone: a strictly later write resurrects, an earlier one
+    /// does not — in either arrival order.
+    #[test]
+    fn a_later_write_resurrects_a_tombstoned_context() {
+        for order in [[0usize, 1], [1, 0]] {
+            let s = store();
+            let ops = [
+                SyncOp::ContextDel {
+                    id: ContextId::from("c1"),
+                    hlc: hlc_at(20, "peer-a"),
+                },
+                ctx_name("c1", "back from the dead", hlc_at(30, "peer-b")),
+            ];
+            for i in order {
+                s.merge_sync_op(&ops[i]).unwrap();
+            }
+            let got = s.get_context(&ContextId::from("c1")).unwrap().unwrap();
+            assert!(!got.deleted, "later write resurrects (order {order:?})");
+            assert_eq!(got.name, "back from the dead");
+            assert_eq!(s.list_contexts().unwrap().len(), 1);
+        }
+    }
+
+    #[test]
+    fn an_earlier_write_does_not_resurrect_a_tombstoned_context() {
+        for order in [[0usize, 1], [1, 0]] {
+            let s = store();
+            let ops = [
+                SyncOp::ContextDel {
+                    id: ContextId::from("c1"),
+                    hlc: hlc_at(30, "peer-a"),
+                },
+                ctx_name("c1", "stale edit", hlc_at(10, "peer-b")),
+            ];
+            for i in order {
+                s.merge_sync_op(&ops[i]).unwrap();
+            }
+            let got = s.get_context(&ContextId::from("c1")).unwrap().unwrap();
+            assert!(got.deleted, "tombstone stands (order {order:?})");
+            assert!(s.list_contexts().unwrap().is_empty());
+        }
+    }
+
+    /// The property the whole design rests on: every arrival order of the same
+    /// op set lands on byte-identical state, and replaying the set twice
+    /// changes nothing.
+    #[test]
+    fn merge_is_commutative_and_idempotent_over_every_arrival_order() {
+        let ops = vec![
+            ctx_name("c1", "first", hlc_at(10, "peer-a")),
+            ctx_name("c1", "second", hlc_at(40, "peer-b")),
+            ctx_tag("c1", "alpha", true, hlc_at(20, "peer-a")),
+            SyncOp::ContextRepo {
+                id: ContextId::from("c1"),
+                repo_id: RepoId::from("r1"),
+                add: true,
+                hlc: hlc_at(25, "peer-b"),
+            },
+            SyncOp::CategoryLww {
+                id: CategoryId::from("cat-1"),
+                key: "feature.api".into(),
+                field: CatField::Label,
+                value: "API".into(),
+                hlc: hlc_at(30, "peer-a"),
+            },
+            SyncOp::ContextDel {
+                id: ContextId::from("c1"),
+                hlc: hlc_at(15, "peer-a"),
+            },
+        ];
+
+        let reference = {
+            let s = store();
+            for op in &ops {
+                s.merge_sync_op(op).unwrap();
+            }
+            snapshot(&s)
+        };
+        assert!(
+            !reference.is_empty(),
+            "the fixture must actually produce state, or this test proves nothing"
+        );
+
+        let orders = permutations(&ops);
+        assert_eq!(orders.len(), 720, "6! arrival orders");
+        for order in &orders {
+            let s = store();
+            for op in order {
+                s.merge_sync_op(op).unwrap();
+            }
+            assert_eq!(snapshot(&s), reference, "diverged on one arrival order");
+
+            // ... and again, in reverse, on top of itself.
+            for op in order.iter().rev() {
+                assert!(
+                    !s.merge_sync_op(op).unwrap(),
+                    "a replayed op must report no change"
+                );
+            }
+            assert_eq!(snapshot(&s), reference, "replay was not idempotent");
+        }
+    }
+
+    /// Re-delivering an op does not grow the log.
+    #[test]
+    fn redelivering_an_op_does_not_duplicate_the_log() {
+        let s = store();
+        let op = ctx_name("c1", "once", hlc_at(10, "peer-a"));
+        s.merge_sync_op(&op).unwrap();
+        s.merge_sync_op(&op).unwrap();
+        s.merge_sync_op(&op).unwrap();
+        assert_eq!(s.sync_ops_since(None).unwrap().len(), 1);
+    }
+
+    /// A merged op is re-exported, so this node relays what it learned.
+    #[test]
+    fn a_merged_op_is_re_exported_to_the_next_peer() {
+        let s = store();
+        let op = ctx_name("c1", "relayed", hlc_at(10, "peer-a"));
+        s.merge_sync_op(&op).unwrap();
+        let exported = s.sync_ops_since(None).unwrap();
+        assert_eq!(exported.len(), 1);
+        assert_eq!(
+            serde_json::to_string(&exported[0]).unwrap(),
+            serde_json::to_string(&op).unwrap()
+        );
+    }
+
+    /// Categories converge too, including delete + resurrect, and two peers
+    /// that minted different ids for the same key land on one row.
+    #[test]
+    fn category_ops_merge_delete_and_resurrect() {
+        let s = store();
+        let cat = |id: &str, field, value: &str, wall| SyncOp::CategoryLww {
+            id: CategoryId::from(id),
+            key: "feature.api".into(),
+            field,
+            value: value.into(),
+            hlc: hlc_at(wall, "peer-a"),
+        };
+
+        s.merge_sync_op(&cat("cat-1", CatField::Label, "API", 10))
+            .unwrap();
+        s.merge_sync_op(&cat("cat-1", CatField::Color, "#4f46e5", 10))
+            .unwrap();
+        let got = s.get_category("feature.api").unwrap().unwrap();
+        assert_eq!(got.label, "API");
+        assert_eq!(got.color.as_deref(), Some("#4f46e5"));
+        assert_eq!(got.source, CategorySource::Peer);
+
+        // A different peer's id for the SAME key merges into the one row —
+        // `idx_cat_key` is unique, so key is the effective identity.
+        s.merge_sync_op(&cat("cat-2", CatField::Label, "API v2", 20))
+            .unwrap();
+        assert_eq!(s.list_categories().unwrap().len(), 1);
+        assert_eq!(
+            s.get_category("feature.api").unwrap().unwrap().label,
+            "API v2"
+        );
+
+        // Tombstone, then resurrect with a later write.
+        s.merge_sync_op(&SyncOp::CategoryDel {
+            id: CategoryId::from("cat-1"),
+            hlc: hlc_at(30, "peer-a"),
+        })
+        .unwrap();
+        assert!(s.list_categories().unwrap().is_empty());
+        s.merge_sync_op(&cat("cat-1", CatField::Label, "API v3", 40))
+            .unwrap();
+        assert_eq!(s.list_categories().unwrap().len(), 1);
+        assert_eq!(
+            s.get_category("feature.api").unwrap().unwrap().label,
+            "API v3"
+        );
+    }
+
+    /// A locally deleted category must survive a later merge of an OLDER
+    /// remote write — the local delete has to leave a tombstone clock behind,
+    /// not just a `deleted` flag.
+    #[test]
+    fn a_local_category_delete_is_not_undone_by_an_older_remote_write() {
+        let s = store();
+        let cat = Category {
+            id: CategoryId::from("cat-1"),
+            key: "feature.api".into(),
+            label: "API".into(),
+            parent_key: None,
+            color: None,
+            source: CategorySource::Local,
+            taxonomy_version: None,
+            hlc: zero_hlc(),
+            deleted: false,
+        };
+        s.upsert_category(&cat).unwrap();
+        let mut gone = cat.clone();
+        gone.deleted = true;
+        s.upsert_category(&gone).unwrap();
+        assert!(s.list_categories().unwrap().is_empty());
+
+        // An ancient remote label edit arrives afterwards.
+        s.merge_sync_op(&SyncOp::CategoryLww {
+            id: CategoryId::from("cat-1"),
+            key: "feature.api".into(),
+            field: CatField::Label,
+            value: "resurrected?".into(),
+            hlc: hlc_at(1, "peer-a"),
+        })
+        .unwrap();
+        assert!(
+            s.list_categories().unwrap().is_empty(),
+            "an older remote write must not undo a local delete"
+        );
+    }
+
+    /// Same guarantee on the context side, where the tombstone clock lives in
+    /// `contexts.del_hlc`.
+    #[test]
+    fn a_local_context_delete_is_not_undone_by_an_older_remote_write() {
+        let s = store();
+        let ctx = Context {
+            id: ContextId::from("c1"),
+            name: "local".into(),
+            description: String::new(),
+            repo_ids: vec![],
+            pr_refs: vec![],
+            notes: String::new(),
+            tags: vec![],
+            created_at: now_rfc3339(),
+            updated_at: now_rfc3339(),
+            hlc: zero_hlc(),
+            deleted: false,
+        };
+        s.upsert_context(&ctx).unwrap();
+        let mut gone = ctx.clone();
+        gone.deleted = true;
+        s.upsert_context(&gone).unwrap();
+        assert!(s.list_contexts().unwrap().is_empty());
+
+        s.merge_sync_op(&ctx_name("c1", "resurrected?", hlc_at(1, "peer-a")))
+            .unwrap();
+        assert!(
+            s.list_contexts().unwrap().is_empty(),
+            "an older remote write must not undo a local delete"
+        );
+    }
+
+    /// PR refs carry a note and round-trip through the "slug#number" member key.
+    #[test]
+    fn pr_ref_ops_merge_into_the_context() {
+        let s = store();
+        s.merge_sync_op(&SyncOp::ContextPr {
+            id: ContextId::from("c1"),
+            repo_slug: "vul-os/gitstate".into(),
+            number: 42,
+            note: Some("the fix".into()),
+            add: true,
+            hlc: hlc_at(10, "peer-a"),
+        })
+        .unwrap();
+        let got = s.get_context(&ContextId::from("c1")).unwrap().unwrap();
+        assert_eq!(got.pr_refs.len(), 1);
+        assert_eq!(got.pr_refs[0].repo_slug, "vul-os/gitstate");
+        assert_eq!(got.pr_refs[0].number, 42);
+        assert_eq!(got.pr_refs[0].note.as_deref(), Some("the fix"));
+    }
+
+    /// End to end: peer B's log, replayed into peer A, reproduces peer B's
+    /// object. This is what "sync works" means, and what the old append-only
+    /// `apply_op` never did.
+    #[test]
+    fn one_peers_log_replayed_into_another_reproduces_the_object() {
+        let a = store();
+        let b = store();
+
+        let ctx = Context {
+            id: ContextId::from("c1"),
+            name: "Q3 refactor".into(),
+            description: "cleanup".into(),
+            repo_ids: vec![RepoId::from("r1")],
+            pr_refs: vec![ContextPrRef {
+                repo_slug: "vul-os/gitstate".into(),
+                number: 7,
+                note: None,
+            }],
+            notes: "notes".into(),
+            tags: vec!["refactor".into(), "q3".into()],
+            created_at: now_rfc3339(),
+            updated_at: now_rfc3339(),
+            hlc: zero_hlc(),
+            deleted: false,
+        };
+        b.upsert_context(&ctx).unwrap();
+        let from_b = b.get_context(&ctx.id).unwrap().unwrap();
+
+        for op in b.sync_ops_since(None).unwrap() {
+            a.merge_sync_op(&op).unwrap();
+        }
+        let on_a = a.get_context(&ctx.id).unwrap().unwrap();
+
+        assert_eq!(on_a.name, from_b.name);
+        assert_eq!(on_a.description, from_b.description);
+        assert_eq!(on_a.notes, from_b.notes);
+        let (mut x, mut y) = (on_a.tags.clone(), from_b.tags.clone());
+        x.sort();
+        y.sort();
+        assert_eq!(x, y);
+        assert_eq!(on_a.repo_ids, from_b.repo_ids);
+        assert_eq!(on_a.pr_refs.len(), 1);
+        assert_eq!(on_a.pr_refs[0].number, 7);
+        assert!(!on_a.deleted);
     }
 
     /// Register a repo so the FK on `commits`/`work_items` is satisfiable.

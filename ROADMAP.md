@@ -83,7 +83,7 @@ Honest, local, decentralized labeling.
 Share the smarts (working sets and labels), never the code.
 
 - [x] **CRDT model in core** — `SyncOp` op envelope; contexts and categories as LWW scalars + OR-Sets with a hybrid logical clock; add-wins, tombstones, resurrection.
-- [x] **gitstate-sync** (excluded crate, feature `sync-dmtap`) — `CrdtSyncEngine`, op derivation, idempotent merge; one path for local edits and remote merges.
+- [x] **gitstate-sync** (excluded crate, feature `sync-dmtap`) — `CrdtSyncEngine`, op derivation, and an idempotent merge that replays a remote op into the context/category rows (`Store::merge_sync_op`): local edits and remote ops reach the same tables under the same clock comparison.
 - [ ] **Transport** — P2P over the shared vulos/DMTAP sync substrate rather than a bespoke stack; signed, no central hub.
 - [x] **Context export/import** — a portable JSON working set, shareable out-of-band even without the sync feature built.
 - [x] Convergence tests — commutative + idempotent op application; replay in any order yields identical state.

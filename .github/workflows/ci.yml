@@ -58,6 +58,41 @@ jobs:
       - name: Test
         run: cargo test
 
+  go:
+    name: Go (build, vet, gofmt, test -race)
+    runs-on: ubuntu-latest
+    # The Go tree under cmd/ + internal/ is the pre-port server implementation
+    # kept in-tree (the Makefile deliberately does not build it). It had no CI
+    # at all — 243 files, 37 packages, 29 of them with tests, none of it
+    # compiled or run on a push. This job is that gate. It is fail-closed and
+    # asserts coverage counts; see scripts/go-gate.sh for the contract.
+    steps:
+      # go.mod carries `replace github.com/llmux/llmux => ../../vulos/llmux`,
+      # a sibling working copy. Recreate that layout inside the workspace:
+      # checking this repo out at vulos/gitstate makes ../../vulos/llmux
+      # resolve to vulos/llmux below. Both repos are public, so the default
+      # GITHUB_TOKEN can read them; if llmux ever goes private this checkout
+      # fails and takes the job red rather than silently skipping the tree.
+      - name: Checkout gitstate
+        uses: actions/checkout@v4
+        with:
+          path: vulos/gitstate
+
+      - name: Checkout the llmux replace target (sibling working copy)
+        uses: actions/checkout@v4
+        with:
+          repository: vul-os/llmux
+          path: vulos/llmux
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: vulos/gitstate/go.mod
+          cache-dependency-path: vulos/gitstate/go.sum
+
+      - name: Go gate (build, vet, gofmt, test -race + coverage assertions)
+        working-directory: vulos/gitstate
+        run: ./scripts/go-gate.sh
+
   frontend:
     name: Frontend (lint, build)
     runs-on: ubuntu-latest

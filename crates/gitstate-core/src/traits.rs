@@ -91,7 +91,25 @@ pub trait Store: Send + Sync {
     fn record_feedback(&self, item: &WorkItemId, chosen_key: &str) -> Result<()>;
     fn kv_get(&self, k: &str) -> Result<Option<String>>;
     fn kv_set(&self, k: &str, v: &str) -> Result<()>;
+    /// Append ops to the log *without* replaying them into rows. This is the
+    /// local-publish path: `upsert_context` / `upsert_category` have already
+    /// written the rows, and these ops are their record for peers to pull.
+    /// To ingest a REMOTE op, use [`Store::merge_sync_op`] — appending alone
+    /// changes no context or category.
     fn append_sync_ops(&self, ops: &[SyncOp]) -> Result<()>;
+    /// Ingest one remote op: replay it into the typed context/category rows
+    /// under the CRDT merge rules (per-field LWW by `Hlc`, add-wins OR-Set for
+    /// members, whole-doc tombstone) **and** record it in the op log, in one
+    /// transaction.
+    ///
+    /// Returns `true` if local state changed and `false` if the op lost its
+    /// merge (an older clock than what the row already holds) or was a
+    /// duplicate. Merging is commutative and idempotent, so a peer's ops may
+    /// arrive in any order, more than once, and still converge.
+    fn merge_sync_op(&self, op: &SyncOp) -> Result<bool>;
+    /// Ops from the log, in local arrival order (see the implementation's note
+    /// on why arrival order is sufficient), skipping any whose clock is at or
+    /// below `since`.
     fn sync_ops_since(&self, since: Option<&Hlc>) -> Result<Vec<SyncOp>>;
 }
 

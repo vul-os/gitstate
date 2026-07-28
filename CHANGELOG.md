@@ -57,6 +57,26 @@ billing-collection cloud. It runs on your machine.
 - New static marketing/docs `site/`, published at `vulos.org/products/gitstate`.
 
 ### Fixed
+- **Remote ops are now replayed into rows, not just logged.** `gitstate_sync::apply_op` appended a
+  merged op to `sync_ops` and stopped there, so two peers could exchange a whole history and neither
+  one's contexts or categories moved — while `crdt.rs` documented an "op-log replay" that did not
+  exist. Ingest is now `Store::merge_sync_op`: it replays the op into the context/category rows under
+  the documented rules (per-field LWW by `Hlc`, add-wins OR-Set over the member add/remove clocks,
+  whole-document tombstone that a strictly later write resurrects) **and** records it in the log, in
+  one transaction. It uses the per-field clock maps, member clocks and tombstone clock the schema
+  already carried — no migration. Merging is commutative and idempotent, pinned by a test that
+  replays a six-op set in all 720 arrival orders and asserts byte-identical state, then replays it
+  again and asserts nothing changed. Re-delivering an op no longer grows the log either.
+- **CI covers the in-tree Go tree.** 243 Go files across 37 packages (29 with tests) had no job at
+  all. A new `go` job runs build, vet, gofmt and `go test -race` via `scripts/go-gate.sh`, which
+  fails closed and asserts coverage counts so it cannot pass by checking nothing.
+- **`web/npm ci` was broken** — the lockfile pinned `@emnapi/wasi-threads@1.2.2` against a
+  `1.2.3` requirement in the `@tailwindcss/oxide-wasm32-wasi` bundle, which took down every JS job
+  including the e2e preflight. Lockfile regenerated (one transitive optional patch bump; no direct
+  dependency and no major version changed).
+- Documented `cargo build -p gitstate-sync …` in CONTRIBUTING and P2P-CONTEXTS could never have
+  worked: the crate is excluded from the workspace, so `-p` cannot address it. Both now show the
+  `--manifest-path` form the Makefile uses.
 - **The HLC receive rule.** Ingesting a remote op now folds its clock into the local one
   (`Hlc::observe`), so the next local edit sorts *after* the op it causally follows even when this
   machine's wall clock trails the peer's. Previously the local clock advanced only from its own last
