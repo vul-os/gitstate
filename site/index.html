@@ -6,11 +6,14 @@
 <title>gitstate — project state derived from your own git. Local-first, no cloud.</title>
 <meta name="description" content="gitstate is a local-first desktop app that derives project state, effort, contribution and classification straight from your git and forge — on your machine. Rust core, one SQLite file, no account, no server. Contexts and categories sync peer-to-peer over CRDT.">
 <meta name="theme-color" content="#0B1120">
+<meta name="color-scheme" content="dark">
 <link rel="icon" href="./assets/brand/favicon.svg">
 <meta property="og:type" content="website">
 <meta property="og:title" content="gitstate — project state derived from your own git">
 <meta property="og:description" content="Local-first. Rust core, one SQLite file, no account, no server. The git history is the ledger.">
-<meta property="og:image" content="./screenshots/dashboard.png">
+<!-- Absolute: link previewers resolve og:image against their own base, not this page's. -->
+<meta property="og:url" content="https://vulos.org/products/gitstate/">
+<meta property="og:image" content="https://vulos.org/products/gitstate/screenshots/dashboard.png">
 <meta name="twitter:card" content="summary_large_image">
 
 <style>
@@ -55,6 +58,10 @@ body{
 }
 img{max-width:100%;height:auto;display:block}
 a{color:inherit;text-decoration:none}
+:focus-visible{outline:2px solid var(--teal);outline-offset:3px;border-radius:4px}
+.skip{position:absolute;left:-9999px;top:8px;z-index:80;padding:10px 16px;border-radius:8px;
+  background:var(--surface);border:1px solid var(--teal);color:var(--text);font-size:14px}
+.skip:focus{left:16px}
 h1,h2,h3,h4{font-family:var(--display);font-weight:600;letter-spacing:-.03em;line-height:1.08;margin:0}
 p{margin:0}
 ::selection{background:rgba(45,212,191,.25);color:#fff}
@@ -76,6 +83,8 @@ body::after{
 }
 
 .wrap{max-width:var(--max);margin:0 auto;padding:0 24px}
+/* On a wide desktop the 1180px column strands the layout in empty margin. */
+@media (min-width:1560px){:root{--max:1300px}}
 .mono{font-family:var(--mono)}
 .teal{color:var(--teal)}
 
@@ -92,10 +101,13 @@ section{position:relative}
 .sec h2{font-size:clamp(30px,4.6vw,46px);max-width:20ch}
 .sec .lead{color:var(--muted);font-size:17.5px;max-width:62ch;margin-top:16px}
 
-/* ── Reveal on scroll ─────────────────────────────────────────────────────── */
-.rv{opacity:0;transform:translateY(18px);transition:opacity .7s cubic-bezier(.4,0,.2,1),transform .7s cubic-bezier(.4,0,.2,1)}
-.rv.in{opacity:1;transform:none}
-@media (prefers-reduced-motion:reduce){.rv{opacity:1;transform:none;transition:none}}
+/* ── Reveal on scroll ─────────────────────────────────────────────────────────
+   Scoped to .js: with scripting off nothing ever adds .in, and an unscoped
+   rule would leave the whole page invisible. */
+.js .rv{opacity:0;transform:translateY(18px);transition:opacity .7s cubic-bezier(.4,0,.2,1),transform .7s cubic-bezier(.4,0,.2,1)}
+.js .rv.in{opacity:1;transform:none}
+@media (prefers-reduced-motion:reduce){.js .rv{opacity:1;transform:none;transition:none}}
+.nojs-note{margin-top:18px;font-size:13.5px;color:var(--faint);border:1px dashed var(--border2);border-radius:10px;padding:12px 14px}
 
 /* ── Header ───────────────────────────────────────────────────────────────── */
 header.top{
@@ -163,7 +175,9 @@ nav.links a:hover{color:var(--text)}
 .hero .micro{margin-top:18px;font-family:var(--mono);font-size:12px;color:var(--faint)}
 
 /* git-DAG motif, drawn once on load */
-.dag{position:absolute;left:-40px;top:60px;bottom:0;width:190px;pointer-events:none;opacity:.55;
+/* Anchored just outside the content column rather than the viewport edge, so
+   on a wide screen it still reads as part of the hero. */
+.dag{position:absolute;left:max(-40px, calc(50% - var(--max)/2 - 168px));top:60px;bottom:0;width:190px;pointer-events:none;opacity:.55;
   mask-image:linear-gradient(to right,#000 30%,transparent 100%);
   -webkit-mask-image:linear-gradient(to right,#000 30%,transparent 100%);}
 @media (max-width:1280px){.dag{display:none}}
@@ -206,7 +220,12 @@ nav.links a:hover{color:var(--text)}
 .chip.t{background:rgba(45,212,191,.12);border:1px solid rgba(45,212,191,.28);color:var(--teal)}
 .chip.i{background:rgba(99,102,241,.13);border:1px solid rgba(99,102,241,.3);color:#a5b4fc}
 .chip.g{background:rgba(52,211,153,.11);border:1px solid rgba(52,211,153,.26);color:var(--ok)}
-@media (max-width:620px){.chip{display:none}}
+/* Once the hero stacks, the frame spans the column: the halo and the chips
+   that hang off its edges would push the page 2px wide. Pull them in. */
+@media (max-width:1100px){
+  .chip{display:none}
+  .hero-shot .halo{inset:-24px 0}
+}
 .float{animation:float 8s ease-in-out infinite}
 @keyframes float{0%,100%{transform:translateY(0)}50%{transform:translateY(-9px)}}
 @media (prefers-reduced-motion:reduce){.float{animation:none}}
@@ -354,8 +373,8 @@ nav.links a:hover{color:var(--text)}
 .arch figcaption{margin-top:18px;color:var(--muted);font-size:14px;text-align:center}
 .cols3{display:grid;grid-template-columns:repeat(3,1fr);gap:22px;margin-top:34px}
 @media (max-width:860px){.cols3{grid-template-columns:1fr}}
-.cols3 h4{font-family:var(--display);font-size:16.5px;margin-bottom:7px;display:flex;align-items:center;gap:9px}
-.cols3 h4::before{content:"";width:18px;height:1px;background:var(--teal);flex:none}
+.cols3 h3{font-family:var(--display);font-size:16.5px;margin-bottom:7px;display:flex;align-items:center;gap:9px}
+.cols3 h3::before{content:"";width:18px;height:1px;background:var(--teal);flex:none}
 .cols3 p{color:var(--muted);font-size:14.5px}
 
 /* ── Terminal ─────────────────────────────────────────────────────────────── */
@@ -427,8 +446,10 @@ footer.site .in nav{display:flex;gap:22px;flex-wrap:wrap}
 footer.site .in nav a{color:var(--muted);font-size:13.5px}
 footer.site .in nav a:hover{color:var(--text)}
 </style>
+<script>document.documentElement.className += ' js'</script>
 </head>
 <body>
+<a class="skip" href="#main">Skip to content</a>
 
 <!-- ══ HEADER ═══════════════════════════════════════════════════════════════ -->
 <header class="top">
@@ -464,7 +485,7 @@ footer.site .in nav a:hover{color:var(--text)}
   </div>
 </header>
 
-<main>
+<main id="main">
 
 <!-- ══ HERO ═════════════════════════════════════════════════════════════════ -->
 <section class="hero">
@@ -686,6 +707,8 @@ footer.site .in nav a:hover{color:var(--text)}
       <div class="card rv">
         <div class="hd"><b>Weights</b><button class="reset" id="reset-w" type="button">reset</button></div>
         <div class="sliders" id="sliders"><!-- built by script --></div>
+        <noscript><p class="nojs-note" style="margin:14px">The tuner needs JavaScript. The real one
+          lives in the app — this page only mirrors it.</p></noscript>
       </div>
 
       <div class="card rv">
@@ -722,12 +745,14 @@ footer.site .in nav a:hover{color:var(--text)}
       with pseudonymous contributors, never anyone's real history.</p>
 
     <div class="tabs" role="tablist" aria-label="Product screens" id="tabs"></div>
+    <noscript><p class="nojs-note">Switching screens needs JavaScript — every capture is also listed
+      in the <a href="./docs.html#screenshots" style="color:var(--teal)">screenshot gallery</a>.</p></noscript>
 
     <div class="gallery">
-      <div class="stage rv">
+      <div class="stage rv" id="shot-panel" role="tabpanel" tabindex="0" aria-labelledby="tab-dashboard">
         <div class="frame">
           <div class="chrome"><i></i><i></i><i></i><span class="addr" id="shot-addr">gitstate · dashboard</span></div>
-          <div class="scroller"><img id="shot-img" src="./screenshots/dashboard.png" alt="" width="2880" height="1800"></div>
+          <div class="scroller"><img id="shot-img" src="./screenshots/dashboard.png" alt="" width="2880" height="1800" loading="lazy"></div>
         </div>
         <p class="shotnote" id="shot-note"></p>
       </div>
@@ -810,19 +835,19 @@ footer.site .in nav a:hover{color:var(--text)}
 
     <div class="cols3">
       <div class="rv">
-        <h4>No central anything</h4>
+        <h3>No central anything</h3>
         <p>No hosted service, no org accounts, no billing cloud, no telemetry, no crash reporter.
           The daemon binds to loopback. Uninstalling is deleting a binary and a file.</p>
       </div>
       <div class="rv">
-        <h4>Signed data, not a service</h4>
+        <h3>Signed data, not a service</h3>
         <p>Peers agree on what <code style="font-family:var(--mono);font-size:12.5px">feature.api</code>
           means because the category tree ships as an ed25519-signed, versioned, content-addressed
           file — verified against a pinned key and <strong>failing closed</strong> to your local
           categories if the signature doesn't check out.</p>
       </div>
       <div class="rv">
-        <h4>Peer-to-peer, not pooled</h4>
+        <h3>Peer-to-peer, not pooled</h3>
         <p>Saved contexts and categories converge as CRDT operations — last-writer-wins scalars,
           add-wins sets, tombstoned deletes — merged machine to machine. Your commits, diffs and
           code never leave the box.</p>
@@ -1225,29 +1250,39 @@ gitstate state &lt;repo_id&gt;
   const addrEl = document.getElementById('shot-addr')
   const noteEl = document.getElementById('shot-note')
 
+  const panelEl = document.getElementById('shot-panel')
   tabsEl.innerHTML = SHOTS.map((s, i) => `
-    <button type="button" role="tab" id="tab-${s.id}" aria-controls="shot-img"
-            aria-selected="${i === 0}">${s.tab}</button>`).join('')
+    <button type="button" role="tab" id="tab-${s.id}" aria-controls="shot-panel"
+            aria-selected="${i === 0}" tabindex="${i === 0 ? 0 : -1}">${s.tab}</button>`).join('')
 
   function select(i) {
     const s = SHOTS[i]
     imgEl.src = `./screenshots/${s.id}.png`
+    panelEl.setAttribute('aria-labelledby', `tab-${s.id}`)
     imgEl.alt = s.alt
     titleEl.textContent = s.title
     descEl.textContent = s.desc
     addrEl.textContent = s.addr
     metaEl.innerHTML = s.meta.map(([k, v]) => `<span>${k}<b>${v}</b></span>`).join('')
     noteEl.textContent = 'Captured from the synthetic demo dataset — a fake org with pseudonymous contributors.'
-    tabsEl.querySelectorAll('button').forEach((b, j) => b.setAttribute('aria-selected', String(j === i)))
+    // Roving tabindex: the tab strip is one tab stop, arrows move within it.
+    tabsEl.querySelectorAll('button').forEach((b, j) => {
+      b.setAttribute('aria-selected', String(j === i))
+      b.tabIndex = j === i ? 0 : -1
+    })
   }
 
   tabsEl.querySelectorAll('button').forEach((b, i) => {
     b.addEventListener('click', () => select(i))
     b.addEventListener('keydown', (e) => {
-      const d = e.key === 'ArrowRight' ? 1 : e.key === 'ArrowLeft' ? -1 : 0
-      if (!d) return
+      const last = SHOTS.length - 1
+      const next =
+        e.key === 'ArrowRight' ? (i + 1) % SHOTS.length :
+        e.key === 'ArrowLeft' ? (i + last) % SHOTS.length :
+        e.key === 'Home' ? 0 :
+        e.key === 'End' ? last : -1
+      if (next < 0) return
       e.preventDefault()
-      const next = (i + d + SHOTS.length) % SHOTS.length
       tabsEl.querySelectorAll('button')[next].focus()
       select(next)
     })
