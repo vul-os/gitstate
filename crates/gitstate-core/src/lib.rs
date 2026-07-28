@@ -31,7 +31,8 @@ pub use domain::{
     WorkKind, WorkState,
 };
 pub use ids::{
-    now_rfc3339, now_wall_ms, CategoryId, ContextId, ContributorId, Hlc, PeerId, RepoId, WorkItemId,
+    now_rfc3339, now_wall_ms, CategoryId, ContextId, ContributorId, Hlc, PeerId, RepoId,
+    WorkItemId, HLC_SKEW_MS,
 };
 pub use taxonomy::{Taxonomy, TaxonomyCategory, DEFAULT_TAXONOMY_PUBKEY};
 pub use traits::{

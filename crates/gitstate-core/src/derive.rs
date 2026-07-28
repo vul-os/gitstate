@@ -3,7 +3,6 @@
 //! reproducible.
 
 use crate::domain::{Contributor, Dimensions, Weights};
-use crate::ids::ContributorId;
 
 /// Min-max normalize `raw` against its `cohort` into 0..=100. A cohort of one
 /// (or a flat cohort where every value is equal) maps to a neutral 50.0 — a
@@ -199,17 +198,10 @@ pub fn is_test_path(path: &str) -> bool {
         || file.ends_with("tests.cs")
 }
 
-/// Convenience: build a stable, order-independent `ContributorId` key list from
-/// a slice, so callers can index contributions deterministically.
-pub fn contributor_ids(rows: &[Contributor]) -> Vec<ContributorId> {
-    let mut ids: Vec<ContributorId> = rows.iter().map(|c| c.id.clone()).collect();
-    ids.sort_by(|a, b| a.0.cmp(&b.0));
-    ids
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ids::ContributorId;
 
     #[test]
     fn normalize_single_member_is_neutral() {

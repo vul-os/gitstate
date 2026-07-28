@@ -3,7 +3,7 @@
 //! Any path that reached here is not an `/api` route. If it maps to a real file
 //! under `web_dist`, serve it with a guessed content-type; otherwise serve
 //! `index.html` so client-side routing (BrowserRouter) works on deep links —
-//! the ofisi/slipscan-server pattern. Path traversal is refused. If no
+//! the diwan/slipscan-server pattern. Path traversal is refused. If no
 //! `web_dist` is configured (API-only mode), return 404.
 
 use std::path::{Component, Path, PathBuf};

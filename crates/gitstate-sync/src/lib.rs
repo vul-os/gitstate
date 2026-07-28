@@ -32,9 +32,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 
-use gitstate_core::{
-    Error, Hlc, MergeOutcome, PeerId, Result, Store, SyncEngine, SyncOp, SyncStatus,
-};
+use gitstate_core::{Hlc, MergeOutcome, PeerId, Result, Store, SyncEngine, SyncOp, SyncStatus};
 
 pub use crdt::{op_for_category, op_for_context};
 pub use ops::apply_op;
@@ -106,11 +104,4 @@ impl SyncEngine for CrdtSyncEngine {
             last_op_hlc: last,
         })
     }
-}
-
-/// Map a foreign error into the shared error type (kept local so the crate
-/// compiles standalone without pulling extra deps).
-#[allow(dead_code)]
-fn sync_err(msg: impl std::fmt::Display) -> Error {
-    Error::Storage(msg.to_string())
 }

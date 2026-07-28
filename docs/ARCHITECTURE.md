@@ -1,6 +1,6 @@
 # Architecture
 
-gitstate is a Rust Cargo workspace modeled on its vulos siblings (`slipscan`, `ofisi`): pure-domain
+gitstate is a Rust Cargo workspace modeled on its vulos siblings (`slipscan`, `diwan`): pure-domain
 crates in the middle, I/O crates at the edges, and **one daemon** that serves both the Tauri desktop
 shell and headless peers. This document is the living architecture contract — the normative interface
 spec (crate APIs, daemon routes, CRDT semantics, taxonomy format, SQLite schema) that the parallel

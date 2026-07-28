@@ -260,7 +260,7 @@ tokens): [docs/FORGE-SETUP.md](docs/FORGE-SETUP.md).
 
 ## Architecture
 
-A Rust Cargo workspace modeled on its sibling products (`slipscan`, `ofisi`): pure-domain crates in
+A Rust Cargo workspace modeled on its sibling products (`slipscan`, `diwan`): pure-domain crates in
 the middle, I/O crates at the edges, one daemon that serves both the desktop shell and headless peers.
 
 | Crate | Role |

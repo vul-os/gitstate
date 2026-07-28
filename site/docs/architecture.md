@@ -1,7 +1,7 @@
 # Architecture
 
 gitstate is a Rust **Cargo workspace** plus a Tauri desktop shell and a kept React frontend. It is
-modelled on its Vulos siblings (slipscan, ofisi): a pure domain core, thin integration crates, one
+modelled on its Vulos siblings (slipscan, diwan): a pure domain core, thin integration crates, one
 SQLite file, and a daemon that serves the same UI whether you run it headless or inside the desktop
 app.
 

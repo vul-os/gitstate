@@ -12,7 +12,7 @@ use gitstate_core::{
     ids::now_rfc3339, CatField, Category, CategorySource, Classification, Commit, Context,
     ContextPrRef, Contribution, Contributor, CtxField, DimensionRaw, Dimensions, EffortEstimate,
     EffortMethod, Error, Forge, Hlc, PeerId, ProjectState, Repo, Result, Store, SyncOp, WorkItem,
-    WorkKind, WorkState,
+    WorkKind, WorkState, HLC_SKEW_MS,
 };
 use gitstate_core::{CategoryId, ContextId, ContributorId, RepoId, WorkItemId};
 use rusqlite::{params, Connection, OptionalExtension};
@@ -642,6 +642,45 @@ fn append_ops(conn: &Connection, ops: &[SyncOp]) -> Result<()> {
             params![json, op.hlc().encode()],
         )
         .map_err(st)?;
+    }
+    observe_ops(conn, ops)
+}
+
+/// Fold every appended op's clock into the stored `hlc_last` — the HLC receive
+/// rule (see [`Hlc::observe`]). Every op reaching the log passes through here,
+/// so a remote op can no longer leave this node minting clocks *below* an op it
+/// has already seen; for a local op the fold is a no-op, since [`next_hlc`]
+/// already wrote that same reading.
+///
+/// A remote wall clock more than [`HLC_SKEW_MS`] ahead of ours is recorded but
+/// not folded: it is skew (or hostility), not time that has passed, and
+/// following it would strand this node's clock in the future for good. Ops are
+/// never dropped here — refusing to fold costs us the causal edge with that one
+/// peer; dropping would cost the data.
+fn observe_ops(conn: &Connection, ops: &[SyncOp]) -> Result<()> {
+    let ceiling = gitstate_core::now_wall_ms().saturating_add(HLC_SKEW_MS);
+    let Some(highest) = ops
+        .iter()
+        .map(|o| o.hlc())
+        .filter(|h| h.wall_ms <= ceiling)
+        .max()
+    else {
+        return Ok(());
+    };
+    // `hlc_last` is this node's own reading, so a fresh one is spelled with the
+    // local peer id — `observe` never adopts the remote's identity.
+    let mut last = match dec_hlc(kv_get_conn(conn, "hlc_last")?)? {
+        Some(h) => h,
+        None => Hlc {
+            wall_ms: 0,
+            counter: 0,
+            peer: get_or_create_peer(conn)?,
+        },
+    };
+    let before = last.clone();
+    last.observe(highest);
+    if last.wall_ms != before.wall_ms || last.counter != before.counter {
+        kv_set_conn(conn, "hlc_last", &last.encode())?;
     }
     Ok(())
 }
@@ -1325,6 +1364,67 @@ mod tests {
         del.deleted = true;
         s.upsert_context(&del).unwrap();
         assert_eq!(s.list_contexts().unwrap().len(), 0);
+    }
+
+    /// The HLC receive rule: ingesting a remote op folds its clock into the
+    /// local one, so the very next local edit sorts *after* the op it causally
+    /// follows even when this node's wall clock trails the peer's. Without the
+    /// fold the local edit mints a lower clock and LWW keeps the remote's older
+    /// write forever.
+    #[test]
+    fn local_clock_sorts_after_an_ingested_remote_op() {
+        let s = store();
+        // A peer whose wall clock runs ahead of ours (inside the skew bound).
+        let remote = Hlc {
+            wall_ms: gitstate_core::now_wall_ms() + 30_000,
+            counter: 7,
+            peer: PeerId::from("remote-peer"),
+        };
+        s.append_sync_ops(&[SyncOp::ContextLww {
+            id: ContextId::from("c1"),
+            field: CtxField::Name,
+            value: "from the peer".into(),
+            hlc: remote.clone(),
+        }])
+        .unwrap();
+
+        let conn = s.conn.lock().unwrap();
+        let local = next_hlc(&conn).unwrap();
+        drop(conn);
+        assert!(
+            local > remote,
+            "local clock {local:?} must sort after the observed remote {remote:?}"
+        );
+    }
+
+    /// The fold is bounded: a peer claiming a wall clock far in the future
+    /// cannot drag this node's clock along with it. The op is still recorded.
+    #[test]
+    fn a_wildly_skewed_remote_clock_is_not_folded_in() {
+        let s = store();
+        let absurd = Hlc {
+            wall_ms: gitstate_core::now_wall_ms() + 10 * HLC_SKEW_MS,
+            counter: 0,
+            peer: PeerId::from("skewed-peer"),
+        };
+        s.append_sync_ops(&[SyncOp::ContextDel {
+            id: ContextId::from("c1"),
+            hlc: absurd.clone(),
+        }])
+        .unwrap();
+        assert_eq!(
+            s.sync_ops_since(None).unwrap().len(),
+            1,
+            "op still recorded"
+        );
+
+        let conn = s.conn.lock().unwrap();
+        let local = next_hlc(&conn).unwrap();
+        drop(conn);
+        assert!(
+            local < absurd,
+            "local clock {local:?} must not have followed the skewed peer"
+        );
     }
 
     #[test]

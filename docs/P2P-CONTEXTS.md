@@ -37,7 +37,12 @@ anyone.
 
 Contexts and categories are conflict-free replicated data types so peers converge with no authority in
 the middle. Every operation carries a **hybrid logical clock** (`Hlc { wall_ms, counter, peer }`) with
-a total order (wall time, then counter, then peer id). The op log is the source of truth; the same ops
+a total order (wall time, then counter, then peer id). Peer ids are unique, so two nodes never tie and
+every replica picks the same winner from the same history — the same rule the shared DMTAP sync engine
+orders by (`wall, counter, author`). Ingesting an op also **folds its clock forward** into the local
+one, so the next local edit sorts after everything already seen even if this machine's wall clock runs
+behind the peer's; a clock more than ±120 s ahead of ours is recorded but not followed, so skew (or a
+hostile peer) cannot strand this node in the future. The op log is the source of truth; the same ops
 apply whether merged locally or from a remote peer.
 
 `SyncOp` (defined in `gitstate-core` so the store and the sync engine agree) covers:

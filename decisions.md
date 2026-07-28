@@ -63,7 +63,7 @@ workspace and lives behind an optional `sync-dmtap` feature (exactly as `slipsca
 at build time.
 
 **T10. Relicense to MIT OR Apache-2.0; drop the EE tier.** The suite standard is MIT OR Apache-2.0
-(every sibling — slipscan, ofisi, wede — matches). With no multi-tenant service, the open-core AGPL +
+(every sibling — slipscan, diwan, wede — matches). With no multi-tenant service, the open-core AGPL +
 commercial `ee/` split is obsolete. → Root carries `LICENSE-MIT` + `LICENSE-APACHE`; the AGPL
 `LICENSE` and `ee/` are removed (history preserved). → No build tags, no runtime license check.
 

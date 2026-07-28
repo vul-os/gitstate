@@ -10,7 +10,7 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased] — the transform to local-first
 
 gitstate is being rebuilt from a multi-tenant Go+Postgres+React SaaS into a **standalone, local-first,
-peer-to-peer desktop app** in the vulos suite style (`slipscan` / `ofisi` / `wede`). The product
+peer-to-peer desktop app** in the vulos suite style (`slipscan` / `diwan` / `wede`). The product
 essence is unchanged — *derive true project state, effort, contribution, and classification directly
 from git and your forge* — but the delivery flips: no multi-tenant server, no Postgres SaaS, no
 billing-collection cloud. It runs on your machine.
@@ -55,6 +55,15 @@ billing-collection cloud. It runs on your machine.
 - **Signed taxonomy** — a versioned, content-addressed, ed25519-signed category tree shipped as data,
   verified fail-closed against a pinned key.
 - New static marketing/docs `site/`, published at `vulos.org/products/gitstate`.
+
+### Fixed
+- **The HLC receive rule.** Ingesting a remote op now folds its clock into the local one
+  (`Hlc::observe`), so the next local edit sorts *after* the op it causally follows even when this
+  machine's wall clock trails the peer's. Previously the local clock advanced only from its own last
+  reading, so an edit made in reply to a peer's write could mint a *lower* clock and lose to it under
+  LWW forever. A remote clock more than `HLC_SKEW_MS` (±120 s, the bound the shared DMTAP engine
+  applies) ahead of ours is still recorded but not followed. The total order itself is unchanged —
+  `(wall_ms, counter, peer)`, the suite's rule — and is now pinned by a permutation test.
 
 ### Removed
 - SaaS deploy artifacts: `Dockerfile`, `docker-compose.yml`, `deploy/` (fly.toml + systemd unit), and

@@ -36,7 +36,7 @@ And one delivery flip that defines this rebuild: **it runs on your machine, not 
 ## Phase 0 — The transform ✅
 
 Turn the legacy Go+React+Postgres multi-tenant SaaS into a standalone local-first desktop app in the
-vulos suite style (`slipscan` / `ofisi` / `wede`).
+vulos suite style (`slipscan` / `diwan` / `wede`).
 
 - [x] Relicense **AGPL-3.0 → MIT OR Apache-2.0**; drop the `ee/` commercial Enterprise tier.
 - [x] Remove SaaS deploy artifacts (`Dockerfile`, `docker-compose.yml`, `deploy/`, `config.example.yaml`).

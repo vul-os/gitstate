@@ -74,7 +74,7 @@ both dropped in the transform; with nothing hosted, there is nothing to fence of
 
 ### Is it part of Vulos?
 
-Yes, but it's fully standalone — it never requires Vulos infrastructure. When siblings like Ofisi or
+Yes, but it's fully standalone — it never requires Vulos infrastructure. When siblings like Diwan or
 slip/scan are around, it can share contexts with them peer-to-peer. No hub, no coupling.
 
 ### Where's my data stored?
