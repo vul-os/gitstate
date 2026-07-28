@@ -67,7 +67,7 @@ both the git engine and tests can rely on them.
 ## The domain: what gitstate derives
 
 - **ProjectState** — head sha, open/merged/draft PRs, open/closed issues, in-progress/done, DORA
-  cycle-time p50/p90 (first-commit→merge), and change-failure rate. Derived, never entered.
+  cycle-time p50/p90 (PR opened → merged), and a change-failure proxy. Derived, never entered.
 - **Contribution** — six normalized dimensions per contributor × repo × window: **shipped, review,
   effort, quality, ownership, durability** — plus the pre-normalization `DimensionRaw` evidence, an
   `agent_pct`, and a composite displayed as texture (never a rank). Normalization is *within the repo

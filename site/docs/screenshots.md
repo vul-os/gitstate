@@ -8,6 +8,11 @@ They are captured against `gitstate seed --demo`: a deterministic synthetic data
 and pseudonymous contributors, never anyone's real git or forge history. Regenerate the whole set with
 `npm run shots` from `web/` (Playwright, 1440×900 at 2×, dark and light).
 
+Every shot is one app window at the same size — gitstate is a shell, not a document: the rail and the
+top bar stay put and only the content pane scrolls. Where the interesting half of a screen sits below
+the fold, there is a second capture with that pane scrolled, rather than one stretched page-height
+ribbon.
+
 ---
 
 ## Dashboard
@@ -32,18 +37,24 @@ or review gitstate already parsed. A column you can drag is a column that can li
 Delivery health, ownership risk, review coverage and quality proxies — with the proxies labelled as
 proxies. See [Analytics & health](analytics.md) for exactly how each one is derived.
 
+![Eng Health, scrolled: review coverage beside the quality-signals row — test-touch, average commit size, large-commit share and reverts](screenshots/eng-health-quality.png)
+
 ## Contribution
 
-![Contribution table showing six dimensions per contributor with a live weight tuner](screenshots/contribution.png)
+![Contribution: the live weight tuner over the six dimensions](screenshots/contribution.png)
 
 The six gaming-resistant dimensions across every repo, with the weights in your hands. Drag a slider
 and the table re-ranks — which is the point: any ordering is an artefact of the weights someone chose.
 
+![Contribution, scrolled: the six-dimension table per contributor with agent share](screenshots/contribution-table.png)
+
 ## Insights
 
-![Insights: ten headline stat cards, a year-long contribution heatmap and four trend charts](screenshots/insights.png)
+![Insights: ten headline stat cards and a year-long contribution heatmap](screenshots/insights.png)
 
 A year of delivery in one screen — volume, lines changed, cycle time and throughput, all derived.
+
+![Insights, scrolled: commit-volume, lines-added, cycle-time and throughput charts over the contributor table](screenshots/insights-trends.png)
 
 ## Involvement
 

@@ -53,7 +53,10 @@ export function AppShell() {
       >
         Skip to content
       </a>
-      <div className="flex min-h-screen bg-[var(--bg)]">
+      {/* A desktop app, not a document: the window itself never scrolls. The
+          rail and the top bar stay put and `main` is the only scroll container,
+          so the nav can't slide away under a long Insights page. */}
+      <div className="flex h-screen overflow-hidden bg-[var(--bg)]">
         {/* Desktop sidebar rail — hidden below lg, where the drawer takes over. */}
         <div className="hidden lg:flex">
           <Sidebar />

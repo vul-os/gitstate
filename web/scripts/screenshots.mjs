@@ -68,10 +68,10 @@ async function settle(page, { extra = 600 } = {}) {
 let captured = []
 let failed = []
 
-async function capture(page, name, { fullPage = false } = {}) {
+async function capture(page, name) {
   const file = resolve(OUT, `${name}.png`)
   try {
-    await page.screenshot({ path: file, fullPage })
+    await page.screenshot({ path: file })
     captured.push(name)
     console.log(`  ✓ ${name}.png`)
   } catch (err) {
@@ -81,11 +81,25 @@ async function capture(page, name, { fullPage = false } = {}) {
 }
 
 /**
+ * Scroll the app's content pane (not the window — the shell never scrolls).
+ *
+ * Used for the couple of screens whose second half is worth its own capture,
+ * so the long ones don't have to be shot as one enormous ribbon.
+ */
+async function scrollMain(page, top) {
+  await page.evaluate((y) => {
+    const main = document.querySelector('#main-content')
+    if (main) main.scrollTop = y
+  }, top)
+  await settle(page, { extra: 700 })
+}
+
+/**
  * Navigate to a route and capture. Waits for the charts to exist, not just the
  * heading — otherwise the shot lands mid-spinner while /api/analytics is still
  * in flight and the whole point of the capture is missing.
  */
-async function shoot(page, route, name, { fullPage = false, waitFor, prepare } = {}) {
+async function shoot(page, route, name, { scroll = 0, waitFor, prepare } = {}) {
   try {
     console.log(`→ ${route}  →  ${name}.png`)
     await page.goto(`${BASE_URL}${route}`, {
@@ -115,7 +129,8 @@ async function shoot(page, route, name, { fullPage = false, waitFor, prepare } =
       }
     }
     await settle(page, { extra: 1200 })
-    await capture(page, name, { fullPage })
+    if (scroll) await scrollMain(page, scroll)
+    await capture(page, name)
   } catch (err) {
     failed.push({ name, error: String(err?.message || err) })
     console.error(`  ✗ ${name} (nav) — ${err?.message || err}`)
@@ -155,11 +170,18 @@ async function prepareClassify(page) {
   await page.waitForSelector('text=/difficulty|Correct label/', { timeout: 20_000 })
 }
 
+// Every screen is captured at the same 1440x900 window, the way the app
+// actually looks — one consistent aspect ratio across the whole set rather
+// than a few page-height ribbons. Where the interesting half sits below the
+// fold, a second entry scrolls the content pane instead of stretching the shot.
 const PAGES = [
   { route: '/dashboard', name: 'dashboard', waitFor: CHART },
-  { route: '/insights', name: 'insights', waitFor: CHART, fullPage: true },
-  { route: '/contribution', name: 'contribution', fullPage: true },
-  { route: '/eng-health', name: 'eng-health', fullPage: true },
+  { route: '/insights', name: 'insights', waitFor: CHART },
+  { route: '/insights', name: 'insights-trends', waitFor: CHART, scroll: 980 },
+  { route: '/contribution', name: 'contribution' },
+  { route: '/contribution', name: 'contribution-table', scroll: 620 },
+  { route: '/eng-health', name: 'eng-health' },
+  { route: '/eng-health', name: 'eng-health-quality', scroll: 520 },
   { route: '/involvement', name: 'involvement' },
   { route: '/people', name: 'people' },
   { route: '/board', name: 'board' },
@@ -185,7 +207,7 @@ async function main() {
     const page = await ctx.newPage()
     for (const p of PAGES) {
       await shoot(page, p.route, p.name, {
-        fullPage: p.fullPage,
+        scroll: p.scroll,
         waitFor: p.waitFor,
         prepare: p.prepare,
       })
@@ -201,8 +223,8 @@ async function main() {
         await page.waitForURL(/\/repos\/.+/, { timeout: 15_000 })
         await page.waitForSelector(CHART, { state: 'visible', timeout: 20_000 })
         await settle(page, { extra: 1200 })
-        // Viewport, not fullPage: the work-item list runs to dozens of rows and
-        // a full-page capture is a thin unreadable ribbon in the README.
+        // Viewport only: the work-item list runs to dozens of rows, and a
+        // grown window would turn the shot into a thin unreadable ribbon.
         await capture(page, 'repo-detail')
       }
     } catch (err) {
@@ -217,7 +239,7 @@ async function main() {
     const ctx = await newContext(browser, 'light')
     const page = await ctx.newPage()
     await shoot(page, '/dashboard', 'dashboard-light', { waitFor: CHART })
-    await shoot(page, '/insights', 'insights-light', { waitFor: CHART, fullPage: true })
+    await shoot(page, '/insights', 'insights-light', { waitFor: CHART })
     await ctx.close()
   }
 

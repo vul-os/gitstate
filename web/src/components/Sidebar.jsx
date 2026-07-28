@@ -52,7 +52,9 @@ const NAV = [
  */
 export function Sidebar({ onNavigate, navLabel = 'Primary' }) {
   return (
-    <aside className="flex flex-col w-full lg:w-[216px] shrink-0 h-screen lg:sticky lg:top-0 border-r border-[var(--border)] bg-[var(--bg-surface)]">
+    // h-full, not h-screen + sticky: the shell is already exactly one viewport
+    // tall and never scrolls, so the rail simply fills it.
+    <aside className="flex flex-col w-full lg:w-[216px] shrink-0 h-full border-r border-[var(--border)] bg-[var(--bg-surface)]">
       {/* Logo */}
       <div className="flex items-center gap-2.5 px-4 h-14 border-b border-[var(--border)] shrink-0">
         <LogoMark size={28} />

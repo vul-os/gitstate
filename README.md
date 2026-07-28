@@ -161,7 +161,7 @@ flowchart TB
 </tr>
 </table>
 
-<sub>All shots are the real desktop app against a deterministic synthetic demo dataset (`gitstate seed --demo`) — a fake org, fake pseudonymous contributors, never real git/forge history. See <a href="docs/screenshots/">docs/screenshots/</a> for the full set (including <a href="docs/screenshots/dashboard.png">Dashboard</a>, <a href="docs/screenshots/involvement.png">Involvement</a>, <a href="docs/screenshots/people.png">People</a>, <a href="docs/screenshots/contexts.png">Contexts</a>, <a href="docs/screenshots/taxonomy.png">Taxonomy</a> and <a href="docs/screenshots/dashboard-light.png">light-mode</a> shots), and <code>web/scripts/screenshots.mjs</code> to regenerate them.</sub>
+<sub>All shots are the real desktop app against a deterministic synthetic demo dataset (`gitstate seed --demo`) — a fake org, fake pseudonymous contributors, never real git/forge history. Each one is a single 1440×900 app window: gitstate is a shell, not a document, so the rail and the top bar stay put and only the content pane scrolls (screens whose second half matters get their own scrolled capture, e.g. <a href="docs/screenshots/insights-trends.png">insights-trends</a>). See <a href="docs/screenshots/">docs/screenshots/</a> for all 20 (including <a href="docs/screenshots/dashboard.png">Dashboard</a>, <a href="docs/screenshots/involvement.png">Involvement</a>, <a href="docs/screenshots/people.png">People</a>, <a href="docs/screenshots/contexts.png">Contexts</a>, <a href="docs/screenshots/taxonomy.png">Taxonomy</a> and <a href="docs/screenshots/dashboard-light.png">light-mode</a>), and <code>web/scripts/screenshots.mjs</code> to regenerate them.</sub>
 
 ### Importing from Jira or Linear
 

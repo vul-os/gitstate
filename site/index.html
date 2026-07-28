@@ -298,8 +298,8 @@ nav.links a:hover{color:var(--text)}
   background:var(--grad);-webkit-background-clip:text;background-clip:text;color:transparent;font-variant-numeric:tabular-nums}
 .stat .l{font-family:var(--mono);font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--faint)}
 .stat .d{color:var(--muted);font-size:13.5px;margin-top:6px}
-.minibars{display:flex;align-items:flex-end;gap:6px;height:56px;margin-top:20px}
-.minibars b{flex:1;border-radius:3px 3px 0 0;background:linear-gradient(180deg,var(--teal),rgba(99,102,241,.35))}
+.minibars{display:flex;align-items:flex-end;gap:8px;height:64px;margin-top:22px}
+.minibars b{flex:1;max-width:22px;border-radius:3px 3px 0 0;background:linear-gradient(180deg,var(--teal),rgba(99,102,241,.35))}
 .minibars b:nth-child(even){background:linear-gradient(180deg,var(--indigo),rgba(45,212,191,.28))}
 
 /* ── Dimensions / weight tuner ────────────────────────────────────────────── */
@@ -639,8 +639,9 @@ footer.site .in nav a:hover{color:var(--text)}
         <img src="./screenshots/eng-health.png" loading="lazy" width="2880" height="2176"
              alt="Eng Health: cycle-time p50, change-failure rate, merge frequency and deploy-proxy cards, a bus-factor ownership panel, review coverage and quality signals.">
         <div class="cap"><b>DORA, without a survey</b>
-          <span>Cycle time p50/p90, change-failure rate from SZZ-linked reverts, merge frequency,
-          bus factor, review coverage and test-touch — measured from the ledger, not self-reported.</span></div>
+          <span>Cycle time p50/p90 measured from open to merge, a change-failure proxy, merge
+          frequency, bus factor, review coverage and test-touch — read off the ledger, not a survey,
+          with every proxy labelled as one.</span></div>
       </div>
       <div class="cell third stat rv">
         <span class="n">6</span><span class="l">dimensions</span>
@@ -1201,8 +1202,8 @@ gitstate state &lt;repo_id&gt;
       addr: 'gitstate · board', meta: [['columns', 'derived from state'], ['editing', 'deliberately absent']],
       alt: 'A four-column board — open, in progress, merged, done — where every card is a PR, issue or review derived from git.' },
     { id: 'eng-health', tab: 'Eng Health',
-      title: 'Eng Health', desc: 'Delivery health, ownership risk, review coverage and quality — the DORA four keys plus bus factor, computed from the ledger rather than a survey.',
-      addr: 'gitstate · eng-health', meta: [['cycle p50/p90', 'first commit → merge'], ['change failure', 'SZZ-linked reverts'], ['bus factor', 'ownership concentration']],
+      title: 'Eng Health', desc: 'Delivery health, ownership risk, review coverage and quality, computed from the ledger rather than a survey — and where git can only approximate (change failure, deploys) the card says so.',
+      addr: 'gitstate · eng-health', meta: [['cycle p50/p90', 'PR opened → merged'], ['change failure', 'revert/hotfix titles'], ['bus factor', 'ownership concentration']],
       alt: 'Eng Health screen: cycle time, change-failure rate, merge frequency and deploy-proxy cards over bus factor, review coverage and quality signals.' },
     { id: 'contribution', tab: 'Contribution',
       title: 'Contribution', desc: 'The six gaming-resistant dimensions across every repo, with the weight tuner in your hands — the table re-ranks live as you drag, because no single ordering is the answer.',
