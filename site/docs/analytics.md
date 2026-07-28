@@ -94,7 +94,7 @@ row, and agent identities are marked rather than blended in.
 `GET /api/contributions/rollup` accumulates each contributor's per-repo `Contribution` rows into one
 six-dimension line across every repo, using the stored weights for the composite.
 
-```
+```http
 GET  /api/weights          → the six weights (default 1.0 each)
 PUT  /api/weights          → validated + normalized to sum to 1, then persisted
 POST /api/weights/reset    → back to all 1.0

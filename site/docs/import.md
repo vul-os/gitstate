@@ -57,7 +57,7 @@ Use **Test connection** before importing; it exercises the credential without wr
 
 ## Importing
 
-```
+```http
 POST /api/import/preview   { "kind":"jira", "limit":50 }        → items, count (nothing written)
 POST /api/import/run       { "kind":"jira", "repo_id":"…" }     → { "imported": N }
 POST /api/import/file      { "repo_id":"…", "content":"…" }     → { "imported": N }

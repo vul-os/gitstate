@@ -53,17 +53,47 @@ nav.links a:hover{color:var(--text)}
 .ghost-link{display:inline-flex;align-items:center;gap:8px;padding:7px 13px;border-radius:999px;
   border:1px solid var(--border2);font-size:13px;color:var(--dim);transition:.18s}
 .ghost-link:hover{border-color:color-mix(in srgb,var(--teal) 55%,var(--border2));color:var(--text);background:var(--surface)}
+.vulos-badge{display:inline-flex;align-items:center;gap:8px;padding:6px 12px;border-radius:999px;
+  border:1px solid var(--border2);background:var(--surface);font-size:13px;color:var(--muted);
+  transition:border-color .18s,color .18s}
+.vulos-badge:hover{border-color:color-mix(in srgb,var(--teal) 55%,var(--border2));color:var(--text)}
+.vulos-badge img{width:18px;height:18px;border-radius:5px;padding:2px;background:var(--surface2);border:1px solid var(--border)}
+@media (max-width:1100px){.vulos-badge .hide-sm{display:none}}
+@media (max-width:640px){.vulos-badge{display:none}}
 @media (max-width:900px){nav.links{display:none}}
 @media (max-width:560px){.brand .tag{display:none}}
 
 /* ── Shell ────────────────────────────────────────────────────────────────── */
-.shell{display:grid;grid-template-columns:250px minmax(0,1fr) 208px;gap:40px;align-items:start;padding:34px 0 90px}
+.shell{display:grid;grid-template-columns:250px minmax(0,1fr) 208px;gap:40px;align-items:start;
+  padding-top:34px;padding-bottom:90px}
 @media (max-width:1180px){.shell{grid-template-columns:240px minmax(0,1fr);gap:32px}.toc{display:none}}
-@media (max-width:900px){.shell{grid-template-columns:1fr;gap:22px;padding-top:20px}}
+@media (max-width:900px){.shell{grid-template-columns:1fr;gap:22px;padding-top:16px}}
 
 /* Sidebar */
 .side{position:sticky;top:86px;max-height:calc(100vh - 110px);overflow:auto;padding-right:6px}
-@media (max-width:900px){.side{position:static;max-height:none}}
+@media (max-width:900px){
+  /* On a phone a 16-item list would push the article off the screen, so the
+     rail collapses to a disclosure that opens over the content. */
+  .side{position:sticky;top:64px;max-height:none;background:var(--bg);z-index:40;
+    padding:10px 0;border-bottom:1px solid var(--border)}
+  .side .search{margin-bottom:0}
+  .side nav{display:none;max-height:60vh;overflow:auto;margin-top:12px;
+    border:1px solid var(--border);border-radius:12px;background:var(--surface);padding:6px}
+  .side.open nav{display:block}
+  .side .group:first-child{padding-top:8px}
+  .nav-toggle{display:flex;align-items:center;justify-content:space-between;gap:10px;width:100%;
+    margin-top:10px;padding:10px 13px;border-radius:9px;background:var(--surface);
+    border:1px solid var(--border2);color:var(--text);font-family:var(--body);font-size:14.5px;cursor:pointer}
+  .nav-toggle svg{transition:transform .2s;color:var(--faint)}
+  .side.open .nav-toggle svg{transform:rotate(180deg)}
+}
+@media (min-width:901px){.nav-toggle{display:none}}
+/* On a phone the sticky rail should cost one row, not two: 16 grouped pages
+   are quicker to scan than they are to filter. */
+@media (max-width:600px){
+  .side .search{display:none}
+  .side .nav-toggle{margin-top:0}
+}
 .side .search{position:relative;margin-bottom:16px}
 .side .search input{width:100%;padding:9px 12px 9px 32px;border-radius:9px;background:var(--surface);
   border:1px solid var(--border2);color:var(--text);font-family:var(--body);font-size:14px;outline:none}
@@ -112,6 +142,18 @@ main{min-width:0}
   padding:1.5px 6px;border-radius:5px;color:var(--text)}
 .md pre{position:relative;background:#070C16;border:1px solid var(--border2);border-radius:11px;padding:16px 18px;overflow:auto;margin:1.2em 0}
 .md pre code{background:none;border:none;padding:0;font-size:13px;line-height:1.8;color:var(--dim)}
+/* Syntax colours: the app's own accents, kept low-contrast enough that a code
+   block still reads as one block rather than a fruit salad. */
+.tok-com{color:#5b6b84;font-style:italic}
+.tok-str{color:#5eead4}
+.tok-num{color:#fbbf24}
+.tok-key{color:#a5b4fc}
+.tok-typ{color:#7dd3fc}
+.tok-fn{color:#e2e8f0}
+.tok-pun{color:#8593a8}
+.tok-cmd{color:var(--teal)}
+.tok-flag{color:#a5b4fc}
+.tok-var{color:#fbbf24}
 .md pre .copy{position:absolute;top:9px;right:9px;font-family:var(--mono);font-size:10.5px;color:var(--faint);
   background:var(--surface2);border:1px solid var(--border2);border-radius:5px;padding:3px 8px;cursor:pointer;
   opacity:0;transition:opacity .15s,color .15s}
@@ -153,7 +195,6 @@ footer.site nav a{color:var(--muted);font-size:13.5px}
 footer.site nav a:hover{color:var(--text)}
 </style>
 <script src="./assets/vendor/marked.umd.js"></script>
-<script src="./assets/vendor/mermaid.min.js"></script>
 </head>
 <body>
 
@@ -185,6 +226,9 @@ footer.site nav a:hover{color:var(--text)}
       <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"/></svg>
       GitHub
     </a>
+    <a class="vulos-badge" href="https://vulos.org" target="_blank" rel="noopener" title="Part of Vulos — open, self-hostable apps">
+      <img src="./assets/vulos-logo.png" alt="" aria-hidden="true"><span class="hide-sm">Part of</span> Vulos
+    </a>
   </div>
 </header>
 
@@ -195,6 +239,10 @@ footer.site nav a:hover{color:var(--text)}
       <input id="filter" type="search" placeholder="Filter pages" aria-label="Filter documentation pages" autocomplete="off">
       <kbd>/</kbd>
     </div>
+    <button class="nav-toggle" id="nav-toggle" type="button" aria-expanded="false" aria-controls="nav">
+      <span>All pages</span>
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+    </button>
     <nav id="nav" aria-label="Documentation"></nav>
     <p class="empty" id="nav-empty" hidden>No page matches that.</p>
   </aside>
@@ -271,9 +319,20 @@ navEl.innerHTML = GROUPS.map((g) => `
   <div class="group">${g.label}</div>
   ${g.docs.map((d) => `<a data-slug="${d.slug}" href="#${d.slug}">${d.title}</a>`).join('')}`).join('')
 
-let mermaidReady = false
-try {
-  mermaid.initialize({
+/* Mermaid is 3.5 MB and two of sixteen pages use it, so it is fetched on
+   demand rather than on every page load. The markdown keeps its ```mermaid
+   fences either way — GitHub renders those natively. */
+let mermaidPromise = null
+function loadMermaid() {
+  if (mermaidPromise) return mermaidPromise
+  mermaidPromise = new Promise((ok, fail) => {
+    const el = document.createElement('script')
+    el.src = './assets/vendor/mermaid.min.js'
+    el.onload = () => ok(window.mermaid)
+    el.onerror = () => fail(new Error('mermaid failed to load'))
+    document.head.appendChild(el)
+  }).then((m) => {
+    m.initialize({
     startOnLoad: false, theme: 'base', securityLevel: 'loose',
     themeVariables: {
       fontFamily: "'JetBrains Mono', ui-monospace, monospace",
@@ -282,28 +341,125 @@ try {
       clusterBorder: '#22334e', clusterBkg: 'rgba(45,212,191,0.03)', secondaryColor: '#172032',
       tertiaryColor: '#101827', textColor: '#cbd5e1',
     },
+    })
+    return m
   })
-  mermaidReady = true
-} catch { /* diagrams degrade to code blocks */ }
+  return mermaidPromise
+}
 
 if (window.marked?.setOptions) marked.setOptions({ gfm: true, breaks: false })
 
 const slugify = (s) => s.toLowerCase().trim().replace(/[^\w\s-]/g, '').replace(/\s+/g, '-')
+
+/* ── Syntax highlighting ──────────────────────────────────────────────────────
+   A ~60-line tokenizer rather than a highlighting library: these pages only use
+   five languages, and the page already refuses to fetch anything external, so
+   another 100 KB of vendored JS would be a poor trade.
+
+   One pass per language, ordered so that comments and strings win over
+   everything inside them. */
+const ESC = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+
+const RULES = {
+  bash: [
+    [/#[^\n]*/g, 'com'],
+    [/'[^'\n]*'|"[^"\n]*"/g, 'str'],
+    [/\$\{?\w+\}?/g, 'var'],
+    [/(^|\n)\s*\$ /g, 'cmd'],
+    [/(^|[\s([{|])(--?[A-Za-z][\w-]*)/g, 'flag', 2],
+    [/<[a-zA-Z][\w|.\-]*>/g, 'var'],
+    [/\b(cd|export|cargo|npm|git|gitstate|curl|node|sudo|echo|rm|mkdir|source)\b(?![.\w])/g, 'key'],
+  ],
+  json: [
+    [/\/\/[^\n]*/g, 'com'],
+    [/"(?:[^"\\\n]|\\.)*"(?=\s*:)/g, 'typ'],
+    [/"(?:[^"\\\n]|\\.)*"/g, 'str'],
+    [/\b-?\d+(?:\.\d+)?\b/g, 'num'],
+    [/\b(true|false|null)\b/g, 'key'],
+  ],
+  rust: [
+    [/\/\/[^\n]*/g, 'com'],
+    [/"(?:[^"\\\n]|\\.)*"/g, 'str'],
+    [/\b(fn|let|mut|pub|struct|enum|impl|trait|use|mod|match|if|else|for|while|return|async|await|const|type|where|dyn|self|Self|crate)\b/g, 'key'],
+    [/\b([A-Z][A-Za-z0-9_]*)\b/g, 'typ'],
+    [/\b-?\d+(?:\.\d+)?\b/g, 'num'],
+  ],
+  js: [
+    [/\/\/[^\n]*/g, 'com'],
+    [/'[^'\n]*'|"[^"\n]*"|`[^`]*`/g, 'str'],
+    [/\b(const|let|var|function|return|if|else|for|while|import|export|from|await|async|new|class|try|catch|typeof)\b/g, 'key'],
+    [/\b-?\d+(?:\.\d+)?\b/g, 'num'],
+  ],
+  http: [
+    [/#[^\n]*/g, 'com'],
+    [/^(GET|POST|PUT|PATCH|DELETE)\b/gm, 'cmd'],
+    [/\{[a-z_]+\}/g, 'var'],
+    [/\b\d{3}\b/g, 'num'],
+  ],
+}
+RULES.jsonc = RULES.json
+RULES.sh = RULES.shell = RULES.console = RULES.bash
+RULES.jsx = RULES.mjs = RULES.js
+RULES.rs = RULES.rust
+RULES.toml = RULES.bash
+
+/** Apply the rules without ever tokenizing inside an earlier match. */
+function highlight(src, lang) {
+  const rules = RULES[lang]
+  if (!rules) return ESC(src)
+  const marks = [] // {start, end, cls}
+  const taken = (a, b) => marks.some((m) => a < m.end && b > m.start)
+  for (const [re, cls, group] of rules) {
+    re.lastIndex = 0
+    let m
+    while ((m = re.exec(src))) {
+      const text = group ? m[group] : m[0]
+      if (!text) continue
+      const start = m.index + (group ? m[0].indexOf(text) : 0)
+      const end = start + text.length
+      if (!taken(start, end)) marks.push({ start, end, cls })
+      if (re.lastIndex === m.index) re.lastIndex++
+    }
+  }
+  marks.sort((a, b) => a.start - b.start)
+  let out = ''
+  let at = 0
+  for (const mk of marks) {
+    if (mk.start < at) continue
+    out += ESC(src.slice(at, mk.start)) + `<span class="tok-${mk.cls}">${ESC(src.slice(mk.start, mk.end))}</span>`
+    at = mk.end
+  }
+  return out + ESC(src.slice(at))
+}
+
+function highlightAll() {
+  contentEl.querySelectorAll('pre code').forEach((code) => {
+    const lang = [...code.classList].find((c) => c.startsWith('language-'))?.slice(9)
+    if (!lang || lang === 'mermaid' || !RULES[lang]) return
+    code.innerHTML = highlight(code.textContent, lang)
+  })
+}
 
 function setActive(slug) {
   navEl.querySelectorAll('a').forEach((a) => a.classList.toggle('active', a.dataset.slug === slug))
 }
 
 async function renderMermaid() {
-  if (!mermaidReady) return
-  contentEl.querySelectorAll('code.language-mermaid').forEach((code) => {
+  const blocks = contentEl.querySelectorAll('code.language-mermaid')
+  if (!blocks.length) return
+  blocks.forEach((code) => {
     const div = document.createElement('div')
     div.className = 'mermaid'
     div.textContent = code.textContent
     code.closest('pre').replaceWith(div)
   })
   const nodes = contentEl.querySelectorAll('.mermaid')
-  if (nodes.length) { try { await mermaid.run({ nodes }) } catch (e) { console.warn('mermaid', e) } }
+  try {
+    const m = await loadMermaid()
+    await m.run({ nodes })
+  } catch (e) {
+    console.warn('mermaid', e)
+  }
 }
 
 function buildToc() {
@@ -407,6 +563,7 @@ async function load(slug) {
     contentEl.querySelectorAll('a[href^="http"]').forEach((a) => { a.target = '_blank'; a.rel = 'noopener' })
 
     await renderMermaid()
+    highlightAll()
     addAnchors()
     addCopyButtons()
     buildToc()
@@ -445,6 +602,20 @@ addEventListener('keydown', (e) => {
     e.preventDefault()
     filterEl.focus()
     filterEl.select()
+  }
+})
+
+/* Mobile: the rail is a disclosure. Picking a page closes it again. */
+const sideEl = document.querySelector('.side')
+const toggleEl = document.getElementById('nav-toggle')
+toggleEl.addEventListener('click', () => {
+  const open = sideEl.classList.toggle('open')
+  toggleEl.setAttribute('aria-expanded', String(open))
+})
+navEl.addEventListener('click', (e) => {
+  if (e.target.closest('a')) {
+    sideEl.classList.remove('open')
+    toggleEl.setAttribute('aria-expanded', 'false')
   }
 })
 

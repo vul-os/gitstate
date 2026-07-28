@@ -3,7 +3,7 @@
 The `gitstate` binary wires the same state the daemon uses. Machine-readable output is available with
 `--json` where applicable.
 
-```
+```bash
 gitstate <command>
 ```
 
@@ -20,7 +20,7 @@ gitstate <command>
 
 Start the daemon — the headless always-on peer that serves the web UI and JSON API.
 
-```
+```bash
 gitstate serve [--addr <ip>] [--port <n>] [--web-dist <path>]
 ```
 
@@ -38,7 +38,7 @@ Populate a database with the deterministic synthetic demo dataset — a fake org
 people, never real git or forge history. It is the fastest way to see every screen with data, and it
 is what the [screenshots](screenshots.md) are captured against.
 
-```
+```bash
 gitstate seed --demo [--db <file>]
 ```
 
@@ -50,7 +50,7 @@ By default it writes the same `gitstate.db` that `gitstate serve` opens, so
 
 ## repo
 
-```
+```bash
 gitstate repo add <path|remote_url>     # register a repo
 gitstate repo list                      # table of repos (--json)
 gitstate repo rm <id>
@@ -65,7 +65,7 @@ A local-path repo added without a remote is a `Local` forge and never touches th
 
 ## state
 
-```
+```bash
 gitstate state <repo_id> [--json]
 ```
 
@@ -85,7 +85,7 @@ change fail  0.2
 
 ## contributions / contributors
 
-```
+```bash
 gitstate contributions <repo_id> [--from <rfc3339>] [--to <rfc3339>] [--json]
     --weights shipped=..,review=..,effort=..,quality=..,ownership=..,durability=..
 
@@ -107,7 +107,7 @@ Refactor Agent [agent]             49     89     87     69     25     32    58.5
 
 ## classify / effort
 
-```
+```bash
 gitstate classify <repo_id> [--items <ref,ref>] [--json]   # default: all uncategorized
 gitstate effort   <repo_id> [--items <ref,ref>] [--json]
 ```
@@ -118,7 +118,7 @@ See [Classification & effort](classification.md).
 
 ## context
 
-```
+```bash
 gitstate context list
 gitstate context show <id>
 gitstate context create --name <n> [--desc <d>] [--repo <id>…] [--pr <slug#num>…] [--tag <t>…] [--notes <s>]
@@ -134,7 +134,7 @@ See [Contexts & P2P sync](contexts-sync.md).
 
 ## category / taxonomy
 
-```
+```bash
 gitstate category list
 gitstate category add --key <k> --label <l> [--parent <k>] [--color <#hex>]
 gitstate category rm <id>
@@ -149,7 +149,7 @@ See [Signed taxonomy](taxonomy.md).
 
 ## sync / data
 
-```
+```bash
 gitstate sync status
 gitstate sync publish [--since <hlc>]             # only meaningful with --features sync-dmtap
 gitstate data path                                # print resolved data dir + db path

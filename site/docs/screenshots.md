@@ -120,7 +120,7 @@ pipeline shoots both themes, so neither one quietly rots.
 `gitstate serve` is an always-on peer for servers and scripts — the same API the desktop app talks to,
 no window required.
 
-```
+```bash
 $ gitstate state 5d6fe96b
 repo         5d6fe96b-8686-9274-0165-97fbab4325e4
 head         d42d4868a7691cfdbfbfdb0f32664f85c5a066ad
