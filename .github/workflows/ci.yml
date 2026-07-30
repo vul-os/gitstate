@@ -117,6 +117,9 @@ jobs:
       # Ephor is a future convenience for NAT traversal and must never be a
       # prerequisite. Assert it appears in no build file and no source file — not
       # as a dependency, not as a default endpoint, not as a fallback.
+      #
+      # no-broker-dep:allow-file this workflow names the broker in order to assert its
+      # absence; the grep pattern below cannot do its job without spelling the name.
       - name: Assert no Ephor dependency anywhere
         run: |
           hits=$(grep -rniE '\bephor\b' --include='*.rs' --include='*.toml' \
