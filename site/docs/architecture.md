@@ -47,7 +47,7 @@ flowchart TD
 | **gitstate-store** | rusqlite persistence for repos, caches, contexts, categories, and the CRDT op log. |
 | **gitstate-daemon** | axum server — serves `web/dist` with SPA fallback and the JSON API. This is the headless always-on peer. |
 | **gitstate-cli** | clap CLI (`gitstate`), wiring the same state the daemon uses. |
-| **gitstate-sync** | P2P CRDT sync — **excluded from the default workspace** behind an optional `sync-dmtap` feature, so a bare `cargo build` never pulls P2P dependencies. |
+| **gitstate-sync** | P2P replication of contexts + categories: the merge algebra, individually-signed ops, single-use request authentication, and the HTTP peer transport to an operator-supplied URL. Compiled in unconditionally; inert until a peer is enrolled by hand. |
 
 ---
 

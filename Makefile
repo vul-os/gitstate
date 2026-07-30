@@ -16,13 +16,12 @@
 #   make desktop        — build the Tauri app (bundles web/ + the daemon)
 
 .PHONY: help dev dev-api dev-web build build-web build-cli run serve \
-        test lint fmt fmt-check clippy sync sync-dmtap desktop desktop-dev clean
+        test lint fmt fmt-check clippy offline-check desktop desktop-dev clean
 
 # ─── Config ──────────────────────────────────────────────────────────────────
 
 WEB      := web
 DESKTOP  := apps/desktop
-SYNC_MANIFEST := crates/gitstate-sync/Cargo.toml
 
 help: ## Show this help.
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
@@ -57,7 +56,7 @@ serve: ## Run the headless daemon (release) serving web/dist + the API.
 
 # ─── quality ─────────────────────────────────────────────────────────────────
 
-test: ## Run the workspace test suite (sync crate is excluded — see `make sync`).
+test: ## Run the whole workspace suite, including sync convergence + engine parity.
 	cargo test --workspace
 
 lint: clippy ## Alias for clippy.
@@ -70,13 +69,24 @@ fmt: ## Format all Rust code.
 fmt-check: ## Check formatting without writing.
 	cargo fmt --all --check
 
-# ─── excluded sync crate (optional P2P) ──────────────────────────────────────
+# ─── build invariants ────────────────────────────────────────────────────────
+#
+# gitstate-sync used to be excluded from the workspace behind a `sync-dmtap`
+# feature, so it needed its own targets here. It no longer is: the shared merge
+# engine comes from crates.io (`kotva-sync`, dev-only) instead of a git dependency
+# on the envoir *product*, so `make build` and `make test` cover it.
+#
+# What still needs asserting is the invariant that replaced the exclusion.
 
-sync: ## Build the excluded CRDT sync crate standalone (local-only, offline).
-	cargo build --manifest-path $(SYNC_MANIFEST)
-
-sync-dmtap: ## Build the sync crate with the DMTAP transport (fetches envoir).
-	cargo build --manifest-path $(SYNC_MANIFEST) --features sync-dmtap
+offline-check: ## Assert a bare build needs no network and no other product's repo.
+	cargo build --workspace --locked --offline
+	@if grep -q 'source = "git' Cargo.lock; then \
+	  echo "FAIL: Cargo.lock has a git source — gitstate must depend on the substrate,"; \
+	  echo "      published to crates.io, never on another product's repository:"; \
+	  grep -n 'source = "git' Cargo.lock; \
+	  exit 1; \
+	fi
+	@echo "ok: offline --locked build succeeds and Cargo.lock has no git sources"
 
 # ─── desktop (Tauri) ─────────────────────────────────────────────────────────
 

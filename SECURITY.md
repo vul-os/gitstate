@@ -33,9 +33,18 @@ the residual hardening checklist live in [docs/security.md](docs/security.md). I
   taxonomy-sourced categories and falls back to local-only categories — it never silently trusts an
   unverified taxonomy.
 
-- **P2P is opt-in and content-blind by design.** CRDT sync of contexts/categories is a separate,
-  excluded crate behind the `sync-dmtap` feature; it carries only context/category ops over a signed
-  transport, with no central hub.
+- **P2P is content-blind, hub-less, and reaches nobody until you say so.** CRDT sync carries only
+  context/category ops. There is no discovery: a peer exists because an operator typed its URL and its
+  ed25519 public key, and an empty peer list means this node replicates with nobody. Every op is
+  individually signed and verified on its own — a relayed change is not trusted for having arrived over
+  an authenticated connection — and each request carries a single-use signed token. Every
+  authentication failure is one `401` with no detail. See
+  [docs/P2P-CONTEXTS.md](docs/P2P-CONTEXTS.md#authentication).
+
+- **A node exposed on the internet fails closed at startup.** The daemon refuses to bind a
+  non-loopback address while the management API has no authentication, rather than serving it and
+  hoping. See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md). gitstate does not terminate TLS; that is
+  documented rather than implied.
 
 ## Scope note
 

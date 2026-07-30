@@ -56,18 +56,47 @@ sequenceDiagram
 
 ---
 
-## Transport is optional
+## Transport: HTTP to an address you typed
 
-The op log lives in SQLite regardless. **Actual peer-to-peer transport is an optional feature**
-(`sync-dmtap`) provided by the excluded `gitstate-sync` crate — a bare `cargo build` never pulls the
-P2P dependencies. When it isn't built:
+The peer transport is compiled in — there is **no build feature to enable** — and it is inert until an
+operator enrols a peer. There is no discovery of any kind: no directory, no default endpoint, no seed
+list, no mDNS, and no rendezvous or hole-punching broker in any path, default or fallback. An empty
+peer list means this node replicates with nobody, which is correct for a fresh install rather than
+degraded.
 
-- `GET /api/sync/status` returns `{ "enabled": false, … }`.
-- `POST /api/sync/publish` returns `404` with `{ "code":"sync_disabled" }`.
+```bash
+gitstate sync identity                       # on each node; hand the pair over out of band
+gitstate sync peer add --id <id> --url https://gitstate.example.org --key <hex>
+gitstate sync run                            # push, then pull
+```
 
-Everything else — creating, editing, exporting, importing contexts and categories — works fully
-offline. Sync is how two of *your* devices (or a trusted peer) converge; it is never required to use
-the app.
+A node with no routable address cannot be *dialled* — that is IP, not a missing feature — but both
+directions of a round travel over the connection the caller opens, so a laptop behind NAT converges
+fully with a node that has an address. Giving one side an address is what
+[Deployment](deployment.md) is for.
+
+### What authenticates what
+
+- Every op carries its **author's own ed25519 signature** and is verified on its own. Ops are relayed,
+  so a node re-exports changes it did not write; the original signature travels with the op rather than
+  being replaced hop by hop, so a three-node topology does not require trusting the middle node.
+- Admission is the **enrolled key**, not a valid signature. A stranger's own valid signature is refused.
+- An op is refused if its clock's tiebreak identity is not the enrolled id of the key that signed it,
+  or if its clock is more than 120 s in the future.
+- Each request carries a **single-use** signed token over the method, path and timestamp; the responder
+  signs the response body so the caller can confirm which node answered.
+- Every failure is one `401` with no detail.
+
+`GET /api/sync/status` always answers. Everything else — creating, editing, exporting, importing
+contexts and categories — works fully offline; replication is how two of *your* nodes converge and is
+never required to use the app.
+
+### What it does not give you
+
+The transport authenticates both ends and every op over plain HTTP, but does **not encrypt**. On an
+`http://` peer URL your context names, notes and tags are readable in flight. gitstate does not
+terminate TLS; put a reverse proxy in front of a node reachable over the internet — see
+[Deployment](deployment.md).
 
 ---
 

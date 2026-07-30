@@ -13,18 +13,58 @@ use crate::serve_static;
 use crate::state::AppState;
 
 pub fn build_router(state: AppState) -> Router {
-    let api = Router::new()
+    // The management API: everything an operator drives. Gated by
+    // `require_admin`, which is a no-op on a loopback bind and a bearer check on
+    // an exposed one (see `state::AdminAuth`).
+    let admin_api = Router::new()
         .merge(routes::meta_routes())
         .merge(routes::repo_routes())
         .merge(routes::context_routes())
         .merge(routes::category_routes())
         .merge(routes::classify_routes())
         .merge(routes::health_routes())
-        .merge(routes::tracker_routes());
+        .merge(routes::tracker_routes())
+        .merge(routes::sync_admin_routes())
+        .route_layer(middleware::from_fn_with_state(state.clone(), require_admin));
 
-    api.fallback(serve_static::static_handler)
+    // The peer API. NOT under `require_admin`: it carries its own, stronger
+    // authentication (a per-request signed token from an enrolled peer, plus a
+    // signature on every individual op), and a peer has no reason to hold the
+    // operator's admin token. Keeping the two gates separate is what lets a
+    // cloud node be dialled by peers while its management surface stays shut.
+    let peer_api = routes::sync_peer_routes();
+
+    admin_api
+        .merge(peer_api)
+        .merge(routes::public_routes())
+        .fallback(serve_static::static_handler)
         .with_state(state)
         .layer(middleware::from_fn(cors_localhost))
+}
+
+/// The management-API gate. Refuses with 401 and no detail when the configured
+/// posture is a token and the request does not carry it.
+async fn require_admin(
+    axum::extract::State(state): axum::extract::State<AppState>,
+    req: Request,
+    next: Next,
+) -> Response {
+    let presented = req
+        .headers()
+        .get(header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok());
+    if state.admin_ok(presented) {
+        return next.run(req).await;
+    }
+    let mut resp = Response::new(axum::body::Body::from(
+        r#"{"error":"unauthenticated","code":"unauthenticated"}"#,
+    ));
+    *resp.status_mut() = StatusCode::UNAUTHORIZED;
+    resp.headers_mut().insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("application/json"),
+    );
+    resp
 }
 
 /// Permissive CORS for localhost/loopback and the Tauri webview origin only.

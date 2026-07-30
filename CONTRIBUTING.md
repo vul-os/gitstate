@@ -36,7 +36,7 @@ crates/
   gitstate-store      rusqlite persistence (contexts, categories, caches, CRDT op log)
   gitstate-daemon     axum: serves web/dist + the JSON API (the headless peer)
   gitstate-cli        clap CLI (bin: gitstate)
-  gitstate-sync       P2P CRDT sync — EXCLUDED from the workspace, feature `sync-dmtap`
+  gitstate-sync       P2P replication: merge algebra, signed ops, HTTP peer transport
 apps/desktop          Tauri shell; frontendDist -> ../../web/dist
 web/                  React + Vite UI, repointed at the daemon JSON API
 docs/                 architecture, getting-started, classification, p2p, forge, migration notes
@@ -50,9 +50,9 @@ migrations/           KEPT legacy Go Postgres migrations (Rust migrations live i
   (`ForgeClient`, `Classifier`, `Store`, `SyncEngine`). Integration crates and the web client treat
   it as a read-only interface; don't diverge field names or shapes — extend by following the nearest
   existing pattern and note the addition.
-- **Keep the local build network-free.** `cargo build --workspace` must not pull P2P/sync deps —
-  `gitstate-sync` is excluded and behind the `sync-dmtap` feature. A local repo scan must make zero
-  network calls.
+- **Keep the local build network-free and product-free.** A local repo scan must make zero network
+  calls, and `Cargo.lock` must contain no `git` sources — gitstate depends on the *substrate*
+  (`kotva-sync` from crates.io, dev-only), never on another product's repository.
 - **One API surface.** The daemon serves both the desktop shell and headless mode. No domain logic
   crosses the Tauri IPC boundary — data flows over HTTP to the daemon in both modes. All web calls go
   through `web/src/lib/api.js`; no component calls `fetch` directly.
@@ -74,11 +74,8 @@ invent a number, or would move a user's code/data off their machine, open an iss
 ## Building &amp; testing
 
 ```bash
-cargo build --workspace          # must NOT pull the sync/P2P stack
-# The sync crate is EXCLUDED from the workspace, so `-p` cannot reach it —
-# it is addressed by manifest path (this is what `make sync-dmtap` runs):
-cargo build --manifest-path crates/gitstate-sync/Cargo.toml --features sync-dmtap
-cargo test --workspace
+cargo build --workspace --locked --offline   # must succeed with no network at all
+cargo test --workspace                      # includes gitstate-sync's convergence + parity suites
 cargo fmt --all && cargo clippy --workspace
 
 cd web && npm run build          # the daemon serves the built dist/

@@ -19,6 +19,11 @@ fn state() -> AppState {
         taxonomy: Arc::new(gitstate_core::Taxonomy::default_taxonomy()),
         sync: None,
         web_dist: None,
+        // Loopback posture: no management gate, matching what these tests drive.
+        // The exposed-bind posture has its own tests in `gitstate_daemon::state`
+        // and in tests/sync_peers.rs.
+        admin_auth: gitstate_daemon::AdminAuth::LocalOnly,
+        replay_guard: Arc::new(gitstate_sync::auth::ReplayGuard::new()),
     }
 }
 

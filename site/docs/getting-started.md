@@ -33,9 +33,9 @@ cd gitstate
 cargo build --workspace
 ```
 
-That builds the core, the CLI and the daemon. A bare `cargo build` never pulls the P2P stack —
-`gitstate-sync` is excluded from the default workspace and lives behind the optional `sync-dmtap`
-feature.
+That builds the core, the CLI and the daemon. `cargo build --workspace --locked --offline` succeeds
+with no network access at all, and gitstate depends on no other vulos product — `Cargo.lock` carries no
+`git` sources. Peer replication is compiled in and stays inert until you enrol a peer.
 
 ### See every screen in 30 seconds
 

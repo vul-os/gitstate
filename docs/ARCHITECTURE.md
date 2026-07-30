@@ -32,7 +32,7 @@ Product slug `gitstate`, served at `gitstate.<vulos-domain>`.
 | **gitstate-store** | rusqlite persistence: contexts, categories, derived caches, CRDT op log. | core |
 | **gitstate-daemon** | axum: serves `web/dist` (SPA) + the JSON API. The headless always-on peer. | all above |
 | **gitstate-cli** | clap CLI (`bin: gitstate`). | all above |
-| **gitstate-sync** | P2P CRDT sync of contexts + categories. **Excluded** from the workspace; feature `sync-dmtap`. | core |
+| **gitstate-sync** | P2P replication of contexts + categories: merge algebra, signed ops, HTTP peer transport. | core |
 
 ```mermaid
 flowchart TB
@@ -42,7 +42,7 @@ flowchart TB
     classify["gitstate-classify"] --> core
     tracker["gitstate-tracker"] --> core
     store["gitstate-store"] --> core
-    sync["gitstate-sync<br/>(excluded · sync-dmtap)"] --> core
+    sync["gitstate-sync<br/>(CRDT + signed peer transport)"] --> core
     daemon["gitstate-daemon (axum)"] --> git & forge & classify & tracker & store
     cli["gitstate-cli (clap)"] --> daemon
     tauri["apps/desktop (Tauri)"] --> daemon
@@ -123,7 +123,9 @@ All JSON, snake_case throughout (matching the domain serde). Errors are `{ "erro
 | GET/PUT/POST | `/api/weights`, `/api/weights/reset` | composite weights (normalized on write) |
 | GET/PUT/DELETE/POST | `/api/trackers[/{kind}[/test]]` | Jira/Linear credentials (token always redacted on read) |
 | POST | `/api/import/preview`, `/api/import/run`, `/api/import/file` | fetch without writing / import / offline export import |
-| GET/POST | `/api/sync/status`, `/api/sync/publish` | sync status / publish (`sync_disabled` when off) |
+| GET/POST | `/api/sync/status`, `/api/sync/publish` | local sync status / record local ops in the log |
+| GET/POST/DELETE | `/api/sync/identity`, `/api/sync/peers[/{id}]`, `/api/sync/run` | **operator**: this node's key, manual peer enrolment, one replication round |
+| GET/POST | `/api/sync/pull`, `/api/sync/push` | **peers**: key-authenticated op exchange (own gate, not the admin token) |
 
 The four windowed reads (`/api/analytics`, `/api/health-metrics`, `/api/involvement`,
 `/api/contributions/rollup`) resolve their range identically — explicit `from`/`to` win, else a
@@ -168,8 +170,10 @@ train a local personalization store.
 
 See [P2P-CONTEXTS.md](P2P-CONTEXTS.md). Contexts and categories are CRDTs (LWW scalars + OR-Sets over
 a hybrid logical clock); `SyncOp` is the transport-agnostic op envelope defined in core so the store
-and the sync engine agree. `gitstate-sync` is excluded from the default workspace and behind the
-`sync-dmtap` feature — a plain build has no P2P stack.
+and the sync engine agree. `gitstate-sync` is an ordinary workspace member with no build feature:
+replication is always compiled in and stays inert until a peer is enrolled by hand. The shared KOTVA
+merge engine (`kotva-sync`, crates.io) is a **dev** dependency only — gitstate runs its own algebra and
+holds it against that one in `crates/gitstate-sync/tests/shared_engine_parity.rs`.
 
 ## Ownership (parallel build)
 

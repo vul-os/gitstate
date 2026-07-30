@@ -110,7 +110,26 @@ export. See [Jira & Linear import](import.md).
 | PATCH | `/api/contexts/{id}` | `ContextPatch` | `Context` |
 | DELETE | `/api/contexts/{id}` | — | `{ "deleted":true }` (tombstone) |
 | GET | `/api/sync/status` | — | `SyncStatus` |
-| POST | `/api/sync/publish` | `{ "since"? }` | `{ "published":N }` (404 `sync_disabled` when off) |
+| POST | `/api/sync/publish` | `{ "since"? }` | `{ "published":N }` — records local ops in the op log; no network |
+| GET | `/api/sync/identity` | — | `{ "peer_id", "pubkey" }` — give both to a peer's operator |
+| GET | `/api/sync/peers` | — | the enrolled peers |
+| POST | `/api/sync/peers` | `{ "id","url","pubkey","label"? }` | manual enrolment |
+| DELETE | `/api/sync/peers/{id}` | — | `{ "removed":bool }` |
+| POST | `/api/sync/run` | — | one round with every enrolled peer; `409 sync_no_peers` when none |
+
+The rows above are the **operator's** side and sit behind the management gate
+(`GITSTATE_ADMIN_TOKEN` on an exposed node — see [Deployment](deployment.md)).
+
+Two further routes are the **peer** side, and are not part of the management API:
+
+| Method | Path | Body | Returns |
+|---|---|---|---|
+| GET | `/api/sync/pull?since=<hlc>` | — | `{ "peer_id", "ops":[SignedOp] }`, body signed in `x-gitstate-sync-sig` |
+| POST | `/api/sync/push` | `{ "ops":[SignedOp] }` | `{ "applied","skipped","rejected" }`, body signed |
+
+Both require `Authorization: GitState-Sync <pubkey>.<unix-ms>.<sig>` from an **enrolled** peer, are
+single-use per token, and answer `401 unauthenticated` with no further detail on any failure. The
+operator's admin token does **not** open them.
 
 Category and context deletes are **tombstones**, not row removals — that is what makes deletion
 converge across peers (see [Contexts & P2P sync](contexts-sync.md)).

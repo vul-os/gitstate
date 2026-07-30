@@ -1,56 +1,36 @@
 [package]
 name = "gitstate-sync"
-# NOT workspace-inherited: this crate is deliberately `exclude`d from the root
-# workspace (see the root Cargo.toml's `[workspace].exclude` comment), which
-# means Cargo does not treat it as a workspace member and any
-# `<field>.workspace = true` inheritance fails ("failed to find a workspace
-# root") when this manifest is built on its own via `--manifest-path`. Values
-# below are copied from `[workspace.package]` / `[workspace.dependencies]` in
-# the root Cargo.toml and must be kept in sync with it by hand.
-version = "0.1.0"
-edition = "2021"
-license = "MIT OR Apache-2.0"
-repository = "https://github.com/vul-os/gitstate"
-rust-version = "1.85"
-description = "gitstate's peer-to-peer CRDT sync of contexts + categories (optional feature `sync-dmtap`)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "gitstate's peer-to-peer replication of contexts + categories: the merge algebra, individually-signed ops, and the HTTP peer transport"
 
 [dependencies]
-# The domain lives in gitstate-core (SyncOp, the CRDT op envelope, the Store and
-# SyncEngine traits, Context/Category). A plain path dependency: gitstate-core
-# is a normal library crate, so building this crate standalone pulls only it and
-# a handful of pure-Rust helpers — no envoir checkout required for the default
-# build.
-gitstate-core = { path = "../gitstate-core" }
-async-trait = "0.1"
-serde_json = "1"
-thiserror = "2"
-
-# The shared DMTAP Sync transport. Optional and default-off, mirroring
-# SlipScan's `slipscan-sync` seam: a fresh `git clone && cargo build` of
-# gitstate alone must never require an `envoir` checkout beside it, and must
-# never even reach out to fetch it. That is why gitstate-sync is `exclude`d from
-# the root workspace (being merely `optional` is not enough — Cargo resolves
-# every optional dependency's source into the lockfile for a whole workspace
-# regardless of active features). Enable with:
-#   cargo build --manifest-path crates/gitstate-sync/Cargo.toml --features sync-dmtap
-dmtap-sync = { git = "https://github.com/vul-os/envoir", rev = "12526123cb37e459df5717c2ce243bbecbf5ac23", optional = true }
+# The domain lives in gitstate-core (SyncOp, SignedOp, SyncPeer, the Store and
+# SyncEngine traits, Context/Category).
+gitstate-core = { workspace = true }
+async-trait = { workspace = true }
+# The peer transport is HTTP over an operator-supplied URL. `reqwest` is already
+# a workspace dependency (the forge REST path), so this adds no new package.
+reqwest = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
 
 [dev-dependencies]
-# A real Store to merge into, so `apply_op` is tested against the actual CRDT
-# replay rather than a hand-rolled stand-in. Path-only and test-only: it adds
-# nothing to a normal build of this crate and needs no envoir checkout.
-gitstate-store = { path = "../gitstate-store" }
-tokio = { version = "1", features = ["macros", "rt"] }
+# A real Store to merge into, so the replay is tested against the actual CRDT
+# path rather than a hand-rolled stand-in.
+gitstate-store = { workspace = true }
+tokio = { workspace = true }
+# The shared KOTVA merge engine (substrate capability ③). A DEV dependency,
+# deliberately and honestly: gitstate's merge decisions are still taken by its
+# own SQL-native algebra in gitstate-store, so claiming the shared engine as a
+# runtime dependency would be false. It is here as the independent reference that
+# algebra is held against — tests/shared_engine_parity.rs replays the same op
+# streams through both and asserts they pick the same winners, and names the one
+# place the mappings are not equivalent instead of hiding it.
+dmtap-sync = { workspace = true }
 
-[features]
-default = []
-# Additive DMTAP Sync transport. Enabling it changes NO behaviour of the rest of
-# gitstate (nothing else in the workspace depends on this crate); it only wires
-# the `dmtap-sync` transport into `transport.rs`.
-sync-dmtap = ["dep:dmtap-sync"]
-
-[lints.rust]
-unsafe_code = "deny"
-
-[lints.clippy]
-uninlined_format_args = "allow"
+[lints]
+workspace = true

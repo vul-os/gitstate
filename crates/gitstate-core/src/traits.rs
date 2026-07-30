@@ -3,6 +3,7 @@
 
 use crate::domain::*;
 use crate::ids::*;
+use crate::peer::{SignedOp, SyncPeer};
 use crate::taxonomy::Taxonomy;
 use crate::Result;
 use async_trait::async_trait;
@@ -97,20 +98,66 @@ pub trait Store: Send + Sync {
     /// To ingest a REMOTE op, use [`Store::merge_sync_op`] — appending alone
     /// changes no context or category.
     fn append_sync_ops(&self, ops: &[SyncOp]) -> Result<()>;
-    /// Ingest one remote op: replay it into the typed context/category rows
-    /// under the CRDT merge rules (per-field LWW by `Hlc`, add-wins OR-Set for
-    /// members, whole-doc tombstone) **and** record it in the op log, in one
-    /// transaction.
+    /// Ingest one remote op **whose authorship this node has already verified or
+    /// vouches for locally** (an `import`, a test, a replay of our own log):
+    /// replay it into the typed context/category rows under the CRDT merge rules
+    /// (per-field LWW by `Hlc`, add-wins OR-Set for members, whole-doc tombstone)
+    /// **and** record it in the op log, in one transaction.
+    ///
+    /// The log entry carries no signature, so the op is **not re-exportable to
+    /// peers** unless this node authored it. Use [`Store::merge_signed_sync_op`]
+    /// for anything that came off the network.
     ///
     /// Returns `true` if local state changed and `false` if the op lost its
     /// merge (an older clock than what the row already holds) or was a
     /// duplicate. Merging is commutative and idempotent, so a peer's ops may
     /// arrive in any order, more than once, and still converge.
     fn merge_sync_op(&self, op: &SyncOp) -> Result<bool>;
+    /// As [`Store::merge_sync_op`], but records the author and signature the op
+    /// arrived with so this node can **relay it verbatim**. The caller must have
+    /// verified the signature already (`gitstate_sync::ingest_signed` does).
+    ///
+    /// Storing the original author's signature rather than re-signing on each hop
+    /// is what makes a three-node topology trustworthy: the third node's change
+    /// carries the third node's attestation all the way, so nobody has to take the
+    /// middle node's word for who wrote it.
+    fn merge_signed_sync_op(&self, signed: &SignedOp) -> Result<bool>;
     /// Ops from the log, in local arrival order (see the implementation's note
     /// on why arrival order is sufficient), skipping any whose clock is at or
     /// below `since`.
     fn sync_ops_since(&self, since: Option<&Hlc>) -> Result<Vec<SyncOp>>;
+    /// The exportable log: every op paired with an attestation of its author.
+    ///
+    /// A row that this node authored is signed here and now with this node's key
+    /// (ed25519 is deterministic, so the same op yields the same bytes every
+    /// time). A row that arrived from a peer carries that peer's stored signature
+    /// verbatim.
+    ///
+    /// A row that is neither — an op merged through the unsigned local path, e.g.
+    /// `context import` of somebody else's file — is **omitted**, because this
+    /// node cannot honestly attest to authorship it does not hold and must not
+    /// forge an attribution to make the export look complete. Under-sharing is
+    /// the fail-closed direction: the op still converges wherever it was
+    /// legitimately signed.
+    fn signed_ops_since(&self, since: Option<&Hlc>) -> Result<Vec<SignedOp>>;
+
+    // ── manually-enrolled peers (see `crate::peer`) ──
+    /// This node's sync identity, minted on first use and persisted locally.
+    /// Returns the hex secret seed; the caller derives the public half.
+    fn node_secret_hex(&self) -> Result<String>;
+    /// Enrol or update a peer. Keyed on `id`; the unique index on `pubkey`
+    /// refuses a second enrolment of the same key under a different id.
+    fn upsert_sync_peer(&self, peer: &SyncPeer) -> Result<()>;
+    /// Every enrolled peer. Empty on a fresh install — there is no discovery, so
+    /// nothing populates this but an operator.
+    fn list_sync_peers(&self) -> Result<Vec<SyncPeer>>;
+    /// Look a peer up by the hex public key that signed an op. This is the
+    /// admission check: a key with no row here is not an authorised author.
+    fn sync_peer_by_pubkey(&self, pubkey: &str) -> Result<Option<SyncPeer>>;
+    /// Remove an enrolment. Returns whether a row was removed.
+    fn delete_sync_peer(&self, id: &PeerId) -> Result<bool>;
+    /// Record how far this node has pulled from a peer.
+    fn set_sync_peer_cursor(&self, id: &PeerId, hlc: &Hlc) -> Result<()>;
 }
 
 /// The outcome of merging a batch of remote ops.

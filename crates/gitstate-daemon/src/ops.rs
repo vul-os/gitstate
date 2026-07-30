@@ -642,11 +642,56 @@ pub async fn sync_status(state: &AppState) -> Result<SyncStatus> {
 }
 
 pub async fn sync_publish(state: &AppState, since: Option<Hlc>) -> Result<u32> {
-    let engine = state.sync.as_ref().ok_or(Error::SyncDisabled)?;
+    let engine = state
+        .sync
+        .as_ref()
+        .ok_or_else(|| Error::invalid("no local sync engine is wired"))?;
     let ops = state.store.sync_ops_since(since.as_ref())?;
     let n = ops.len() as u32;
     engine.publish(&ops).await?;
     Ok(n)
+}
+
+/// This node's peer id and public key — the pair an operator gives to the other
+/// node so it can enrol this one. The secret half is never returned.
+pub fn node_identity_view(state: &AppState) -> Result<crate::dto::NodeIdentityResp> {
+    let identity = gitstate_sync::node_identity(state.store.as_ref())?;
+    let peer_id = state.store.kv_get("peer_id")?.unwrap_or_default();
+    Ok(crate::dto::NodeIdentityResp {
+        peer_id,
+        pubkey: identity.public_hex(),
+    })
+}
+
+/// One replication round with every enrolled peer.
+///
+/// With no peers enrolled this is an explicit refusal rather than a silent
+/// success: "synced with nobody" and "synced" must not look the same to an
+/// operator who has just set a node up.
+pub async fn sync_run(state: &AppState) -> Result<crate::dto::SyncRunResp> {
+    if state.store.list_sync_peers()?.is_empty() {
+        return Err(Error::SyncNoPeers);
+    }
+    let node = gitstate_sync::SyncNode::from_store(state.store.clone())?;
+    let reports = node.sync_all().await?;
+    Ok(crate::dto::SyncRunResp {
+        peers: reports
+            .into_iter()
+            .map(|r| {
+                let ingested = r.pull_outcome.unwrap_or_default();
+                crate::dto::PeerRoundView {
+                    peer_id: r.peer.0,
+                    url: r.url,
+                    pushed: r.pushed,
+                    pulled: r.pulled,
+                    applied: ingested.applied,
+                    skipped: ingested.skipped,
+                    rejected: ingested.rejected,
+                    error: r.error,
+                }
+            })
+            .collect(),
+    })
 }
 
 // ──────────────────────────── weights kv ────────────────────────────

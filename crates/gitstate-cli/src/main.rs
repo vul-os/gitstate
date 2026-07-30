@@ -72,7 +72,7 @@ enum Command {
     #[command(subcommand)]
     Taxonomy(cmd::misc::TaxonomyCmd),
 
-    /// Peer-to-peer sync status/publish (needs the `sync-dmtap` build).
+    /// Peer-to-peer replication: this node's identity, the peer list, one round.
     #[command(subcommand)]
     Sync(cmd::misc::SyncCmd),
 

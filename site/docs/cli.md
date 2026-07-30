@@ -150,12 +150,19 @@ See [Signed taxonomy](taxonomy.md).
 ## sync / data
 
 ```bash
-gitstate sync status
-gitstate sync publish [--since <hlc>]             # only meaningful with --features sync-dmtap
+gitstate sync status                              # peer id, how many peers are enrolled
+gitstate sync identity                            # this node's peer id + public key
+gitstate sync peer add --id <id> --url <url> --key <hex> [--label <name>]
+gitstate sync peer list
+gitstate sync peer remove --id <id>
+gitstate sync run                                 # one round with every enrolled peer
+gitstate sync publish [--since <hlc>]             # record local ops in the op log (no network)
 gitstate data path                                # print resolved data dir + db path
 ```
 
-`sync publish` is a no-op unless the binary was built with the optional `sync-dmtap` feature — see
-[Contexts & P2P sync](contexts-sync.md).
+Enrolment is manual in both directions: each operator runs `sync identity` and hands the peer id and
+public key to the other **out of band**, along with the node's URL. There is no discovery, so with no
+peers enrolled `sync run` reaches nobody and says so. See
+[Contexts & P2P sync](contexts-sync.md) and [Deployment](deployment.md).
 
 Next: [HTTP API](api.md) · [Configuration](configuration.md)

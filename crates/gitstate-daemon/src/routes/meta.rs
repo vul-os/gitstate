@@ -12,9 +12,18 @@ use crate::dto::{HealthResp, PublishResp, SyncPublishReq, VerifyResp};
 use crate::ops;
 use crate::state::AppState;
 
+/// Routes that carry no data and are reachable without the management gate.
+///
+/// Only `/health`, and only because a load balancer or an orchestrator in front
+/// of an exposed node has to be able to ask "is this process up?" without holding
+/// the operator's admin token. It reports liveness and build facts and nothing
+/// about the repository, the peer list or this node's keys.
+pub fn public_routes() -> Router<AppState> {
+    Router::new().route("/health", get(health))
+}
+
 pub fn meta_routes() -> Router<AppState> {
     Router::new()
-        .route("/health", get(health))
         .route("/api/contributors", get(contributors))
         .route("/api/taxonomy", get(taxonomy))
         .route("/api/taxonomy/verify", post(taxonomy_verify))

@@ -11,6 +11,7 @@ description = "gitstate domain model: types, traits, pure derivation helpers, an
 async-trait = { workspace = true }
 ed25519-dalek = { workspace = true }
 hex = { workspace = true }
+rand_core = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 sha2 = { workspace = true }

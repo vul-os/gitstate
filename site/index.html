@@ -1085,10 +1085,11 @@ gitstate state &lt;repo_id&gt;
           <span>Point <code>VULOS_LLMUX_URL</code> or <code>OPENAI_BASE_URL</code> at any
           OpenAI-compatible endpoint — your own llmux, a local model, whatever you run. Leave it
           unset and a deterministic heuristic takes over; everything still works, offline.</span></div></li>
-        <li><span class="n">3</span><div><b>P2P sync is a separate build</b>
-          <span>A bare <code>cargo build</code> never pulls a network stack:
-          <code>gitstate-sync</code> is excluded from the default workspace and lives behind the
-          <code>sync-dmtap</code> feature. Opt in only if you want contexts to travel.</span></div></li>
+        <li><span class="n">3</span><div><b>P2P sync reaches nobody until you say so</b>
+          <span>There is no discovery: a peer exists because you ran <code>gitstate sync peer add</code>
+          with its URL and its public key, handed to you out of band. No directory, no default
+          endpoint, no broker. With nothing enrolled, a node makes no outbound sync connection at
+          all.</span></div></li>
         <li><span class="n">4</span><div><b>Know where your data is</b>
           <span><code>gitstate data path</code> prints the directory and the database file. That
           file is the whole product state — back it up, move it, or delete it.</span></div></li>
@@ -1356,7 +1357,7 @@ gitstate state &lt;repo_id&gt;
       alt: 'Taxonomy screen showing the signed category tree, its version, content hash and verification status.' },
     { id: 'contexts', tab: 'Contexts',
       title: 'Contexts', desc: 'Saved working sets of repos, PRs, tags and notes — the unit gitstate shares peer-to-peer over CRDT. Everything here lives in your local store until you decide otherwise.',
-      addr: 'gitstate · contexts', meta: [['merge', 'LWW scalars + OR-Sets'], ['transport', 'optional sync-dmtap build']],
+      addr: 'gitstate · contexts', meta: [['merge', 'LWW scalars + OR-Sets'], ['transport', 'signed ops, peers you enrol by hand']],
       alt: 'Contexts screen with two saved working sets, each listing repos, tags, notes and pull requests.' },
     { id: 'import', tab: 'Import',
       title: 'Import', desc: 'Pull Jira and Linear issues in with your own personal API token, called from this machine with no service in between — or drop a CSV/JSON export and stay entirely offline.',

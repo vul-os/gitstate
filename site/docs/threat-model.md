@@ -32,7 +32,8 @@ breach, subpoena, or shut down.
 | **Tracker tokens** | Jira/Linear personal tokens **are** persisted — they have no CLI to borrow from. They live in your local SQLite file, are returned only as a masked hint (`…9f2c`), and are sent only to the vendor they belong to. The offline export path lets you skip storing one entirely. |
 | **LLM endpoint** | You choose it. Prefer a local model or your own llmux to keep even diff shape on-prem. |
 | **Taxonomy** | ed25519-signed and verified against a pinned key. A bad signature fails **closed** to local-only categories — never silently trusted. |
-| **P2P sync** | Optional, off by default, and not even compiled unless you build `--features sync-dmtap`. |
+| **P2P sync** | Reaches nobody until an operator enrols a peer by URL **and** ed25519 public key, out of band — there is no discovery and no default endpoint. Every op is individually signed and verified on its own; requests carry single-use signed tokens; the responder signs its replies. Not encrypted: put TLS in front of an internet-reachable node. |
+| **Exposed node** | The daemon refuses to bind a non-loopback address while the management API has no authentication. |
 
 ---
 

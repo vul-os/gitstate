@@ -5,8 +5,14 @@ use gitstate_core::{ids::now_rfc3339, Error, Result};
 use rusqlite::Connection;
 
 /// Ordered migrations: (version, name, sql).
-const MIGRATIONS: &[(&str, &str, &str)] =
-    &[("0001", "init", include_str!("../migrations/0001_init.sql"))];
+const MIGRATIONS: &[(&str, &str, &str)] = &[
+    ("0001", "init", include_str!("../migrations/0001_init.sql")),
+    (
+        "0002",
+        "sync_peers",
+        include_str!("../migrations/0002_sync_peers.sql"),
+    ),
+];
 
 /// Apply every pending migration to `conn`.
 pub fn run(conn: &Connection) -> Result<()> {

@@ -1,0 +1,76 @@
+# gitstate node — systemd unit. Copy to /etc/systemd/system/ and edit.
+#
+# See docs/DEPLOYMENT.md for the full walkthrough (user creation, the admin token,
+# the reverse proxy, and backup).
+#
+# This unit binds LOOPBACK and expects a reverse proxy in front. That is the
+# recommended shape: gitstate does not terminate TLS, so something has to, and
+# whatever does may as well be the only thing listening publicly. To expose the
+# daemon directly instead, set GITSTATE_ADDR=0.0.0.0 in the environment file — the
+# daemon then refuses to start unless GITSTATE_ADMIN_TOKEN is also set, which is
+# the point.
+
+[Unit]
+Description=gitstate node (contexts + categories, peer-replicated)
+Documentation=https://github.com/vul-os/gitstate/blob/main/docs/DEPLOYMENT.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=gitstate
+Group=gitstate
+
+# GITSTATE_ADMIN_TOKEN lives here, mode 0600, owned by root. Not in this unit
+# file: unit files are world-readable and `systemctl show` prints Environment=.
+EnvironmentFile=/etc/gitstate/env
+
+Environment=GITSTATE_ADDR=127.0.0.1
+Environment=GITSTATE_PORT=7473
+Environment=GITSTATE_DATA_DIR=/var/lib/gitstate
+# Point at the built SPA to serve the web app; omit for an API-only node.
+#Environment=GITSTATE_WEB_DIST=/usr/local/share/gitstate/web/dist
+
+ExecStart=/usr/local/bin/gitstated
+Restart=on-failure
+RestartSec=5s
+
+# ── Hardening ──
+# The process needs one directory and one socket, so almost everything else can
+# go. StateDirectory gives /var/lib/gitstate at 0700 owned by the service user,
+# created on start if missing.
+StateDirectory=gitstate
+StateDirectoryMode=0700
+WorkingDirectory=/var/lib/gitstate
+
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectProc=invisible
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+# Outbound to peers over IPv4/IPv6; a UNIX socket for the resolver.
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+CapabilityBoundingSet=
+AmbientCapabilities=
+
+# gitstate reads git repositories the operator has registered. If those live
+# outside the state directory, ProtectSystem=strict makes them read-only, which is
+# what you want — but the paths must be readable by the service user. Add
+# ReadOnlyPaths= entries for them rather than loosening ProtectSystem.
+#ReadOnlyPaths=/srv/repos
+
+[Install]
+WantedBy=multi-user.target

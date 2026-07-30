@@ -57,10 +57,19 @@ never a bespoke stack, never a central hub. → Two peers converge with no autho
 derived caches (commits, contributions, project state) are *local* and never synced. → Local edits
 and remote merges share one op-application path.
 
-**T9. The P2P crate is excluded from the default build.** `gitstate-sync` is excluded from the
-workspace and lives behind an optional `sync-dmtap` feature (exactly as `slipscan-sync`). → A plain
-`cargo build` pulls no P2P/network deps; the local app is fully usable without sync. → Sync is opt-in
-at build time.
+**T9. Replication is compiled in; reaching a peer is what is opt-in.** `gitstate-sync` was once
+excluded from the workspace behind a `sync-dmtap` feature, because it carried an optional **git**
+dependency on the `envoir` repository and Cargo resolves optional sources during workspace
+resolution — so a plain build shelled out to that remote even with the feature off. Two things were
+wrong with that. The dependency was a *product* importing a *product* to get a merge engine; and the
+feature wired nothing — both transports behind it returned success and an empty list, so every
+document that mentioned it described a mechanism that did not exist. The exclusion also kept
+`cargo test --workspace` from ever compiling the crate's tests.
+
+→ The engine is now the published substrate crate (`kotva-sync`, crates.io) and a **dev** dependency,
+used to hold gitstate's own algebra against it; the feature and the stub transports are gone;
+`gitstate-sync` is a normal member. `Cargo.lock` has no git sources. → Sync is opt-in at *enrolment*,
+not at build time: no feature to compile, and no peer until an operator types a URL and a key.
 
 **T10. Relicense to MIT OR Apache-2.0; drop the EE tier.** The suite standard is MIT OR Apache-2.0
 (every sibling — slipscan, diwan, wede — matches). With no multi-tenant service, the open-core AGPL +

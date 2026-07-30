@@ -4,8 +4,17 @@
 //! # Merge rules
 //!
 //! * **Scalar fields** (`name`, `description`, `notes`; `label`, `color`,
-//!   `parent_key`): last-writer-wins by `Hlc`, per field.
-//! * **Set members** (`tags`, `repo_ids`, `pr_refs`): OR-Set, add-wins on tie.
+//!   `parent_key`): last-writer-wins by `Hlc`, per field. At an **exact** clock
+//!   tie — same wall reading, counter and peer, two different values — the larger
+//!   value wins, ranked `(length, bytes)`. That case cannot arise from an honest
+//!   node (`next_hlc` always advances), only from a buggy or hostile peer; without
+//!   the rule the incumbent would keep the field, so whichever op *arrived first*
+//!   would win and two replicas would diverge silently. `(length, bytes)` rather
+//!   than plain byte order because it is the order of the shared engine's
+//!   deterministic-CBOR encoding, so the two agree.
+//! * **Set members** (`tags`, `repo_ids`, `pr_refs`): present iff the element's
+//!   max add-clock ≥ its max remove-clock — add wins the tie. A `pr_ref`'s `note`
+//!   is an LWW scalar on the element, and obeys the same tie rule as above.
 //! * **Deletion**: a document-level tombstone that a later higher-`Hlc` write
 //!   resurrects (whole-doc LWW). Tombstones are retained, never hard-deleted.
 //!
@@ -16,9 +25,21 @@
 //! clocks and the tombstone clock the store keeps beside every context and
 //! category.
 //!
-//! Because every rule is "take the max clock", applying ops is commutative and
-//! idempotent — a peer converges on the same rows whatever order the ops reach
-//! it in, and re-delivering one changes nothing.
+//! Every rule reduces to "take the maximum" under a **total** order, so applying
+//! ops is commutative and idempotent: a peer converges on the same rows whatever
+//! order the ops reach it in, and re-delivering one changes nothing. Totality is
+//! the load-bearing word — the value tie-break above exists because the clock
+//! alone is not quite total in the presence of a peer that does not follow the
+//! rules. `tests/convergence.rs` proves the property over every permutation of a
+//! mixed op set rather than asserting it here.
+//!
+//! # Relationship to the shared engine
+//!
+//! This is gitstate's **own** algebra, not the shared KOTVA engine's. The scalar
+//! rule above is a faithful mapping of `SYNC.md` §4.4 and is proven equal to it
+//! over every arrival order in `tests/shared_engine_parity.rs`. The member set and
+//! the tombstone are **not** §4.3 and §4.5 respectively; the same test asserts
+//! exactly how they differ and why closing the gap needs an op-envelope change.
 
 use gitstate_core::{CatField, Category, Context, CtxField, SyncOp};
 

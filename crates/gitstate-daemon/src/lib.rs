@@ -18,7 +18,10 @@ mod routes;
 pub mod serve_static;
 pub mod state;
 
-pub use state::{build_state_from_env, AppState, Daemon, ForgeRegistry};
+pub use state::{
+    admin_auth_from_env, build_state_from_env, guard_exposed_bind, AdminAuth, AppState, Daemon,
+    ForgeRegistry, ADMIN_UNAUTHENTICATED_OPT_IN,
+};
 
 /// Default daemon port (env `GITSTATE_PORT`).
 pub const DEFAULT_PORT: u16 = 7473;

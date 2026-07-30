@@ -26,37 +26,107 @@ jobs:
         run: cargo build --workspace
       - name: Test
         run: cargo test --workspace
-      # gitstate-sync is intentionally excluded from the default workspace
-      # (see [workspace].exclude in Cargo.toml) so a plain `cargo build` never
-      # pulls in P2P / dmtap deps. Assert that invariant holds in CI.
-      - name: Assert sync crate is excluded from the workspace
+
+      # gitstate-sync must be IN the workspace, so that `cargo test --workspace`
+      # above actually compiles and runs its convergence and engine-parity suites.
+      # It used to be excluded — and the consequence was that its tests never ran
+      # in the gate that matters. If it drifts back out, the suites vanish
+      # silently, so assert membership explicitly rather than trusting the
+      # manifest.
+      - name: Assert the sync crate is a workspace member
         run: |
-          if cargo metadata --no-deps --format-version 1 \
+          if ! cargo metadata --no-deps --format-version 1 \
               | grep -q '"name":"gitstate-sync"'; then
-            echo "::error::gitstate-sync must be excluded from the default workspace"
+            echo "::error::gitstate-sync must be a workspace member, or cargo test --workspace skips its tests"
             exit 1
           fi
-          echo "ok: gitstate-sync is not a default-workspace member"
+          echo "ok: gitstate-sync is a workspace member"
 
-  rust-sync:
-    name: Rust (sync crate, standalone)
+      # The two proof suites are named individually. `cargo test --workspace`
+      # passing is not evidence they ran: a renamed or deleted test file leaves the
+      # workspace green with the proof gone.
+      - name: Assert the convergence and engine-parity proofs ran
+        run: |
+          set -o pipefail
+          out=$(cargo test -p gitstate-sync --test convergence \
+                           --test shared_engine_parity 2>&1 | tee /dev/stderr)
+          for t in every_arrival_order_of_a_mixed_context_op_set_converges \
+                   two_replicas_fed_in_opposite_orders_then_exchanged_agree \
+                   lww_registers_agree_with_the_shared_engine_over_every_arrival_order \
+                   the_exact_tie_break_is_length_major_in_both_engines; do
+            if ! printf '%s' "$out" | grep -q "test $t \.\.\. ok"; then
+              echo "::error::proof '$t' did not run"
+              exit 1
+            fi
+          done
+          echo "ok: the convergence and shared-engine parity proofs ran"
+
+  rust-offline:
+    name: Rust (offline, no product dependency)
     runs-on: ubuntu-latest
-    # The P2P CRDT crate is excluded from the workspace and gated behind the
-    # optional `sync-dmtap` feature. Build it on its own so it stays green
-    # without ever touching a bare `cargo build`.
-    defaults:
-      run:
-        working-directory: crates/gitstate-sync
+    # The invariant that replaced the old workspace exclusion. gitstate must build
+    # with NO network access from the committed lockfile, and must not depend on
+    # another vulos product's repository — the shared merge engine comes from
+    # crates.io (`kotva-sync`), never from a git dependency on `envoir`.
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - name: Build (default)
-        run: cargo build
-      - name: Build (sync-dmtap feature)
-        run: cargo build --features sync-dmtap
-      - name: Test
-        run: cargo test
+
+      # Populate the registry cache once, WITH network, then prove the build needs
+      # none. Fetching first is what makes the offline step meaningful rather than
+      # a test of whether the cache happened to be warm.
+      - name: Fetch dependencies (the only networked step)
+        run: cargo fetch --locked
+
+      - name: Build with no network
+        run: cargo build --workspace --locked --offline
+        env:
+          CARGO_NET_OFFLINE: "true"
+
+      - name: Assert Cargo.lock has no git sources
+        run: |
+          if grep -q 'source = "git' Cargo.lock; then
+            echo "::error::Cargo.lock has a git source; gitstate must depend on the published substrate, not on another product's repository"
+            grep -n 'source = "git' Cargo.lock
+            exit 1
+          fi
+          echo "ok: no git sources in Cargo.lock"
+
+      # No product may be named as a dependency source. Checked by name, not only
+      # by protocol, so a `path` or `[patch]` entry pointing at a sibling checkout
+      # is caught too.
+      #
+      # Comments are stripped first, deliberately: the manifests explain at length
+      # WHY the old envoir git dependency was removed, and a check that cannot tell
+      # a dependency from a comment about a dependency would make that history
+      # unwritable — which is how the explanation gets deleted instead of the
+      # dependency.
+      - name: Assert no cross-product dependency
+        run: |
+          hits=$(sed 's/#.*//' Cargo.toml crates/*/Cargo.toml \
+            | grep -nE '(envoir|ephor|slipscan|flowstock|beepbite|propfix|soko|basin|kerf)' \
+            || true)
+          if [ -n "$hits" ]; then
+            echo "::error::a manifest names another vulos product; substrate is not a product"
+            printf '%s\n' "$hits"
+            exit 1
+          fi
+          echo "ok: no manifest names another product (comments excluded)"
+
+      # Ephor is a future convenience for NAT traversal and must never be a
+      # prerequisite. Assert it appears in no build file and no source file — not
+      # as a dependency, not as a default endpoint, not as a fallback.
+      - name: Assert no Ephor dependency anywhere
+        run: |
+          hits=$(grep -rniE '\bephor\b' --include='*.rs' --include='*.toml' \
+              --include='*.lock' crates/ Cargo.toml Cargo.lock || true)
+          if [ -n "$hits" ]; then
+            echo "::error::Ephor must not appear in any build or code path"
+            printf '%s\n' "$hits"
+            exit 1
+          fi
+          echo "ok: no Ephor reference in any manifest, lockfile or source"
 
   go:
     name: Go (build, vet, gofmt, test -race)

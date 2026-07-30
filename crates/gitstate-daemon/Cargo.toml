@@ -21,6 +21,7 @@ gitstate-git = { workspace = true }
 gitstate-forge = { workspace = true }
 gitstate-classify = { workspace = true }
 gitstate-store = { workspace = true }
+gitstate-sync = { workspace = true }
 gitstate-tracker = { workspace = true }
 
 [dev-dependencies]
@@ -29,6 +30,10 @@ tower = { workspace = true }
 gitstate-store = { workspace = true }
 gitstate-classify = { workspace = true }
 gitstate-core = { workspace = true }
+gitstate-sync = { workspace = true }
+# tests/sync_peers.rs stands two real daemons up on real sockets and has them
+# replicate, so it needs an HTTP client of its own.
+reqwest = { workspace = true }
 
 [lints]
 workspace = true

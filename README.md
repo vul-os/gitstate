@@ -215,8 +215,9 @@ cargo run -p gitstate-cli -- --help
 cd apps/desktop && npm install && npm run tauri dev
 ```
 
-`cargo build` never touches the P2P sync crate — `gitstate-sync` is **excluded** from the default
-workspace and lives behind an optional `sync-dmtap` feature, so a bare build has no network stack.
+A bare `cargo build` makes no network calls and depends on no other vulos product: `Cargo.lock`
+carries no `git` sources. Peer replication is compiled in unconditionally — there is no feature to
+enable — and stays inert until you enrol a peer by hand.
 
 ### See every screen in 30 seconds
 
@@ -241,7 +242,7 @@ gitstate repo scan my-project
 gitstate contributions my-project         # the six-dimension texture table
 gitstate classify my-project              # local LLM if configured, else heuristic
 
-# Save a working set and share it P2P (sync built with --features sync-dmtap)
+# Save a working set, then share it with a peer you enrolled by hand
 gitstate context create --name "Q3 refactor" --repo <repo_id> --pr vul-os/gitstate#42 --tag refactor
 gitstate context list
 
@@ -273,7 +274,7 @@ the middle, I/O crates at the edges, one daemon that serves both the desktop she
 | **gitstate-store** | rusqlite persistence — contexts, categories, derived caches, the CRDT op log. |
 | **gitstate-daemon** | axum HTTP server — serves `web/dist` (SPA) **and** the JSON API, including the analytics, health and involvement rollups. The headless always-on peer. |
 | **gitstate-cli** | clap CLI (`serve`, `seed`, `repo`, `state`, `contributions`, `contributors`, `classify`, `effort`, `context`, `category`, `taxonomy`, `sync`, `data`). |
-| **gitstate-sync** | P2P CRDT sync of contexts + categories. **Excluded from the default workspace**; behind an optional `sync-dmtap` feature so a plain `cargo build` never pulls P2P deps. |
+| **gitstate-sync** | P2P replication of contexts + categories: the merge algebra, individually-signed ops, single-use request auth, and the HTTP peer transport to an operator-supplied URL. No discovery, no broker. |
 | **apps/desktop** | Tauri shell. Boots the daemon on an ephemeral local port and loads the **same** React app the headless mode serves — the UI is not forked. |
 | **web/** | The kept React frontend, repointed at the daemon's JSON API (§ [web API contract](docs/ARCHITECTURE.md)); the old multi-tenant auth/org/billing surfaces are removed. |
 
@@ -312,7 +313,10 @@ belongs to an optional coordinator; everything a git tool is for is local + P2P.
 - [Getting started](docs/GETTING-STARTED.md) — install, first scan, the full CLI.
 - [Architecture](docs/ARCHITECTURE.md) — crates, the daemon API, the web contract, the SQLite schema.
 - [Classification &amp; taxonomy](docs/CLASSIFICATION-AND-TAXONOMY.md) — local LLM, the signed taxonomy, personalization.
-- [P2P contexts](docs/P2P-CONTEXTS.md) — saved working sets, the CRDT merge model, sharing.
+- [P2P contexts](docs/P2P-CONTEXTS.md) — saved working sets, the CRDT merge model, manual peer
+  enrolment, and what authenticates what.
+- [Deployment](docs/DEPLOYMENT.md) — running a node on a routable address: the bind-time guard, TLS,
+  systemd and Docker, enrolment, backup, and what the deployment does *not* give you.
 - [Forge setup](docs/FORGE-SETUP.md) — `gh`/`glab` and token configuration.
 - [Migration notes](docs/MIGRATION-NOTES.md) — why the legacy Go server is still in-tree, and the staged port.
 - [Security model](docs/security.md) · [Roadmap](ROADMAP.md) · [Decisions](decisions.md) · [Changelog](CHANGELOG.md)

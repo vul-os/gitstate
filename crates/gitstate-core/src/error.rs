@@ -38,8 +38,19 @@ pub enum Error {
     #[error("taxonomy is untrusted: {0}")]
     TaxonomyUntrusted(String),
 
-    #[error("sync is disabled (build with --features sync-dmtap)")]
-    SyncDisabled,
+    /// Sync is compiled in unconditionally; this is the "no peer is enrolled, so
+    /// there is nothing to talk to" case. It is deliberately NOT an error about a
+    /// missing build feature: peer replication needs no optional feature and no
+    /// broker, only a peer the operator enrolled.
+    #[error("sync has no enrolled peers (add one with `gitstate sync peer add`)")]
+    SyncNoPeers,
+
+    /// A request or a replicated op failed to authenticate. Every sync ingest
+    /// path fails closed into this variant; it never carries a hint that would
+    /// help an unauthenticated caller distinguish "wrong key" from "unknown
+    /// peer" over the wire (the detail is logged locally, not returned).
+    #[error("unauthenticated: {0}")]
+    Unauthenticated(String),
 
     #[error("io error: {0}")]
     Io(String),

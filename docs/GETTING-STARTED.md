@@ -30,8 +30,9 @@ cargo build --workspace
 cd apps/desktop && npm install && npm run tauri dev
 ```
 
-`cargo build` never touches the P2P sync crate — `gitstate-sync` is excluded from the default
-workspace and lives behind an optional `sync-dmtap` feature.
+`cargo build --workspace --locked --offline` succeeds with no network access, and `Cargo.lock` has no
+`git` sources — gitstate depends on no other vulos product. Peer replication is compiled in and stays
+inert until you enrol a peer.
 
 ## Where your data lives
 
@@ -130,6 +131,9 @@ gitstate effort <repo_id>           # judge diff-difficulty
 gitstate context list|show|create|edit|rm|export|import
 gitstate category list|add|rm
 gitstate taxonomy show|verify       # inspect / verify the signed taxonomy
-gitstate sync status|publish        # meaningful only with --features sync-dmtap
+gitstate sync identity             # this node's peer id + public key (give these to a peer)
+gitstate sync peer add|list|remove # manual enrolment — no discovery
+gitstate sync run                  # one round with every enrolled peer
+gitstate sync status|publish       
 gitstate data path                  # resolved data dir + db path
 ```

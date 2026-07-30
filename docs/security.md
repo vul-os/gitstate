@@ -22,10 +22,12 @@ network calls). Network access happens **only** for actions you explicitly initi
   token you placed in the environment — see [FORGE-SETUP.md](FORGE-SETUP.md).
 - Classifying against an **LLM endpoint you configured** (`VULOS_LLMUX_URL` / `OPENAI_BASE_URL`). With
   none set, classification uses a local deterministic heuristic and stays offline.
-- Peer-to-peer sync of contexts/categories — and only if you built with the `sync-dmtap` feature. A
-  plain `cargo build` doesn't even compile the P2P stack.
+- Peer-to-peer sync of contexts/categories — and only to peers **you enrolled by hand**, and only when
+  you run `gitstate sync run`. There is no discovery, no default endpoint and no background
+  replication thread, so a node with no peers enrolled makes no outbound sync connection at all.
 
-The daemon binds `127.0.0.1` by default.
+The daemon binds `127.0.0.1` by default, and refuses to bind anything wider without an explicit
+authentication posture (§5).
 
 ## 2. Your credentials stay yours
 
@@ -65,11 +67,32 @@ never silently trusts an unverified taxonomy. (Full detail: [CLASSIFICATION-AND-
 > The taxonomy currently ships with a **development** signing key; production must re-sign with the
 > offline release key ([decisions.md](../decisions.md) T5).
 
-## 5. P2P is opt-in and hub-less
+## 5. P2P is hub-less, manually enrolled, and authenticated per op
 
-CRDT sync is a separate, **excluded** crate behind the `sync-dmtap` feature. It carries only
-context/category ops over a signed transport on the shared vulos/DMTAP substrate — no central hub, no
-code or metrics in the payload.
+CRDT sync carries only context/category ops — no code, no diffs, no metrics in the payload — and it is
+compiled in unconditionally (there is no build feature to enable, and no dependency on any broker or
+reachability service in any code path).
+
+Sync is nonetheless **inert until an operator acts**. There is no discovery of any kind: a peer exists
+because somebody ran `gitstate sync peer add --url <url> --key <hex>` with values obtained out of
+band. An empty peer list means this node talks to nobody.
+
+The authentication is built for a node on the open internet:
+
+| Property | How |
+|---|---|
+| A replicated change is verified on its own | every op carries an ed25519 signature over a domain-separated canonical preimage of that one op; the original author's signature is stored and relayed verbatim rather than replaced hop by hop |
+| A valid signature is not admission | the signature must verify under the key the operator *enrolled*; a stranger's own valid signature is refused |
+| A peer cannot impersonate another peer's clock | an op is refused if its `Hlc.peer` is not the enrolled id of the key that signed it — that field is the final LWW tiebreak |
+| Requests cannot be replayed | `Authorization: GitState-Sync <pubkey>.<unix-ms>.<sig>`, signature over method + path + timestamp, ±120 s window, and a used signature refused inside that window |
+| The caller authenticates the responder | the responder signs the response body; the caller checks it against the enrolled key, so a hijacked address is a refusal rather than accepted ops |
+| A hostile clock cannot capture a field forever | an op more than 120 s in the future is refused at the boundary, not merged |
+| Refusals leak nothing | every failure is one `401 unauthenticated`; the reason is logged locally and never returned |
+
+Exposure is fail-closed at startup: the daemon **refuses to bind a non-loopback address** while the
+management API has no authentication (`GITSTATE_ADMIN_TOKEN`, or an explicit written opt-out when
+something in front of gitstate authenticates instead). gitstate does not terminate TLS — see
+[DEPLOYMENT.md](DEPLOYMENT.md) §2 for what the op signatures do and do not give you over cleartext.
 
 ## 6. Local data at rest
 
@@ -88,13 +111,24 @@ own device. Back it up by copying the folder.
 - [ ] **LLM endpoint egress** — document that a user-configured LLM URL receives work-item titles/bodies
       and diff shapes; keep it a conscious, configured choice.
 - [ ] **Taxonomy release key** — replace the development signing key before any signed distribution.
-- [ ] **Sync transport review** — a security pass on the `sync-dmtap` transport before it ships enabled.
+- [x] **Unauthenticated API surface** — done. `Daemon::serve` refuses a non-loopback bind unless the
+      operator has chosen a posture (`GITSTATE_ADMIN_TOKEN`, or `GITSTATE_ADMIN_UNAUTHENTICATED=i-accept`
+      to assert an external gate), and the management API is behind a bearer check when a token is set.
+      The peer endpoints have their own, stronger gate and are deliberately not covered by the admin
+      token. Tests: `gitstate_daemon::state` (the bind guard) and
+      `crates/gitstate-daemon/tests/sync_peers.rs` (the request gates, over real sockets).
+- [ ] **Sync transport: no confidentiality without TLS.** The peer transport authenticates both ends
+      and every individual op over plain HTTP, but does not encrypt. Context names, notes, tags and
+      category labels are readable in flight on an `http://` peer URL. Documented in
+      [DEPLOYMENT.md](DEPLOYMENT.md) §2; a terminating reverse proxy is the intended answer, and
+      in-protocol encryption has not been attempted.
+- [ ] **Sync key rotation is manual** — a node's sync keypair lives in the SQLite file and cannot be
+      rotated without re-enrolling with every peer by hand. There is no revocation list: removing an
+      enrolment stops future ops but does not retract ops already replicated.
 - [ ] **Tracker token storage** — tokens are stored as plaintext in the local SQLite file, protected
-      only by file permissions and disk encryption. Evaluate OS keychain storage (Keychain / Secret
-      Service / DPAPI) so the database stops being the one file that holds a live credential.
-- [ ] **Unauthenticated API surface** — the daemon has no auth by design (loopback + OS user is the
-      boundary), but `GITSTATE_ADDR` will bind any interface. Consider refusing a non-loopback bind
-      unless the operator opts in explicitly.
+      only by file permissions and disk encryption. The node's **sync secret key** now lives in the same
+      file and inherits the same exposure. Evaluate OS keychain storage (Keychain / Secret Service /
+      DPAPI) for both.
 
 ---
 

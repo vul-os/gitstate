@@ -69,18 +69,27 @@ never silently trusts an unverified tree. See [Signed taxonomy](taxonomy.md).
 
 ---
 
-## Sync (optional)
+## Serving, and exposing a node
 
-Peer-to-peer transport is an opt-in build of a crate that is **excluded from the workspace entirely**,
-so that a plain `git clone && cargo build` never resolves — let alone fetches — a network dependency:
+| Variable | Default | Meaning |
+|---|---|---|
+| `GITSTATE_ADDR` | `127.0.0.1` | Bind address. |
+| `GITSTATE_PORT` | `7473` | Bind port. |
+| `GITSTATE_ADMIN_TOKEN` | unset | Bearer token required on the management API. |
+| `GITSTATE_ADMIN_UNAUTHENTICATED` | unset | Set to `i-accept` to assert the management API is protected outside this process (a reverse proxy, a private network, a tunnel). |
 
-```bash
-cargo build --manifest-path crates/gitstate-sync/Cargo.toml --features sync-dmtap
-```
+The daemon **refuses to start** if `GITSTATE_ADDR` is not a loopback address while the management API
+has no gate — a routable bind plus an unauthenticated management API is a total compromise of the node,
+so it is a startup failure rather than a runtime hope. The peer endpoints
+(`/api/sync/pull`, `/api/sync/push`) have their own, stronger key authentication and are deliberately
+*not* opened by the admin token. See [Deployment](deployment.md).
 
-Without it, `sync status` reports `enabled:false` and `sync publish` is a no-op — but contexts and
-categories still work fully offline, and the CRDT op log is still written, so turning sync on later
-replays cleanly. See [Contexts & P2P sync](contexts-sync.md).
+## Sync
+
+There is no build feature and no environment variable to turn replication on: it is compiled in and
+becomes active when an operator enrols a peer with `gitstate sync peer add --url … --key …`. With no
+peers enrolled, a node makes no outbound sync connection at all. See
+[Contexts & P2P sync](contexts-sync.md).
 
 ---
 

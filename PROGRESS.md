@@ -18,7 +18,7 @@ and rationale: [ROADMAP.md](ROADMAP.md), [decisions.md](decisions.md).
 | **screenshots** | `gitstate seed --demo` + a Playwright pipeline capturing every screen, dark and light | ✅ done |
 | **cloud-gh** | CI (rust + web, no Postgres); register `gitstate` in the vulos.org site collection | 🔄 in progress |
 | **packaging** | signed installers: macOS `.dmg`, Linux `.AppImage`/`.deb`, Windows `.msi` | ⬜ not started |
-| **sync transport** | wire `sync-dmtap` end to end (the CRDT model + op log already ship) | ⬜ not started |
+| **sync transport** | HTTP peer transport, manual enrolment, per-op signatures, mutual request auth; driven between two nodes over a non-loopback address | ✅ done |
 | **Go retirement** | port the remaining legacy domains, then delete `internal/`, `cmd/`, root `migrations/` | 🔄 in progress |
 
 ## What works today
@@ -40,8 +40,18 @@ and rationale: [ROADMAP.md](ROADMAP.md), [decisions.md](decisions.md).
   which judge produced a row.
 - **`change_failure_rate` is a text proxy** (revert/hotfix/rollback in the title or labels), and the
   deploy metric counts merge commits — both are labelled as proxies wherever they appear.
-- **P2P transport is unwired**: the CRDT semantics, op log and CLI surface exist; the `sync-dmtap`
-  build has not been driven end to end between two machines.
+- **P2P sync has no confidentiality of its own.** Both ends and every individual op are
+  authenticated over plain HTTP, but ops are not encrypted: on an `http://` peer URL, context names,
+  notes and tags are readable in flight. A terminating reverse proxy is the documented answer
+  (`docs/DEPLOYMENT.md` §2); gitstate does not implement TLS.
+- **The merge algebra is gitstate's own, not the shared KOTVA engine.** It is held against that engine
+  in `crates/gitstate-sync/tests/shared_engine_parity.rs` — LWW parity proven over every arrival
+  order, and the two divergences (an LWW-element-set rather than §4.3's observed-remove OR-Set; a
+  resurrecting tombstone rather than a §4.5 death certificate) asserted rather than described. Closing
+  either is a **wire** change, not a merge change.
+- **Sync key rotation is manual.** A node's keypair lives in its SQLite file; rotating it means
+  re-enrolling with every peer by hand, and removing an enrolment does not retract ops already
+  replicated.
 
 ## Kept in-tree (staged port — do NOT edit)
 
@@ -56,8 +66,10 @@ crates. Each Go domain is removed only once its Rust replacement passes parity. 
   `Classifier`, `Store`, `SyncEngine`); everyone else consumes it as a read-only contract.
 - The daemon serves both the desktop shell and headless mode from **one** JSON API (default
   `127.0.0.1:7473`; Tauri uses an ephemeral port injected into the webview as `window.__GITSTATE_API__`).
-- `cargo build --workspace` must not pull the P2P/sync stack — `gitstate-sync` is excluded and behind
-  the `sync-dmtap` feature.
+- `cargo build --workspace` must stay network-free and must not depend on another *product*.
+  `gitstate-sync` is an ordinary member; the shared merge engine it is checked against is the
+  published `kotva-sync` from crates.io, as a **dev** dependency. `Cargo.lock` contains no `git`
+  sources at all — verify with `grep 'source = "git' Cargo.lock` finding nothing.
 - The web client routes every call through `web/src/lib/api.js`; JSON is snake_case throughout,
   matching the domain serde.
 

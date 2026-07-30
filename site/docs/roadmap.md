@@ -46,7 +46,14 @@ by that line, not by a subscription funnel.
 
 ## Phase 4 — Peer-to-peer, for real
 
-- [ ] Wire the optional `sync-dmtap` transport end to end (device-to-device context + category sync).
+- [x] Peer transport end to end: HTTP to an operator-supplied URL, manual enrolment, individually-signed
+      ops, single-use request tokens, mutual response signatures. Driven between two nodes over a
+      non-loopback address.
+- [x] A cloud-node deployment path: configurable bind, a bind-time refusal to expose an unauthenticated
+      management API, a systemd unit and a Dockerfile, and a deployment guide covering TLS and backup.
+- [ ] Adopt the shared KOTVA merge engine as the algebra rather than only as the reference gitstate's own
+      algebra is checked against. Both known divergences need an op-envelope change, so this is a
+      versioned wire migration.
 - [ ] Signed context exports with provenance, so an imported working set is verifiable.
 - [ ] Conflict-resolution surfacing in the UI (what merged, what was superseded).
 

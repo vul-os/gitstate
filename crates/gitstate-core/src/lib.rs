@@ -15,6 +15,7 @@ pub mod domain;
 pub mod error;
 pub mod health;
 pub mod ids;
+pub mod peer;
 pub mod taxonomy;
 pub mod traits;
 
@@ -33,6 +34,11 @@ pub use domain::{
 pub use ids::{
     now_rfc3339, now_wall_ms, CategoryId, ContextId, ContributorId, Hlc, PeerId, RepoId,
     WorkItemId, HLC_SKEW_MS,
+};
+pub use peer::{
+    normalize_peer_url, normalize_pubkey, op_preimage, request_token_preimage, response_preimage,
+    verify_hex_sig, NodeIdentity, SignedOp, SyncIngestResp, SyncPeer, SyncPullResp, SyncPushReq,
+    REQUEST_SKEW_MS,
 };
 pub use taxonomy::{Taxonomy, TaxonomyCategory, DEFAULT_TAXONOMY_PUBKEY};
 pub use traits::{

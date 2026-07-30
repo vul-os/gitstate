@@ -132,3 +132,44 @@ pub struct SyncPublishReq {
 pub struct PublishResp {
     pub published: u32,
 }
+
+/// `GET /api/sync/identity` — the two values an operator hands to the other node
+/// so it can enrol this one. Never the secret half.
+#[derive(Debug, Serialize)]
+pub struct NodeIdentityResp {
+    /// This node's peer id — the identity its clocks tiebreak on.
+    pub peer_id: String,
+    /// Hex ed25519 public key.
+    pub pubkey: String,
+}
+
+/// `POST /api/sync/peers` — a manual enrolment. Both `url` and `pubkey` come
+/// from the operator, out of band; there is no field for a discovery hint
+/// because there is no discovery.
+#[derive(Debug, Deserialize)]
+pub struct PeerEnrolReq {
+    pub id: String,
+    pub url: String,
+    pub pubkey: String,
+    pub label: Option<String>,
+}
+
+/// `POST /api/sync/run` — one round with every enrolled peer.
+#[derive(Debug, Default, Serialize)]
+pub struct SyncRunResp {
+    pub peers: Vec<PeerRoundView>,
+}
+
+/// What happened with one peer in one round.
+#[derive(Debug, Serialize)]
+pub struct PeerRoundView {
+    pub peer_id: String,
+    pub url: String,
+    pub pushed: u32,
+    pub pulled: u32,
+    pub applied: u32,
+    pub skipped: u32,
+    pub rejected: u32,
+    /// Present when this peer's round failed. The other peers still ran.
+    pub error: Option<String>,
+}

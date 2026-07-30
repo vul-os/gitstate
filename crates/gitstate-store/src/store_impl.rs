@@ -15,6 +15,7 @@ use gitstate_core::{
     WorkKind, WorkState, HLC_SKEW_MS,
 };
 use gitstate_core::{CategoryId, ContextId, ContributorId, RepoId, WorkItemId};
+use gitstate_core::{NodeIdentity, SignedOp, SyncPeer};
 use rusqlite::{params, Connection, OptionalExtension};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -860,6 +861,21 @@ fn ensure_category_row(conn: &Connection, id: &CategoryId, key: &str, hlc: &Hlc)
     Ok(id.0.clone())
 }
 
+/// The stored `note` of one OR-Set element, read back in the op envelope's
+/// spelling (NULL is the empty string).
+fn note_of(conn: &Connection, id: &str, kind: &str, key: &str) -> Result<Option<String>> {
+    let got: Option<Option<String>> = conn
+        .query_row(
+            "SELECT note FROM context_members
+             WHERE context_id = ?1 AND member_kind = ?2 AND member_key = ?3",
+            params![id, kind, key],
+            |r| r.get::<_, Option<String>>(0),
+        )
+        .optional()
+        .map_err(st)?;
+    Ok(got.map(|v| v.unwrap_or_default()))
+}
+
 /// Merge one OR-Set member op. Each side of the element carries its own clock
 /// and only ever moves forward, so the result is independent of arrival order;
 /// `reconstruct_context` then reads the element as present when
@@ -883,14 +899,37 @@ fn merge_context_member(
         )
         .optional()
         .map_err(st)?;
-    let (add_h, rem_h) = match existing {
-        Some((a, r)) => (dec_hlc(a)?, dec_hlc(r)?),
-        None => (None, None),
+    let (add_h, rem_h, cur_note) = match &existing {
+        Some((a, r)) => (
+            dec_hlc(a.clone())?,
+            dec_hlc(r.clone())?,
+            note_of(conn, id, kind, key)?,
+        ),
+        None => (None, None, None),
     };
     // The side this op writes only moves forward — an older or repeated op loses.
     let current = if add { &add_h } else { &rem_h };
-    if matches!(current, Some(c) if c >= hlc) {
-        return Ok(false);
+    if let Some(c) = current {
+        match hlc.cmp(c) {
+            std::cmp::Ordering::Less => return Ok(false),
+            std::cmp::Ordering::Equal => {
+                // An exact clock tie. On the REMOVE side the two ops are
+                // identical (a remove carries nothing but the element), so this
+                // is a duplicate and losing is correct. On the ADD side the
+                // element's `note` is an LWW scalar, so two adds can tie with
+                // different notes — the same divergence `lww_write_wins` exists
+                // to close, and the same rule closes it.
+                if !add {
+                    return Ok(false);
+                }
+                let incoming = note.unwrap_or_default();
+                let held = cur_note.unwrap_or_default();
+                if lww_value_rank(incoming) <= lww_value_rank(&held) {
+                    return Ok(false);
+                }
+            }
+            std::cmp::Ordering::Greater => {}
+        }
     }
     // Two statements, not one with COALESCE: on an ADD the element's `note` is
     // an LWW scalar carried by the winning add, so it must be written even when
@@ -919,6 +958,104 @@ fn merge_context_member(
     Ok(true)
 }
 
+/// Does an incoming LWW write beat the incumbent?
+///
+/// The primary key is the clock. The secondary key — **the larger value bytes
+/// win** — decides an *exact* clock tie, and it is not decoration.
+///
+/// An exact tie means same wall reading, same counter and same peer id, carrying
+/// two different values for one field. An honest node cannot produce that
+/// (`next_hlc` mints a strictly larger counter each time), so it only arises from
+/// a peer that is buggy or hostile — and an enrolled peer on the open internet can
+/// be either. Under a plain `cur >= incoming` rule the incumbent keeps the field,
+/// which means **whichever of the two arrived first wins**: two replicas that
+/// received the pair in opposite orders would then hold different values forever,
+/// with nothing anywhere reporting a problem. Breaking the tie on the value makes
+/// the outcome a function of the op set alone.
+///
+/// The rule and its **direction** are the shared KOTVA engine's (`SYNC.md` §4.4,
+/// `kotva_sync::crdt::lww_wins`), so the two pick the same winner rather than each
+/// merely picking one — see `gitstate-sync/tests/shared_engine_parity.rs`, which
+/// asserts it over every arrival order.
+///
+/// Matching the direction takes [`lww_value_rank`], not a plain byte comparison:
+/// the shared engine ranks the *deterministic-CBOR encoding* of the value, and
+/// CBOR text is length-prefixed, so its order is length-major. Comparing the raw
+/// UTF-8 instead is lexicographic, which disagrees with it on any pair where the
+/// shorter string sorts higher — `"zzz"` vs `"aaa-loses"` is the smallest such
+/// case, and the two engines would then hold different values with no error
+/// anywhere.
+///
+/// `current_value` is a closure so the row read only happens on the tie path.
+fn lww_write_wins<F>(
+    cur_hlc: &Hlc,
+    new_hlc: &Hlc,
+    current_value: F,
+    new_value: &str,
+) -> Result<bool>
+where
+    F: FnOnce() -> Result<Option<String>>,
+{
+    match new_hlc.cmp(cur_hlc) {
+        std::cmp::Ordering::Greater => Ok(true),
+        std::cmp::Ordering::Less => Ok(false),
+        std::cmp::Ordering::Equal => match current_value()? {
+            Some(cur) => Ok(lww_value_rank(new_value) > lww_value_rank(&cur)),
+            // A recorded clock with no readable value: take the write, since
+            // refusing it would leave the field empty with a clock claiming
+            // otherwise.
+            None => Ok(true),
+        },
+    }
+}
+
+/// The rank of a value under an exact-clock tie: `(byte length, bytes)`.
+///
+/// This is exactly the order of the shared engine's deterministic-CBOR encoding
+/// of a text string. A CBOR text head is `0x60 + len` for `len < 24`, then `0x78`,
+/// `0x79`, `0x7A` … for the wider length forms — monotonically increasing in
+/// length across every boundary — followed by the UTF-8 bytes. So ordering encoded
+/// strings is ordering `(len, bytes)`, and reproducing it needs no CBOR encoder
+/// here.
+fn lww_value_rank(v: &str) -> (usize, &[u8]) {
+    (v.len(), v.as_bytes())
+}
+
+/// The stored value of one context scalar field. One statement per field: a
+/// column name is never interpolated from data.
+fn context_field_value(
+    conn: &Connection,
+    id: &ContextId,
+    field: CtxField,
+) -> Result<Option<String>> {
+    let sql = match field {
+        CtxField::Name => "SELECT name FROM contexts WHERE id = ?1",
+        CtxField::Description => "SELECT description FROM contexts WHERE id = ?1",
+        CtxField::Notes => "SELECT notes FROM contexts WHERE id = ?1",
+    };
+    conn.query_row(sql, [&id.0], |r| r.get::<_, Option<String>>(0))
+        .optional()
+        .map_err(st)
+        .map(|o| o.flatten())
+}
+
+/// The stored value of one category scalar field, in the op envelope's spelling:
+/// a NULL column reads back as the empty string, which is how `ops_for_category`
+/// encodes "unset". Comparing a NULL as absent instead would make the tiebreak
+/// disagree with the value the peer actually sent.
+fn category_field_value(conn: &Connection, row: &str, field: CatField) -> Result<Option<String>> {
+    let sql = match field {
+        CatField::Label => "SELECT label FROM categories WHERE id = ?1",
+        CatField::Color => "SELECT color FROM categories WHERE id = ?1",
+        CatField::ParentKey => "SELECT parent_key FROM categories WHERE id = ?1",
+    };
+    let got: Option<Option<String>> = conn
+        .query_row(sql, [row], |r| r.get::<_, Option<String>>(0))
+        .optional()
+        .map_err(st)?;
+    Ok(got.map(|v| v.unwrap_or_default()))
+}
+
 /// Replay a single remote op into the typed rows. Returns whether it changed
 /// anything.
 fn merge_op(conn: &Connection, op: &SyncOp) -> Result<bool> {
@@ -932,7 +1069,7 @@ fn merge_op(conn: &Connection, op: &SyncOp) -> Result<bool> {
             ensure_context_row(conn, id, "")?;
             let name = field.as_str();
             if let Some(cur) = context_field_clock(conn, &id.0, name)? {
-                if &cur >= hlc {
+                if !lww_write_wins(&cur, hlc, || context_field_value(conn, id, *field), value)? {
                     return Ok(false);
                 }
             }
@@ -1023,7 +1160,12 @@ fn merge_op(conn: &Connection, op: &SyncOp) -> Result<bool> {
             let row = ensure_category_row(conn, id, key, hlc)?;
             let name = field.as_str();
             if let Some(cur) = category_field_clock(conn, &row, name)? {
-                if &cur >= hlc {
+                if !lww_write_wins(
+                    &cur,
+                    hlc,
+                    || category_field_value(conn, &row, *field),
+                    value,
+                )? {
                     return Ok(false);
                 }
             }
@@ -1086,6 +1228,18 @@ fn append_ops(conn: &Connection, ops: &[SyncOp]) -> Result<()> {
         .map_err(st)?;
     }
     observe_ops(conn, ops)
+}
+
+/// Append one op together with the author attestation it arrived with, so this
+/// node can relay it verbatim rather than substituting its own signature.
+fn append_signed_op(conn: &Connection, signed: &SignedOp) -> Result<()> {
+    let json = serde_json::to_string(&signed.op)?;
+    conn.execute(
+        "INSERT INTO sync_ops (op_json, hlc, applied, author, sig) VALUES (?1, ?2, 1, ?3, ?4)",
+        params![json, signed.op.hlc().encode(), signed.author, signed.sig],
+    )
+    .map_err(st)?;
+    observe_ops(conn, std::slice::from_ref(&signed.op))
 }
 
 /// Fold every appended op's clock into the stored `hlc_last` — the HLC receive
@@ -1719,12 +1873,43 @@ impl Store for SqliteStore {
         Ok(changed)
     }
 
+    fn merge_signed_sync_op(&self, signed: &SignedOp) -> Result<bool> {
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.transaction().map_err(st)?;
+        let changed = merge_op(&tx, &signed.op)?;
+        if !op_already_logged(&tx, &signed.op)? {
+            append_signed_op(&tx, signed)?;
+        }
+        tx.commit().map_err(st)?;
+        Ok(changed)
+    }
+
     /// Returned in `seq` order — the order ops reached THIS node, which is not
-    /// the HLC order. That is deliberate and sufficient: `merge_sync_op` is
-    /// commutative and idempotent, so a peer converges on the same rows
-    /// whatever order it receives them in. Sorting by clock here would buy
-    /// nothing and would break the `since` cursor, which is a watermark over
-    /// arrival, not over wall time.
+    /// the HLC order. That is sufficient because `merge_sync_op` is commutative
+    /// and idempotent, so a receiver converges on the same rows whatever order it
+    /// is handed them in; sorting by clock here would buy nothing.
+    ///
+    /// # `since` is a CLOCK filter, and a scalar clock is not a safe cursor
+    ///
+    /// An op is skipped when its own `Hlc` is at or below `since`. That is a
+    /// filter over the total order, not over arrival — an earlier version of this
+    /// comment claimed the opposite, and the difference matters, because it is why
+    /// gitstate's own peer client does **not** pass a `since`.
+    ///
+    /// A single clock cannot summarise "what I already have" across several
+    /// authors. Suppose a peer holds an op from author C at clock 50 and one from
+    /// author D at clock 100. A caller pulls both and remembers 100. Author C's
+    /// next op arrives at the peer with clock 60 — legitimately, C's wall clock
+    /// simply trails D's — and the caller's next pull, filtered at 100, never sees
+    /// it. The write is lost permanently, and no error is raised anywhere.
+    ///
+    /// The structure that summarises this soundly is a per-author version vector,
+    /// which gitstate does not keep. So [`gitstate_sync`]'s client asks for the
+    /// whole log every round and relies on dedup and idempotence — the same choice,
+    /// for the same reason, as the push direction. `since` remains here because the
+    /// filter itself is correctly specified and a caller holding a real version
+    /// vector could use it per author; it is not a cursor for a caller holding one
+    /// scalar.
     fn sync_ops_since(&self, since: Option<&Hlc>) -> Result<Vec<SyncOp>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn
@@ -1751,6 +1936,174 @@ impl Store for SqliteStore {
         }
         Ok(out)
     }
+
+    /// The exportable log. See the trait doc for why an op this node can neither
+    /// have authored nor received with a signature is omitted rather than signed.
+    fn signed_ops_since(&self, since: Option<&Hlc>) -> Result<Vec<SignedOp>> {
+        let identity = {
+            let conn = self.conn.lock().unwrap();
+            let secret = match kv_get_conn(&conn, SYNC_SECRET_KV)? {
+                Some(s) if !s.is_empty() => s,
+                _ => {
+                    let s = NodeIdentity::generate().secret_hex();
+                    kv_set_conn(&conn, SYNC_SECRET_KV, &s)?;
+                    s
+                }
+            };
+            let local_peer = get_or_create_peer(&conn)?;
+            (NodeIdentity::from_secret_hex(&secret)?, local_peer)
+        };
+        let (identity, local_peer) = identity;
+
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn
+            .prepare("SELECT op_json, hlc, author, sig FROM sync_ops ORDER BY seq")
+            .map_err(st)?;
+        type Row = (String, String, Option<String>, Option<String>);
+        let rows: Vec<Row> = stmt
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))
+            .map_err(st)?
+            .collect::<rusqlite::Result<_>>()
+            .map_err(st)?;
+        drop(stmt);
+
+        let mut out = Vec::new();
+        for (json, hlc_s, author, sig) in rows {
+            if let Some(floor) = since {
+                if let Ok(h) = Hlc::decode(&hlc_s) {
+                    if &h <= floor {
+                        continue;
+                    }
+                }
+            }
+            let Ok(op) = serde_json::from_str::<SyncOp>(&json) else {
+                continue;
+            };
+            match (author, sig) {
+                // Received from a peer: relay its attestation verbatim.
+                (Some(author), Some(sig)) if !author.is_empty() && !sig.is_empty() => {
+                    out.push(SignedOp { op, author, sig });
+                }
+                // Authored here: this node's key is the one entitled to attest.
+                _ if op.hlc().peer == local_peer => {
+                    out.push(identity.sign_op(&op)?);
+                }
+                // Neither. Omitted — see the trait doc.
+                _ => {}
+            }
+        }
+        Ok(out)
+    }
+
+    /// Mint-on-first-use, then stable. The secret never leaves this file (and
+    /// never leaves the process except as a signature), so rotating it means
+    /// re-enrolling with every peer — which is why it is minted once and kept,
+    /// not derived from anything an operator could change by accident.
+    fn node_secret_hex(&self) -> Result<String> {
+        let conn = self.conn.lock().unwrap();
+        if let Some(v) = kv_get_conn(&conn, SYNC_SECRET_KV)? {
+            if !v.is_empty() {
+                return Ok(v);
+            }
+        }
+        let secret = NodeIdentity::generate().secret_hex();
+        kv_set_conn(&conn, SYNC_SECRET_KV, &secret)?;
+        Ok(secret)
+    }
+
+    fn upsert_sync_peer(&self, peer: &SyncPeer) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO sync_peers (id, url, pubkey, label, added_at, last_pull_hlc)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+             ON CONFLICT(id) DO UPDATE SET
+                url = excluded.url, pubkey = excluded.pubkey, label = excluded.label",
+            params![
+                peer.id.0,
+                peer.url,
+                peer.pubkey,
+                peer.label,
+                peer.added_at,
+                peer.last_pull_hlc.as_ref().map(|h| h.encode()),
+            ],
+        )
+        .map_err(|e| {
+            // The unique index on `pubkey` is the guard against one key holder
+            // presenting as two clock identities. Report it as an invalid
+            // enrolment rather than a bare storage error, because it is the
+            // operator's input that is wrong.
+            if e.to_string().contains("idx_sync_peers_pubkey") {
+                Error::invalid(format!(
+                    "that public key is already enrolled under a different peer id: {}",
+                    peer.pubkey
+                ))
+            } else {
+                Error::storage(e)
+            }
+        })?;
+        Ok(())
+    }
+
+    fn list_sync_peers(&self) -> Result<Vec<SyncPeer>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, url, pubkey, label, added_at, last_pull_hlc
+                 FROM sync_peers ORDER BY added_at, id",
+            )
+            .map_err(st)?;
+        let rows = stmt
+            .query_map([], map_sync_peer)
+            .map_err(st)?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(st)?;
+        Ok(rows)
+    }
+
+    fn sync_peer_by_pubkey(&self, pubkey: &str) -> Result<Option<SyncPeer>> {
+        let conn = self.conn.lock().unwrap();
+        conn.query_row(
+            "SELECT id, url, pubkey, label, added_at, last_pull_hlc
+             FROM sync_peers WHERE pubkey = ?1",
+            [pubkey.trim().to_ascii_lowercase()],
+            map_sync_peer,
+        )
+        .optional()
+        .map_err(st)
+    }
+
+    fn delete_sync_peer(&self, id: &PeerId) -> Result<bool> {
+        let conn = self.conn.lock().unwrap();
+        let n = conn
+            .execute("DELETE FROM sync_peers WHERE id = ?1", [&id.0])
+            .map_err(st)?;
+        Ok(n > 0)
+    }
+
+    fn set_sync_peer_cursor(&self, id: &PeerId, hlc: &Hlc) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE sync_peers SET last_pull_hlc = ?2 WHERE id = ?1",
+            params![id.0, hlc.encode()],
+        )
+        .map_err(st)?;
+        Ok(())
+    }
+}
+
+/// The `kv` key holding this node's sync secret seed (hex).
+const SYNC_SECRET_KV: &str = "sync_secret_key";
+
+fn map_sync_peer(r: &rusqlite::Row) -> rusqlite::Result<SyncPeer> {
+    let cursor: Option<String> = r.get(5)?;
+    Ok(SyncPeer {
+        id: PeerId(r.get(0)?),
+        url: r.get(1)?,
+        pubkey: r.get(2)?,
+        label: r.get(3)?,
+        added_at: r.get(4)?,
+        last_pull_hlc: cursor.and_then(|s| Hlc::decode(&s).ok()),
+    })
 }
 
 #[cfg(test)]

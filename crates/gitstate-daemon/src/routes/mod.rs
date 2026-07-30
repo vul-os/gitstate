@@ -8,6 +8,7 @@ mod contexts;
 mod health_metrics;
 mod meta;
 mod repos;
+mod sync;
 mod trackers;
 
 use axum::http::StatusCode;
@@ -21,8 +22,9 @@ pub use categories::category_routes;
 pub use classify::classify_routes;
 pub use contexts::context_routes;
 pub use health_metrics::health_routes;
-pub use meta::meta_routes;
+pub use meta::{meta_routes, public_routes};
 pub use repos::repo_routes;
+pub use sync::{sync_admin_routes, sync_peer_routes};
 pub use trackers::tracker_routes;
 
 /// A JSON error body `{ "error": "...", "code": "snake_code" }` with a status.
@@ -59,7 +61,10 @@ impl From<Error> for ApiError {
             Error::Invalid(_) => (StatusCode::BAD_REQUEST, "invalid"),
             Error::ForgeCliMissing(_) => (StatusCode::BAD_REQUEST, "forge_cli_missing"),
             Error::TaxonomyUntrusted(_) => (StatusCode::BAD_REQUEST, "taxonomy_untrusted"),
-            Error::SyncDisabled => (StatusCode::NOT_FOUND, "sync_disabled"),
+            Error::SyncNoPeers => (StatusCode::CONFLICT, "sync_no_peers"),
+            // Never leaks which check failed: the message that reaches the wire
+            // is the code, and the detail stays in the local log.
+            Error::Unauthenticated(_) => (StatusCode::UNAUTHORIZED, "unauthenticated"),
             Error::Forge(_) => (StatusCode::BAD_GATEWAY, "forge_error"),
             Error::Git(_) => (StatusCode::INTERNAL_SERVER_ERROR, "git_error"),
             Error::Classify(_) => (StatusCode::INTERNAL_SERVER_ERROR, "classify_error"),
@@ -68,10 +73,19 @@ impl From<Error> for ApiError {
             Error::Io(_) => (StatusCode::INTERNAL_SERVER_ERROR, "io_error"),
             Error::Json(_) => (StatusCode::BAD_REQUEST, "json_error"),
         };
+        // An authentication failure returns the code and nothing else. Telling an
+        // unauthenticated caller *why* it was refused ("key not enrolled" vs
+        // "signature check failed" vs "token already used") hands it a probe for
+        // the peer list; the detail belongs in the operator's log, not the
+        // response.
+        let message = match &e {
+            Error::Unauthenticated(_) => "unauthenticated".to_string(),
+            _ => e.to_string(),
+        };
         ApiError {
             status,
             code,
-            message: e.to_string(),
+            message,
         }
     }
 }

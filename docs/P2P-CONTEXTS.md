@@ -77,25 +77,113 @@ a peer.
 merging is commutative and idempotent, so a peer handed the log in any order converges on the same
 rows, and re-delivering an op is a no-op for both the rows and the log.
 
-## The sync engine (opt-in)
+That is a proven property, not a design intention.
+`crates/gitstate-sync/tests/convergence.rs` enumerates **every permutation** of a mixed op set —
+LWW winners, an exact clock tie, add/remove on one element, a resurrecting tombstone, two ids for one
+category key — delivers each op twice, and asserts one final observable state. It also runs two
+replicas fed in opposite orders and exchanges their logs both ways.
 
-`gitstate-sync` implements `SyncEngine` (`publish` / `merge` / `export_since` / `status`) as
-`CrdtSyncEngine`. It is **excluded from the default workspace** and lives behind the `sync-dmtap`
-feature — so a plain `cargo build` pulls no P2P or network dependencies, and the local app is fully
-usable without it. Transport rides the shared vulos/DMTAP sync substrate rather than a bespoke stack;
-it is signed and hub-less.
+### Whose algebra is it?
+
+gitstate's merge decisions are taken by **gitstate's own** implementation, over SQLite, in
+`gitstate-store`. It is *not* the shared KOTVA merge engine, and this repository does not claim it is.
+
+What it does instead is hold itself against that engine.
+`crates/gitstate-sync/tests/shared_engine_parity.rs` links the published `kotva-sync`
+(`substrate/SYNC.md` capability ③) as a test dependency, replays the same op streams through both, and:
+
+- **proves parity** for the §4.4 LWW register — every scalar field of a context and a category —
+  over all 720 orderings of a set built so each discriminator in turn decides: clock, then peer id,
+  then, at an exact tie, the value;
+- **records the two divergences** that stop gitstate simply adopting the shared engine's state
+  machine, as assertions rather than as prose:
+  - the member set is an **LWW-element-set**, not §4.3's observed-remove OR-Set. gitstate's remove
+    carries no observed add-tag list — there is no field for one in `SyncOp` — so moving to §4.3 is a
+    *wire* change, not a merge change.
+  - the document tombstone **resurrects** on a later write, where a §4.5 death certificate never
+    does. §4.5's three classes are `redact`, `expires` and `sensitive`; none of them is "the user
+    deleted their saved working set", which is itself the answer to §4.10's selection test — a context
+    delete is an ordinary reversible edit.
+
+The parity work has already paid for itself once: comparing the two exposed that gitstate resolved an
+**exact clock tie** by arrival order, so two replicas that received the same pair of ops in different
+orders would hold different values forever with nothing reporting it. gitstate now breaks that tie the
+way the shared engine does, on the value, length-major (which is the order of the shared engine's
+CBOR encoding — plain byte comparison disagrees with it).
+
+## The sync engine and the peer transport
+
+`gitstate-sync` is an ordinary workspace member, compiled unconditionally. There is **no build feature
+to enable**: replication needs none.
+
+> A `sync-dmtap` feature used to live here. It linked a crate out of the `envoir` repository — one
+> product importing another to get a merge engine — and wired nothing to it: both transports it
+> exposed returned success and an empty list. It has been removed, and the shared engine it was
+> reaching for is now consumed from crates.io as `kotva-sync`, in tests, where the claim it supports
+> is one that can be checked. `gitstate-sync` was also excluded from the workspace to stop a plain
+> `cargo build` fetching that git remote; with a registry dependency that is unnecessary, so it is a
+> normal member and `cargo test --workspace` finally runs its tests.
+
+Two halves:
+
+- `CrdtSyncEngine` — the local half. `publish` / `merge` / `export_since` / `status` over the store.
+- `SyncNode` + `HttpPeerClient` — the network half. One round with each enrolled peer: push, then pull.
 
 ```bash
-# Build with sync enabled. The crate is excluded from the workspace, so `-p`
-# cannot address it — use its manifest path (or `make sync-dmtap`).
-cargo build --manifest-path crates/gitstate-sync/Cargo.toml --features sync-dmtap
-
+gitstate sync identity             # this node's peer id + public key
+gitstate sync peer add --id <id> --url <url> --key <hex>
+gitstate sync peer list
+gitstate sync run                  # one round with every enrolled peer
 gitstate sync status               # { enabled, peer_id, peers, last_op_hlc }
-gitstate sync publish              # broadcast local ops (no-op / disabled when built without the feature)
 ```
 
-Over HTTP, `GET /api/sync/status` always answers (`{ "enabled": false, … }` when off) and
-`POST /api/sync/publish` returns `sync_disabled` when the feature isn't built.
+### Discovery is manual, and that is the whole design
+
+A peer exists because an operator typed its URL and its public key. There is no directory, no default
+endpoint, no seed list, no mDNS, and no rendezvous or hole-punching broker in **any** path, default or
+fallback. An empty peer list means this node replicates with nobody — the correct state for a fresh
+install, not a degraded one.
+
+A node with no routable address cannot be *dialled*; that is IP, not a missing feature. Both
+directions of a round travel over the connection the caller opens, so a laptop behind NAT converges
+fully with a node that has an address. Giving one side an address is what
+[DEPLOYMENT.md](DEPLOYMENT.md) is for. If a traversal broker is ever added it goes behind the
+`PeerClient` seam as one more implementation, and removing it must leave the direct transport working.
+
+### Authentication
+
+Built for a node on the open internet, because that is what a deployed node is.
+
+- **Every op is individually signed** (ed25519, over a domain-separated canonical preimage of that one
+  op) and verified on its own. Ops are *relayed* — a node re-exports changes it did not author — so
+  "the connection authenticated" says nothing about who wrote the change inside it. A node stores the
+  original author's signature and re-exports it verbatim rather than substituting its own, so a
+  three-node topology does not require trusting the middle node.
+- **The clock's tiebreak identity is bound to the signer.** An op is refused if its `Hlc.peer` is not
+  the enrolled id of the key that signed it — otherwise an enrolled peer could steer every LWW
+  decision on another node's behalf.
+- **Admission is the enrolled key, not a valid signature.** A stranger's own perfectly valid signature
+  is refused: identity is not authorisation.
+- **Requests are single-use.** `Authorization: GitState-Sync <pubkey>.<unix-ms>.<sig>`, the signature
+  covering the method, the path and the timestamp. The timestamp must be within ±120 s, and inside that
+  window a signature already accepted is refused.
+- **Mutual.** The responder signs the response body; the caller checks it against the key it enrolled.
+  So a wrong DNS answer or a transparent proxy produces a refusal, not accepted ops.
+- **Far-future clocks are refused**, not merged and remembered: one op stamped at the end of time would
+  win every field forever.
+- Every failure is one `401 unauthenticated` with **no detail** — the reason is logged locally, never
+  returned, so the endpoint is not a probe for the peer list.
+
+Over HTTP:
+
+| Route | Audience | Gate |
+|---|---|---|
+| `GET /health` | anyone | none, deliberately |
+| `GET /api/sync/pull`, `POST /api/sync/push` | peers | signed request token + per-op signatures |
+| `GET /api/sync/identity`, `…/peers`, `POST /api/sync/run`, everything else under `/api` | the operator | `GITSTATE_ADMIN_TOKEN` on a non-loopback bind |
+
+The daemon **refuses to start** on a non-loopback bind while the management API has no gate. See
+[DEPLOYMENT.md](DEPLOYMENT.md) §1.
 
 ## What never syncs
 

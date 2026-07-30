@@ -83,8 +83,10 @@ Honest, local, decentralized labeling.
 Share the smarts (working sets and labels), never the code.
 
 - [x] **CRDT model in core** — `SyncOp` op envelope; contexts and categories as LWW scalars + OR-Sets with a hybrid logical clock; add-wins, tombstones, resurrection.
-- [x] **gitstate-sync** (excluded crate, feature `sync-dmtap`) — `CrdtSyncEngine`, op derivation, and an idempotent merge that replays a remote op into the context/category rows (`Store::merge_sync_op`): local edits and remote ops reach the same tables under the same clock comparison.
-- [ ] **Transport** — P2P over the shared vulos/DMTAP sync substrate rather than a bespoke stack; signed, no central hub.
+- [x] **gitstate-sync** — `CrdtSyncEngine`, op derivation, and an idempotent merge that replays a remote op into the context/category rows (`Store::merge_sync_op`): local edits and remote ops reach the same tables under the same clock comparison. An ordinary workspace member, no build feature.
+- [x] **Transport** — HTTP to an operator-supplied URL. No discovery, no default endpoint, no broker in any path. Manual enrolment (`sync peer add --url --key`), individually-signed ops verified on their own, single-use signed request tokens, mutual response signatures, fail-closed on every mismatch. Driven between two nodes over a non-loopback address; `crates/gitstate-daemon/tests/sync_peers.rs` drives it over real sockets.
+- [x] **Cloud-node deployment** — configurable bind, a bind-time refusal to expose an unauthenticated management API, a systemd unit and a Dockerfile under `deploy/`, and [DEPLOYMENT.md](docs/DEPLOYMENT.md) covering TLS, enrolment, backup and what the deployment does *not* give you.
+- [ ] **Adopt the shared KOTVA merge engine as the algebra.** gitstate runs its own; parity with `kotva-sync` is proven for the §4.4 LWW register and the two divergences are asserted in `crates/gitstate-sync/tests/shared_engine_parity.rs`. Both need an op-envelope (wire) change, so this is a versioned migration, not a refactor.
 - [x] **Context export/import** — a portable JSON working set, shareable out-of-band even without the sync feature built.
 - [x] Convergence tests — commutative + idempotent op application; replay in any order yields identical state.
 
