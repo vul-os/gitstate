@@ -22,6 +22,21 @@
 # Raise the MIN_* floors when the tree genuinely grows; never lower them to get
 # green.
 #
+# DB-GATED TESTS ARE NOT FREE COVERAGE
+# -------------------------------------
+# ~80 tests across this tree (internal/store and internal/jobs the largest two,
+# 49 between them, but also middleware/metrics/chat/calibration/gitanalysis/
+# admin/api/contributors/contribution/sync/webhooks) call `t.Skip(...)` when
+# DATABASE_URL (and, for internal/jobs, ADMIN_DATABASE_URL) is unset. `go test`
+# still prints `ok` for a package where every test skipped — indistinguishable
+# from a package that actually ran and passed, in the `ok_count` check above.
+# This gate does NOT let that pass as coverage: it re-runs with `-v`, counts
+# `--- SKIP` lines explicitly, and asserts that count (see step 6 below) rather
+# than trusting the package-level `ok`. With DATABASE_URL set, zero skips are
+# tolerated — a skip there means the DB is misconfigured, not merely absent.
+# Without it, the skip count must match EXPECTED_DB_SKIPPED_TESTS exactly, so a
+# newly-introduced (or newly-vanished) skip is never silent.
+#
 # Usage:
 #   scripts/go-gate.sh              # build, vet, gofmt, test -race
 #   NO_RACE=1 scripts/go-gate.sh    # same without the race detector
@@ -40,6 +55,14 @@ PKGS=(./cmd/... ./internal/...)
 MIN_PKGS="${MIN_PKGS:-37}"          # packages under cmd/ + internal/
 MIN_TESTED_PKGS="${MIN_TESTED_PKGS:-29}"  # of those, ones carrying _test.go
 MIN_GO_FILES="${MIN_GO_FILES:-243}" # .go files handed to gofmt
+
+# Exact, not a floor: how many top-level Go tests are expected to `t.Skip` when
+# no DATABASE_URL is set. Measured directly with `go test -v` across
+# ./cmd/... ./internal/... on a clean tree (2026-07-30) — see the "DB-GATED
+# TESTS" note above. Update this deliberately (with a comment saying why) if a
+# DB-gated test is genuinely added or removed; never bump it to silence a
+# failure without knowing which test moved.
+EXPECTED_DB_SKIPPED_TESTS="${EXPECTED_DB_SKIPPED_TESTS:-80}"
 
 fail() { echo "GO GATE FAILED: $*" >&2; exit 1; }
 step() { CURRENT_STEP="$*"; printf '\n\033[1m── %s\033[0m\n' "$*"; }
@@ -142,7 +165,11 @@ fi
 test_log="$(mktemp)"
 trap 'rm -f "$test_log"' EXIT
 set +e
-go test "${race[@]}" "${PKGS[@]}" 2>&1 | tee "$test_log"
+# -v is required, not cosmetic: without it a package where every test skipped
+# and a package that genuinely ran both print only `ok  <pkg>  <time>`, so the
+# skip-coverage step below would have nothing to count. See "DB-GATED TESTS"
+# above.
+go test "${race[@]}" -v "${PKGS[@]}" 2>&1 | tee "$test_log"
 test_status="${PIPESTATUS[0]}"
 set -e
 [ "$test_status" -eq 0 ] || fail "go test exited $test_status"
@@ -152,5 +179,52 @@ echo "  $ok_count packages reported ok"
 [ "$ok_count" -ge "$MIN_TESTED_PKGS" ] ||
   fail "only $ok_count packages reported ok, expected >= $MIN_TESTED_PKGS — go test exited 0 without running the suite"
 
-printf '\n\033[32mGO GATE PASSED\033[0m — %s packages built + vetted, %s files gofmt-clean, %s packages tested%s\n' \
-  "$pkg_count" "${#go_files[@]}" "$ok_count" "$([ -n "${NO_RACE:-}" ] && echo ' (no race detector)' || echo ' with -race')"
+# ── 6. Skip-coverage assertion ──────────────────────────────────────────────
+# A package reporting `ok` proves nothing about what ran INSIDE it: `go test`
+# prints `ok` whether every test executed or every test called t.Skip. Count
+# top-level test outcomes directly instead of trusting the package verdict.
+# (Anchored on column 0 so indented `--- SKIP`/`--- PASS` lines from t.Run
+# subtests are not double-counted against their parent.)
+step "skip-coverage assertion (DB-gated tests must not silently count as tested)"
+skip_count="$(grep -c '^--- SKIP' "$test_log" || true)"
+passed_count="$(grep -c '^--- PASS' "$test_log" || true)"
+failed_count="$(grep -c '^--- FAIL' "$test_log" || true)"
+echo "  $passed_count top-level tests passed, $skip_count skipped, $failed_count failed"
+
+if [ -n "${DATABASE_URL:-}" ]; then
+  # A database is configured — every DB-gated test is expected to actually
+  # run. Any skip here means the connection/migrations/role grants are wrong,
+  # not merely "no DB available", and that must fail loudly rather than ride
+  # the package's `ok` to a green gate.
+  [ "$skip_count" -eq 0 ] ||
+    fail "$skip_count tests SKIPPED even though DATABASE_URL is set — the DB-backed
+    suite is not actually exercising the database (bad connection string,
+    unmigrated schema, or a role/grant mismatch against provision-db.sh).
+    'go test' still exited 0 and every affected package still printed 'ok'.
+    Skipped:
+$(grep -B1 '^--- SKIP' "$test_log" | grep -E '_test\.go:[0-9]+:' | sed 's/^/      /')"
+  echo "  ok — DATABASE_URL set and zero DB-gated tests skipped"
+else
+  echo "  NOTE: DATABASE_URL not set — $skip_count DB-backed integration tests"
+  echo "        SKIPPED, not run (internal/store, internal/jobs, and others; see"
+  echo "        the DB-GATED TESTS note at the top of this file). This gate does"
+  echo "        NOT count that as coverage — it asserts the exact skip count below"
+  echo "        instead of trusting the packages' 'ok'. CI sets DATABASE_URL (+"
+  echo "        ADMIN_DATABASE_URL) against a real Postgres service so these run"
+  echo "        for real; see the 'go' job in .github/workflows/ci.yml."
+  [ "$skip_count" -eq "$EXPECTED_DB_SKIPPED_TESTS" ] ||
+    fail "expected exactly $EXPECTED_DB_SKIPPED_TESTS DB-gated tests to skip with no
+    DATABASE_URL, found $skip_count. A number that moved — up OR down — means a
+    t.Skip appeared or vanished somewhere in this tree since EXPECTED_DB_SKIPPED_TESTS
+    was set, and that is worth a human look before trusting this run:
+$(grep -B1 '^--- SKIP' "$test_log" | grep -E '_test\.go:[0-9]+:' | sed 's/^/      /')"
+fi
+
+if [ "$skip_count" -gt 0 ]; then
+  coverage_note=" — ${skip_count} DB-gated tests SKIPPED (NOT full coverage; set DATABASE_URL)"
+else
+  coverage_note=" — 0 tests skipped"
+fi
+printf '\n\033[32mGO GATE PASSED\033[0m — %s packages built + vetted, %s files gofmt-clean, %s packages tested%s, %s tests passed%s\n' \
+  "$pkg_count" "${#go_files[@]}" "$ok_count" "$([ -n "${NO_RACE:-}" ] && echo ' (no race detector)' || echo ' with -race')" \
+  "$passed_count" "$coverage_note"

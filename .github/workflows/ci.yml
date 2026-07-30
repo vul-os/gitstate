@@ -139,6 +139,32 @@ jobs:
     # at all — 243 files, 37 packages, 29 of them with tests, none of it
     # compiled or run on a push. This job is that gate. It is fail-closed and
     # asserts coverage counts; see scripts/go-gate.sh for the contract.
+    #
+    # ~80 of those tests (internal/store + internal/jobs are the largest two,
+    # 49 between them, but middleware/metrics/chat/calibration/gitanalysis/
+    # admin/api/contributors/contribution/sync/webhooks each have at least one
+    # too) are Postgres integration tests that `t.Skip` whenever DATABASE_URL
+    # is unset. `go test` still prints `ok` for a package where every test
+    # skipped, so without a real database here this job was asserting nothing
+    # about ~80 tests while reporting them as part of "29 packages tested".
+    # This service provisions a real `gitstate_test` database with the
+    # project's own scripts/provision-db.sh (same roles/RLS-grant path a
+    # developer runs locally) so those tests genuinely execute, and
+    # go-gate.sh's skip-coverage assertion now requires exactly 0 skips
+    # whenever DATABASE_URL is set — a stray skip here fails the job instead
+    # of quietly passing.
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       # go.mod carries `replace github.com/llmux/llmux => ../../vulos/llmux`,
       # a sibling working copy. Recreate that layout inside the workspace:
@@ -162,8 +188,23 @@ jobs:
           go-version-file: vulos/gitstate/go.mod
           cache-dependency-path: vulos/gitstate/go.sum
 
+      # Same script a developer runs locally (see .env docs / jobs_test.go
+      # header) — not a hand-rolled CI-only SQL block that could drift from
+      # the real provisioning path.
+      - name: Provision gitstate_test (RLS roles + grants + migrate)
+        working-directory: vulos/gitstate
+        env:
+          PGPASSWORD: postgres
+        run: |
+          SUPERUSER=postgres PGHOST=localhost \
+            APP_PASSWORD=citestpw ADMIN_PASSWORD=citestadminpw \
+            bash scripts/provision-db.sh gitstate_test
+
       - name: Go gate (build, vet, gofmt, test -race + coverage assertions)
         working-directory: vulos/gitstate
+        env:
+          DATABASE_URL: postgres://gitstate_app:citestpw@localhost:5432/gitstate_test?sslmode=disable
+          ADMIN_DATABASE_URL: postgres://gitstate_admin:citestadminpw@localhost:5432/gitstate_test?sslmode=disable
         run: ./scripts/go-gate.sh
 
   frontend:
