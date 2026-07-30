@@ -163,6 +163,7 @@ nav.links a:hover{color:var(--text)}
 }
 .pill.t{border-color:rgba(45,212,191,.28);background:rgba(45,212,191,.08);color:var(--teal)}
 .pill.i{border-color:rgba(99,102,241,.30);background:rgba(99,102,241,.09);color:#a5b4fc}
+.pill.small-pill{font-size:10.5px}
 .dot-live{position:relative;display:inline-flex;width:6px;height:6px}
 .dot-live i{position:absolute;inset:0;border-radius:99px;background:var(--teal)}
 .dot-live i:first-child{opacity:.65;animation:ping 1.9s cubic-bezier(0,0,.2,1) infinite}
@@ -173,6 +174,11 @@ nav.links a:hover{color:var(--text)}
 .hero{padding:78px 0 28px;position:relative;overflow-x:clip}
 @media (max-width:760px){.hero{padding:52px 0 16px}}
 .hero-grid{display:grid;grid-template-columns:minmax(0,1.02fr) minmax(0,1.12fr);gap:56px;align-items:center}
+/* Grid items default to min-width:auto, which refuses to shrink below their
+   content's intrinsic width — below 1000px the row collapses to a bare 1fr
+   track with no min override, so without this the column (and the whole
+   page) gets pushed wider than the viewport on narrow phones. */
+.hero-grid>div{min-width:0}
 @media (max-width:1000px){.hero-grid{grid-template-columns:1fr;gap:44px}}
 .hero h1{font-size:clamp(40px,6.1vw,66px);letter-spacing:-.035em;line-height:1.03}
 .grad-text{background:var(--grad);-webkit-background-clip:text;background-clip:text;color:transparent}
@@ -255,7 +261,7 @@ nav.links a:hover{color:var(--text)}
 .panel.new .head{background:rgba(45,212,191,.05);border-color:rgba(45,212,191,.16)}
 .panel .head b{font-family:var(--mono);font-size:11px;letter-spacing:.13em;text-transform:uppercase;color:var(--faint);font-weight:500}
 .panel.new .head b{color:var(--teal)}
-.tag{font-family:var(--mono);font-size:10px;padding:3px 8px;border-radius:5px}
+.tag{font-family:var(--mono);font-size:11px;padding:3px 8px;border-radius:5px}
 .tag.manual{background:rgba(248,113,113,.09);border:1px solid rgba(248,113,113,.2);color:var(--bad)}
 .tag.auto{background:rgba(45,212,191,.10);border:1px solid rgba(45,212,191,.22);color:var(--teal)}
 .panel{display:flex;flex-direction:column}
@@ -314,7 +320,7 @@ nav.links a:hover{color:var(--text)}
 /* ── Dimensions / weight tuner ────────────────────────────────────────────── */
 .tuner{display:grid;grid-template-columns:300px minmax(0,1fr);gap:26px;margin-top:40px;align-items:start}
 @media (max-width:900px){.tuner{grid-template-columns:1fr}}
-.tuner .card{border:1px solid var(--border);border-radius:var(--r-card);background:var(--surface);box-shadow:var(--shadow-card)}
+.tuner .card{border:1px solid var(--border);border-radius:var(--r-card);background:var(--surface);box-shadow:var(--shadow-card);min-width:0}
 .tuner .card .hd{padding:14px 18px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;gap:10px}
 .tuner .card .hd b{font-family:var(--mono);font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--faint);font-weight:500}
 .sliders{padding:16px 18px;display:flex;flex-direction:column;gap:14px}
@@ -334,7 +340,7 @@ nav.links a:hover{color:var(--text)}
 .person:last-child{border-bottom:none}
 .person:hover{background:var(--surface2)}
 .person .who{font-size:14.5px;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.person .who i{font-style:normal;font-family:var(--mono);font-size:10px;color:#a5b4fc;
+.person .who i{font-style:normal;font-family:var(--mono);font-size:11px;color:#a5b4fc;
   border:1px solid rgba(99,102,241,.3);border-radius:4px;padding:1px 5px;margin-left:7px}
 .bars{display:flex;gap:5px;height:36px;align-items:flex-end}
 .bars b{flex:1;border-radius:2px 2px 0 0;background:linear-gradient(180deg,var(--teal),rgba(45,212,191,.28));position:relative;min-height:2px;transition:height .35s cubic-bezier(.4,0,.2,1),opacity .3s}
@@ -418,7 +424,7 @@ nav.links a:hover{color:var(--text)}
   border:1px solid rgba(45,212,191,.3);
   box-shadow:var(--shadow-card),0 0 44px -14px rgba(45,212,191,.4)}
 .core .badge{display:inline-block;margin-bottom:9px;padding:2px 9px;border-radius:999px;
-  font-family:var(--mono);font-size:10px;letter-spacing:.14em;text-transform:uppercase;
+  font-family:var(--mono);font-size:11px;letter-spacing:.14em;text-transform:uppercase;
   color:var(--teal);background:rgba(45,212,191,.1);border:1px solid rgba(45,212,191,.24)}
 .core b{display:block;font-family:var(--display);font-size:20px;font-weight:600;letter-spacing:-.025em;color:var(--text)}
 .core .lines{display:flex;flex-direction:column;gap:3px;margin-top:10px}
@@ -525,6 +531,25 @@ footer.site .in .l img{width:18px;height:18px;border-radius:4px}
 footer.site .in nav{display:flex;gap:22px;flex-wrap:wrap}
 footer.site .in nav a{color:var(--muted);font-size:13.5px}
 footer.site .in nav a:hover{color:var(--text)}
+
+/* ── Mobile legibility pass ───────────────────────────────────────────────────
+   These selectors hold short runs of real, readable copy (not the deliberate
+   uppercase/tracked micro-labels used for eyebrows and section markers, which
+   are left at their existing sizes). Scoped below the desktop breakpoint so
+   nothing above 1280px changes. */
+@media (max-width:1279px){
+  .pill{font-size:13px}
+  .pill.small-pill{font-size:12px}
+  .frame .chrome .addr,.term .chrome .addr{font-size:12px}
+  .row .k{font-size:13px}
+  .reset{font-size:12px}
+  .legend span{font-size:12px}
+  .gallery .side .meta span{font-size:13px}
+  .slider label em{font-size:12px}
+  .term .chrome button{font-size:12px}
+  .node span:not(.ico){font-size:12px}
+  .core .lines span{font-size:12px}
+}
 </style>
 <script>document.documentElement.className += ' js'</script>
 </head>
@@ -796,7 +821,7 @@ footer.site .in nav a:hover{color:var(--text)}
       </div>
 
       <div class="card rv">
-        <div class="hd"><b>demo-org/ledger-core · six-dimension texture</b><span class="pill t" style="font-size:10.5px">demo data</span></div>
+        <div class="hd"><b>demo-org/ledger-core · six-dimension texture</b><span class="pill t small-pill">demo data</span></div>
         <div class="people" id="people"><!-- built by script --></div>
         <div class="legend">
           <span><i style="background:#2DD4BF"></i>shipped</span>
