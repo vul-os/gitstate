@@ -44,7 +44,7 @@ header.top{position:sticky;top:0;z-index:60;background:color-mix(in srgb,var(--b
   backdrop-filter:blur(14px) saturate(140%);border-bottom:1px solid var(--border)}
 header.top .bar{display:flex;align-items:center;gap:20px;height:64px}
 .brand{display:flex;align-items:center;gap:10px;font-family:var(--mono);font-weight:500;font-size:17px}
-.brand svg{width:30px;height:30px;flex:none}
+.brand .brand-mark{width:30px;height:30px;flex:none;display:block}
 .brand .tag{font-family:var(--mono);font-size:11px;color:var(--faint);border-left:1px solid var(--border2);padding-left:10px;margin-left:2px}
 .spacer{flex:1}
 nav.links{display:flex;gap:24px}
@@ -201,17 +201,7 @@ footer.site nav a:hover{color:var(--text)}
 <header class="top">
   <div class="wrap bar">
     <a class="brand" href="./index.html" aria-label="gitstate home">
-      <svg viewBox="0 0 72 72" fill="none" aria-hidden="true">
-        <defs><linearGradient id="gsm" x1="8" y1="8" x2="64" y2="64" gradientUnits="userSpaceOnUse">
-          <stop stop-color="#2DD4BF"/><stop offset="1" stop-color="#6366F1"/></linearGradient></defs>
-        <rect x="4" y="4" width="64" height="64" rx="16" fill="#0B1120"/>
-        <path d="M22 52 V20" stroke="url(#gsm)" stroke-width="4" stroke-linecap="round"/>
-        <path d="M22 34 C22 26 30 26 38 26 C46 26 50 30 50 38 C50 46 46 50 38 50 C30 50 22 50 22 42" stroke="url(#gsm)" stroke-width="4" fill="none" stroke-linecap="round"/>
-        <circle cx="22" cy="20" r="5" fill="#0B1120" stroke="url(#gsm)" stroke-width="4"/>
-        <circle cx="22" cy="52" r="5" fill="#0B1120" stroke="url(#gsm)" stroke-width="4"/>
-        <circle cx="50" cy="38" r="9" fill="url(#gsm)"/>
-        <path d="M46 38 l3 3 l5 -6" stroke="#0B1120" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
-      </svg>
+      <img class="brand-mark" src="./assets/brand/favicon.svg" alt="" width="30" height="30">
       <span>git<span style="color:var(--teal)">state</span></span>
       <span class="tag">docs</span>
     </a>

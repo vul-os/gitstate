@@ -27,7 +27,7 @@ export function LogoMark({ size = 36, className = '' }) {
           <stop offset="1" stopColor="#6366F1" />
         </linearGradient>
       </defs>
-      <rect x="4" y="4" width="64" height="64" rx="16" fill="#0B1120" />
+      <rect width="72" height="72" rx="16" fill="#0B1120" />
       <path d="M22 52 V20" stroke="url(#gsm-inline)" strokeWidth="4" strokeLinecap="round" />
       <path
         d="M22 34 C22 26 30 26 38 26 C46 26 50 30 50 38 C50 46 46 50 38 50 C30 50 22 50 22 42"
@@ -76,7 +76,7 @@ export function LogoFull({ height = 40, className = '' }) {
         </linearGradient>
       </defs>
       <g>
-        <rect x="4" y="4" width="64" height="64" rx="16" fill="#0B1120" />
+        <rect width="72" height="72" rx="16" fill="#0B1120" />
         <path d="M22 52 V20" stroke="url(#gs-inline)" strokeWidth="4" strokeLinecap="round" />
         <path
           d="M22 34 C22 26 30 26 38 26 C46 26 50 30 50 38 C50 46 46 50 38 50 C30 50 22 50 22 42"
