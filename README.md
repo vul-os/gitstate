@@ -320,7 +320,7 @@ belongs to an optional coordinator; everything a git tool is for is local + P2P.
 
 The full documentation site — including the derivation model, analytics, the HTTP API and the threat
 model — lives in [`site/`](site/) and reads at
-[vulos.org/products/gitstate](https://vulos.org/products/gitstate).
+[vulos.org/projects/gitstate](https://vulos.org/projects/gitstate/).
 
 ---
 
