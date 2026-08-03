@@ -17,8 +17,8 @@
 <meta property="og:description" content="Local-first. Rust core, one SQLite file, no account, no server. The git history is the ledger.">
 <!-- Absolute: link previewers resolve og:image against their own base, not this page's. -->
 <meta property="og:url" content="https://vulos.org/projects/gitstate/">
-<meta property="og:image" content="https://vulos.org/projects/gitstate/screenshots/dashboard.png">
-  <meta name="twitter:image" content="https://vulos.org/projects/gitstate/screenshots/dashboard.png">
+<meta property="og:image" content="https://vulos.org/projects/gitstate/screenshots/dashboard-dark.png">
+  <meta name="twitter:image" content="https://vulos.org/projects/gitstate/screenshots/dashboard-dark.png">
 <meta name="twitter:card" content="summary_large_image">
 
 <style>
@@ -155,7 +155,7 @@ nav.links a:hover{color:var(--text)}
 /* ── Pills / chips ────────────────────────────────────────────────────────── */
 .pill{
   display:inline-flex;align-items:center;gap:7px;padding:5px 11px;border-radius:999px;
-  font-family:var(--mono);font-size:11.5px;letter-spacing:.02em;
+  font-family:var(--mono);font-size:12px;letter-spacing:.02em;
   border:1px solid var(--border2);background:var(--surface);color:var(--dim);
 }
 .pill.t{border-color:rgba(45,212,191,.28);background:rgba(45,212,191,.08);color:var(--teal)}
@@ -213,10 +213,34 @@ nav.links a:hover{color:var(--text)}
 .frame .chrome .addr{
   /* min-width:0 — a flex item defaults to min-content, so this nowrap title
      would otherwise set the floor for the whole hero column on a phone. */
-  flex:1;min-width:0;text-align:center;font-family:var(--mono);font-size:11px;color:var(--faint);
+  flex:1;min-width:0;text-align:center;font-family:var(--mono);font-size:12px;color:var(--faint);
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
 }
 .frame img{width:100%;display:block}
+
+/* ── Screenshots on a narrow screen ──────────────────────────────────────
+   gitstate's UI is a 1440-wide desktop dashboard. Scaled to fit a 390px
+   phone it lands near 0.23x: every stat, axis label and contributor row
+   turns to grey mush, and the hero — the one thing the page is selling —
+   reads as a smudge. Below 760px the shot therefore scrolls at a legible
+   size instead of shrinking, with a fade and a hint so the crop reads as a
+   scroll rather than as an image someone cut off. Desktop is untouched. */
+.shotpan{position:relative}
+.shotpan .pan{overflow-x:auto;-webkit-overflow-scrolling:touch;overscroll-behavior-x:contain}
+.shotpan .pan img{width:100%}
+.shotpan::after{
+  content:"";position:absolute;top:0;bottom:0;right:0;width:60px;z-index:2;
+  pointer-events:none;opacity:0;transition:opacity .2s;
+  background:linear-gradient(270deg,var(--surface),transparent);
+}
+.shotpan.can-scroll::after{opacity:.95}
+.panhint{
+  display:none;margin-top:9px;font-family:var(--mono);font-size:12px;color:var(--faint);
+}
+.shotpan.can-scroll ~ .panhint{display:block}
+@media (max-width:760px){
+  .shotpan .pan img{min-width:720px}
+}
 .hero-shot{position:relative}
 .hero-shot .halo{
   position:absolute;inset:-40px -26px;z-index:0;pointer-events:none;
@@ -226,7 +250,7 @@ nav.links a:hover{color:var(--text)}
 @media (max-width:1000px){.hero-shot .frame{transform:none}}
 .chip{
   position:absolute;z-index:3;display:inline-flex;align-items:center;gap:7px;
-  padding:7px 11px;border-radius:9px;font-family:var(--mono);font-size:11.5px;white-space:nowrap;
+  padding:7px 11px;border-radius:9px;font-family:var(--mono);font-size:12px;white-space:nowrap;
   backdrop-filter:blur(10px);box-shadow:0 4px 16px rgba(0,0,0,.5);
 }
 .chip.t{background:rgba(45,212,191,.12);border:1px solid rgba(45,212,191,.28);color:var(--teal)}
@@ -258,7 +282,7 @@ nav.links a:hover{color:var(--text)}
 .panel.new .head{background:rgba(45,212,191,.05);border-color:rgba(45,212,191,.16)}
 .panel .head b{font-family:var(--mono);font-size:11px;letter-spacing:.13em;text-transform:uppercase;color:var(--faint);font-weight:500}
 .panel.new .head b{color:var(--teal)}
-.tag{font-family:var(--mono);font-size:11px;padding:3px 8px;border-radius:5px}
+.tag{font-family:var(--mono);font-size:12px;padding:3px 8px;border-radius:5px}
 .tag.manual{background:rgba(248,113,113,.09);border:1px solid rgba(248,113,113,.2);color:var(--bad)}
 .tag.auto{background:rgba(45,212,191,.10);border:1px solid rgba(45,212,191,.22);color:var(--teal)}
 .panel{display:flex;flex-direction:column}
@@ -266,7 +290,7 @@ nav.links a:hover{color:var(--text)}
 .panel .cost{margin-top:auto;padding-top:4px}
 .row{border:1px solid var(--border);border-radius:10px;background:var(--surface2);padding:14px}
 .panel.new .row{border-color:rgba(45,212,191,.14);background:rgba(45,212,191,.03)}
-.row .k{font-family:var(--mono);font-size:11px;color:var(--faint)}
+.row .k{font-family:var(--mono);font-size:12px;color:var(--faint)}
 .row .v{font-size:14.5px;color:var(--dim);margin-top:6px}
 .row .v strong{color:var(--text);font-weight:600}
 .cost{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--faint);font-family:var(--mono)}
@@ -324,12 +348,12 @@ nav.links a:hover{color:var(--text)}
 .slider label{display:flex;align-items:baseline;justify-content:space-between;gap:8px;
   font-family:var(--mono);font-size:12px;color:var(--dim);margin-bottom:6px}
 .slider label>span:first-child{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.slider label em{font-style:normal;color:var(--faint);font-size:11px}
+.slider label em{font-style:normal;color:var(--faint);font-size:12px}
 .slider input[type=range]{width:100%;-webkit-appearance:none;appearance:none;height:4px;border-radius:99px;background:var(--surface3);outline:none}
 .slider input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:15px;height:15px;border-radius:99px;background:var(--teal);border:2px solid var(--bg);cursor:pointer;box-shadow:0 0 0 1px var(--teal)}
 .slider input[type=range]::-moz-range-thumb{width:13px;height:13px;border-radius:99px;background:var(--teal);border:2px solid var(--bg);cursor:pointer}
 .slider input[type=range]:focus-visible{box-shadow:0 0 0 3px rgba(45,212,191,.25)}
-.reset{font-family:var(--mono);font-size:11px;color:var(--teal);background:none;border:none;cursor:pointer;padding:0}
+.reset{font-family:var(--mono);font-size:12px;color:var(--teal);background:none;border:none;cursor:pointer;padding:0}
 .reset:hover{text-decoration:underline}
 .people{padding:8px 0 12px}
 .person{display:grid;grid-template-columns:minmax(150px,1fr) 232px 62px;gap:18px;align-items:center;
@@ -337,7 +361,7 @@ nav.links a:hover{color:var(--text)}
 .person:last-child{border-bottom:none}
 .person:hover{background:var(--surface2)}
 .person .who{font-size:14.5px;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.person .who i{font-style:normal;font-family:var(--mono);font-size:11px;color:#a5b4fc;
+.person .who i{font-style:normal;font-family:var(--mono);font-size:12px;color:#a5b4fc;
   border:1px solid rgba(99,102,241,.3);border-radius:4px;padding:1px 5px;margin-left:7px}
 .bars{display:flex;gap:5px;height:36px;align-items:flex-end}
 .bars b{flex:1;border-radius:2px 2px 0 0;background:linear-gradient(180deg,var(--teal),rgba(45,212,191,.28));position:relative;min-height:2px;transition:height .35s cubic-bezier(.4,0,.2,1),opacity .3s}
@@ -353,7 +377,7 @@ nav.links a:hover{color:var(--text)}
   .person .comp{font-size:13.5px}
 }
 .legend{display:flex;flex-wrap:wrap;gap:8px 16px;padding:14px 18px;border-top:1px solid var(--border)}
-.legend span{display:inline-flex;align-items:center;gap:6px;font-family:var(--mono);font-size:11px;color:var(--faint)}
+.legend span{display:inline-flex;align-items:center;gap:6px;font-family:var(--mono);font-size:12px;color:var(--faint)}
 .legend i{width:8px;height:8px;border-radius:2px;display:block}
 .note{margin-top:16px;font-size:13.5px;color:var(--faint)}
 .note code{font-family:var(--mono);font-size:12.5px;background:var(--surface2);border:1px solid var(--border);padding:1px 6px;border-radius:5px;color:var(--dim)}
@@ -369,14 +393,23 @@ nav.links a:hover{color:var(--text)}
 .tabs button[aria-selected=true]{color:#04211D;background:var(--grad);border-color:transparent;font-weight:500}
 .gallery{display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:24px;align-items:start}
 @media (max-width:1000px){.gallery{grid-template-columns:1fr}}
-.stage{position:relative}
+/* min-width:0 — a grid item defaults to min-width:auto, so the 720px minimum
+   the phone treatment puts on the screenshot became the floor for the whole
+   track and the pane grew to 720px inside a 390px viewport instead of
+   scrolling inside it. */
+.stage{position:relative;min-width:0}
 .stage .frame img{max-height:none}
-.stage .scroller{max-height:560px;overflow:hidden}
+/* overflow-Y only. A bare `overflow:hidden` here also clamps the X axis, and
+   because this rule is later in the file at the same specificity it silently
+   beat `.shotpan .pan{overflow-x:auto}` — the gallery pane kept its crop but
+   lost the ability to pan, so on a phone it showed a fixed 55% slice of the
+   screenshot with no way to reach the rest. */
+.stage .scroller{max-height:560px;overflow-y:hidden}
 .gallery .side{border:1px solid var(--border);border-radius:var(--r-card);background:var(--surface);padding:22px;box-shadow:var(--shadow-card)}
 .gallery .side h3{font-size:20px;margin-bottom:10px}
 .gallery .side p{color:var(--muted);font-size:14.5px}
 .gallery .side .meta{margin-top:16px;padding-top:16px;border-top:1px solid var(--border);display:flex;flex-direction:column;gap:8px}
-.gallery .side .meta span{display:flex;gap:9px;font-family:var(--mono);font-size:11.5px;color:var(--faint)}
+.gallery .side .meta span{display:flex;gap:9px;font-family:var(--mono);font-size:12px;color:var(--faint)}
 .gallery .side .meta span b{color:var(--dim);font-weight:400}
 .shotnote{margin-top:14px;font-size:12.5px;color:var(--faint)}
 
@@ -404,7 +437,7 @@ nav.links a:hover{color:var(--text)}
   background:rgba(45,212,191,.09);border:1px solid rgba(45,212,191,.2);color:var(--teal)}
 .node .ico svg{width:16px;height:16px}
 .node b{font-size:14.5px;font-weight:600;color:var(--text);letter-spacing:-.01em}
-.node span:not(.ico){font-family:var(--mono);font-size:11px;color:var(--faint);white-space:nowrap;
+.node span:not(.ico){font-family:var(--mono);font-size:12px;color:var(--faint);white-space:nowrap;
   overflow:hidden;text-overflow:ellipsis}
 .node.opt{border-style:dashed}
 .node.opt .ico{background:rgba(148,163,184,.08);border-color:var(--border2);color:var(--muted)}
@@ -425,7 +458,7 @@ nav.links a:hover{color:var(--text)}
   color:var(--teal);background:rgba(45,212,191,.1);border:1px solid rgba(45,212,191,.24)}
 .core b{display:block;font-family:var(--display);font-size:20px;font-weight:600;letter-spacing:-.025em;color:var(--text)}
 .core .lines{display:flex;flex-direction:column;gap:3px;margin-top:10px}
-.core .lines span{font-family:var(--mono);font-size:11.5px;color:var(--muted)}
+.core .lines span{font-family:var(--mono);font-size:12px;color:var(--muted)}
 
 .peer-row{display:flex;align-items:center;justify-content:flex-end;margin-top:-1px;padding-right:26px}
 .peer-link{display:flex;align-items:center;gap:10px;padding:0 14px;color:var(--faint)}
@@ -460,7 +493,7 @@ nav.links a:hover{color:var(--text)}
 .term{border:1px solid var(--border2);border-radius:12px;overflow:hidden;background:#070C16;box-shadow:var(--shadow-float)}
 .term .chrome{display:flex;align-items:center;gap:9px;padding:0 14px;height:36px;background:var(--surface2);border-bottom:1px solid var(--border)}
 .term .chrome i{width:10px;height:10px;border-radius:99px;background:#2b3a53}
-.term .chrome .addr{flex:1;min-width:0;text-align:center;font-family:var(--mono);font-size:11px;color:var(--faint);
+.term .chrome .addr{flex:1;min-width:0;text-align:center;font-family:var(--mono);font-size:12px;color:var(--faint);
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .term .chrome button{
   font-family:var(--mono);font-size:10.5px;color:var(--faint);background:none;border:1px solid var(--border2);
@@ -634,9 +667,12 @@ footer.site .in nav a:hover{color:var(--text)}
       <div class="halo"></div>
       <div class="frame float">
         <div class="chrome"><i></i><i></i><i></i><span class="addr">gitstate — local daemon · 127.0.0.1:7473</span></div>
-        <img src="./screenshots/dashboard.png" width="2880" height="1800"
+        <div class="shotpan"><div class="pan">
+        <img src="./screenshots/dashboard-dark.png" width="2880" height="1800"
              alt="The gitstate dashboard: commit, merged-PR, cycle-time and contributor stat cards over a cycle-time trend chart, a contribution heatmap and a top-contributor list, all derived from git.">
+        </div></div>
       </div>
+      <p class="panhint">swipe the dashboard to see the whole screen →</p>
       <span class="chip t" style="top:-26px;left:-30px">0 tickets updated by hand</span>
       <span class="chip i" style="top:46%;right:-26px">derived from git</span>
       <span class="chip g" style="bottom:-20px;left:6%">no account · no server</span>
@@ -732,7 +768,7 @@ footer.site .in nav a:hover{color:var(--text)}
 
     <div class="bento">
       <div class="cell shot wide rv">
-        <img src="./screenshots/eng-health.png" loading="lazy" width="2880" height="2176"
+        <img src="./screenshots/eng-health-dark.png" loading="lazy" width="2880" height="1800"
              alt="Eng Health: cycle-time p50, change-failure rate, merge frequency and deploy-proxy cards, a bus-factor ownership panel, review coverage and quality signals.">
         <div class="cap"><b>DORA, without a survey</b>
           <span>Cycle time p50/p90 measured from open to merge, a change-failure proxy, merge
@@ -773,14 +809,14 @@ footer.site .in nav a:hover{color:var(--text)}
       </div>
 
       <div class="cell shot half rv">
-        <img src="./screenshots/classify.png" loading="lazy" width="2880" height="1800"
+        <img src="./screenshots/classify-dark.png" loading="lazy" width="2880" height="1800"
              alt="Classify: work items labelled against the signed taxonomy with confidence, method and rationale shown, plus a difficulty score per item and a correction dropdown.">
         <div class="cap"><b>Classification that stays on your box</b>
           <span>Point it at your own llmux or any OpenAI-compatible endpoint — or run the
           deterministic heuristic offline. Corrections train this machine only.</span></div>
       </div>
       <div class="cell shot half rv">
-        <img src="./screenshots/import.png" loading="lazy" width="2880" height="1800"
+        <img src="./screenshots/import-dark.png" loading="lazy" width="2880" height="1800"
              alt="Import: Jira and Linear credential forms using your own personal API token, with an offline CSV/JSON export path as an alternative.">
         <div class="cap"><b>Bring the history you already have</b>
           <span>Jira and Linear import with <em>your</em> personal token, called from your machine —
@@ -849,8 +885,9 @@ footer.site .in nav a:hover{color:var(--text)}
       <div class="stage rv" id="shot-panel" role="tabpanel" tabindex="0" aria-labelledby="tab-dashboard">
         <div class="frame">
           <div class="chrome"><i></i><i></i><i></i><span class="addr" id="shot-addr">gitstate · dashboard</span></div>
-          <div class="scroller"><img id="shot-img" src="./screenshots/dashboard.png" alt="" width="2880" height="1800" loading="lazy"></div>
+          <div class="shotpan"><div class="pan scroller"><img id="shot-img" src="./screenshots/dashboard-dark.png" alt="" width="2880" height="1800" loading="lazy"></div></div>
         </div>
+        <p class="panhint">swipe the screen to see all of it →</p>
         <p class="shotnote" id="shot-note"></p>
       </div>
       <aside class="side rv">
@@ -1292,6 +1329,33 @@ gitstate state &lt;repo_id&gt;
   render()
 
   /* ── Screens gallery ──────────────────────────────────────────────────── */
+  /* Screenshot panes that need to LOOK scrollable.
+     Below 760px the desktop captures are shown at a legible size and panned
+     rather than shrunk (see .shotpan). Flag that only while there is genuinely
+     more to the right: a fade on a pane that already fits reads as a broken
+     layout, not an affordance. Re-measured on resize, when the gallery swaps
+     image, and once each image has decoded — before that there is no
+     scrollWidth to compare against. */
+  function syncPans() {
+    document.querySelectorAll('.shotpan').forEach(function (host) {
+      var pan = host.querySelector('.pan');
+      if (!pan) return;
+      var room = pan.scrollWidth - pan.clientWidth;
+      var atEnd = pan.scrollLeft + pan.clientWidth >= pan.scrollWidth - 8;
+      host.classList.toggle('can-scroll', room > 8 && !atEnd);
+    });
+  }
+  syncPans();
+  addEventListener('resize', syncPans, { passive: true });
+  document.querySelectorAll('.shotpan .pan').forEach(function (pan) {
+    pan.addEventListener('scroll', syncPans, { passive: true });
+  });
+  document.querySelectorAll('.shotpan img').forEach(function (im) {
+    if (im.complete) return;
+    im.addEventListener('load', syncPans, { once: true });
+  });
+
+  const SHOT_SUFFIX = '-dark'   // this page is dark-only; see index.html <meta color-scheme>
   const SHOTS = [
     { id: 'dashboard', tab: 'Dashboard', title: 'Dashboard',
       desc: 'Your local project ledger — commits, merged PRs, cycle time and contributors across every tracked repo, with a cycle-time trend, a year-long heatmap and the contributors behind it.',
@@ -1358,7 +1422,12 @@ gitstate state &lt;repo_id&gt;
 
   function select(i) {
     const s = SHOTS[i]
-    imgEl.src = `./screenshots/${s.id}.png`
+    // The landing is dark, so it shows the dark capture of every screen. Both
+    // variants are generated by scripts/screenshots.mjs; keeping the id clean
+    // and appending the suffix here means one place to change if the page ever
+    // grows a light theme.
+    imgEl.src = `./screenshots/${s.id}${SHOT_SUFFIX}.png`
+    imgEl.decode ? imgEl.decode().then(syncPans, syncPans) : imgEl.addEventListener('load', syncPans, { once: true })
     panelEl.setAttribute('aria-labelledby', `tab-${s.id}`)
     imgEl.alt = s.alt
     titleEl.textContent = s.title

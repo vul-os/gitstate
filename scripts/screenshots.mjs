@@ -2,7 +2,8 @@
 /**
  * gitstate screenshot generator, for README.md and site/screenshots/.
  *
- * Captures REAL UI (Playwright/Chromium, 1440-wide, light + a dark hero shot)
+ * Captures REAL UI (Playwright/Chromium, 1440-wide, every screen in BOTH
+ * colour schemes — light keeps the bare name, dark gets a -dark suffix)
  * of the actual Rust daemon (`gitstate serve`) serving the built React app
  * (`web/dist`) against a deterministic, fully-synthetic demo database
  * (`gitstate seed --demo`) — a fake org, fake pseudonymous contributors
@@ -316,70 +317,113 @@ async function main() {
 
     const browser = await chromium.launch({ headless: true })
     try {
-      // ---- light pass: every screen -----------------------------------
-      const lightCtx = await browser.newContext({
-        viewport: VIEWPORT, deviceScaleFactor: DEVICE_SCALE, colorScheme: 'light',
-      })
-      await setTheme(lightCtx, 'light')
-      const page = await lightCtx.newPage()
+      // ---- one pass per colour scheme -------------------------------
+      // Every screen is captured in BOTH themes, not just the dashboard. The
+      // landing page is dark, and it was showing the light captures: a white
+      // dashboard dropped into a near-black page. Whichever theme a page ends
+      // up presenting, the matching file now exists.
+      //
+      // Dark files carry a "-dark" suffix; light keeps the bare name, so every
+      // existing reference to dashboard.png/classify.png still resolves.
+      const capture = async (theme) => {
+        const suffix = theme === 'dark' ? '-dark' : ''
+        const shot = (name, opts) => join(OUT_DIRS[0], `${name}${suffix}.png`)
+        const ctx = await browser.newContext({
+          viewport: VIEWPORT, deviceScaleFactor: DEVICE_SCALE, colorScheme: theme,
+        })
+        await setTheme(ctx, theme)
+        const page = await ctx.newPage()
 
-      // Dashboard — cross-repo overview (the hero).
-      await page.goto(`${BASE_URL}/dashboard`, { waitUntil: 'networkidle', timeout: NAV_TIMEOUT })
-      await settle(page)
-      await page.screenshot({ path: join(OUT_DIRS[0], 'dashboard.png') })
-      console.log('  ✓ dashboard.png')
+        // Dashboard — cross-repo overview (the hero).
+        await page.goto(`${BASE_URL}/dashboard`, { waitUntil: 'networkidle', timeout: NAV_TIMEOUT })
+        await settle(page)
+        await page.screenshot({ path: shot('dashboard') })
+        console.log(`  ✓ dashboard${suffix}.png`)
 
-      // Project state + six-dimension contribution — one repo, full page.
-      await page.goto(`${BASE_URL}/repos/${repoId}`, { waitUntil: 'networkidle', timeout: NAV_TIMEOUT })
-      await settle(page)
-      await page.screenshot({ path: join(OUT_DIRS[0], 'project-state.png'), fullPage: true })
-      console.log('  ✓ project-state.png')
+        // The remaining screens the landing's gallery names. These are plain
+        // route visits with no interaction; grouping them keeps the two passes
+        // symmetrical, which is the whole point — a screen with only a light
+        // capture is a screen the dark landing has to show in the wrong theme.
+        for (const [name, route] of [
+          ['board',        '/board'],
+          ['repos',        '/repos'],
+          ['people',       '/people'],
+          ['involvement',  '/involvement'],
+          ['taxonomy',     '/taxonomy'],
+          ['settings',     '/settings'],
+          ['contribution', '/contribution'],
+        ]) {
+          const res = await page.goto(`${BASE_URL}${route}`, { waitUntil: 'networkidle', timeout: NAV_TIMEOUT })
+          if (res && res.status() >= 400) { console.warn(`  ! skipped ${name}${suffix}.png — ${route} returned ${res.status()}`); continue }
+          await settle(page)
+          await page.screenshot({ path: shot(name) })
+          console.log(`  ✓ ${name}${suffix}.png`)
+        }
 
-      // Dedicated close-up on the contribution table (six dimension bars).
-      const contribHeading = page.getByText('Contribution', { exact: false }).first()
-      await contribHeading.scrollIntoViewIfNeeded()
-      await sleep(200)
-      await page.screenshot({ path: join(OUT_DIRS[0], 'contributions.png') })
-      console.log('  ✓ contributions.png')
+        // Project state + six-dimension contribution — one repo, full page.
+        await page.goto(`${BASE_URL}/repos/${repoId}`, { waitUntil: 'networkidle', timeout: NAV_TIMEOUT })
+        await settle(page)
+        await page.screenshot({ path: shot('project-state'), fullPage: true })
+        console.log(`  ✓ project-state${suffix}.png`)
 
-      // Contexts — saved working sets.
-      await page.goto(`${BASE_URL}/contexts`, { waitUntil: 'networkidle', timeout: NAV_TIMEOUT })
-      await settle(page)
-      await page.screenshot({ path: join(OUT_DIRS[0], 'contexts.png') })
-      console.log('  ✓ contexts.png')
+        // Dedicated close-up on the contribution table (six dimension bars).
+        const contribHeading = page.getByText('Contribution', { exact: false }).first()
+        await contribHeading.scrollIntoViewIfNeeded()
+        await sleep(200)
+        await page.screenshot({ path: shot('contributions') })
+        console.log(`  ✓ contributions${suffix}.png`)
 
-      // Categories — the local taxonomy.
-      await page.goto(`${BASE_URL}/categories`, { waitUntil: 'networkidle', timeout: NAV_TIMEOUT })
-      await settle(page)
-      await page.screenshot({ path: join(OUT_DIRS[0], 'categories.png') })
-      console.log('  ✓ categories.png')
+        // Contexts — saved working sets.
+        await page.goto(`${BASE_URL}/contexts`, { waitUntil: 'networkidle', timeout: NAV_TIMEOUT })
+        await settle(page)
+        await page.screenshot({ path: shot('contexts') })
+        console.log(`  ✓ contexts${suffix}.png`)
 
-      // Classify — pick the repo, run the (heuristic, offline) classifier.
-      await page.goto(`${BASE_URL}/classify`, { waitUntil: 'networkidle', timeout: NAV_TIMEOUT })
-      await settle(page)
-      await page.locator('select').first().selectOption(repoId)
-      await sleep(400)
-      const classifyBtn = page.getByRole('button', { name: /classify items/i })
-      if (await classifyBtn.count()) {
-        await classifyBtn.click()
-        await sleep(600)
+        // Categories — the local taxonomy.
+        await page.goto(`${BASE_URL}/categories`, { waitUntil: 'networkidle', timeout: NAV_TIMEOUT })
+        await settle(page)
+        await page.screenshot({ path: shot('categories') })
+        console.log(`  ✓ categories${suffix}.png`)
+
+        // Eng Health — the derived quality view.
+        await page.goto(`${BASE_URL}/eng-health`, { waitUntil: 'networkidle', timeout: NAV_TIMEOUT })
+        await settle(page)
+        await page.screenshot({ path: shot('eng-health') })
+        console.log(`  ✓ eng-health${suffix}.png`)
+
+        // Insights — trends across every tracked repo.
+        await page.goto(`${BASE_URL}/insights`, { waitUntil: 'networkidle', timeout: NAV_TIMEOUT })
+        await settle(page)
+        await page.screenshot({ path: shot('insights') })
+        console.log(`  ✓ insights${suffix}.png`)
+
+        // Import — bringing repos in.
+        await page.goto(`${BASE_URL}/import`, { waitUntil: 'networkidle', timeout: NAV_TIMEOUT })
+        await settle(page)
+        await page.screenshot({ path: shot('import') })
+        console.log(`  ✓ import${suffix}.png`)
+
+        // Classify — pick the repo, run the (heuristic, offline) classifier.
+        await page.goto(`${BASE_URL}/classify`, { waitUntil: 'networkidle', timeout: NAV_TIMEOUT })
+        await settle(page)
+        await page.locator('select').first().selectOption(repoId)
+        await sleep(400)
+        const classifyBtn = page.getByRole('button', { name: /classify items/i })
+        if (await classifyBtn.count()) {
+          await classifyBtn.click()
+          await sleep(600)
+        }
+        await page.screenshot({ path: shot('classify') })
+        console.log(`  ✓ classify${suffix}.png`)
+
+        await ctx.close()
       }
-      await page.screenshot({ path: join(OUT_DIRS[0], 'classify.png') })
-      console.log('  ✓ classify.png')
 
-      await lightCtx.close()
+      for (const theme of ['light', 'dark']) {
+        console.log(`\n  ── ${theme} pass ──`)
+        await capture(theme)
+      }
 
-      // ---- dark pass: hero only (dashboard) ----------------------------
-      const darkCtx = await browser.newContext({
-        viewport: VIEWPORT, deviceScaleFactor: DEVICE_SCALE, colorScheme: 'dark',
-      })
-      await setTheme(darkCtx, 'dark')
-      const darkPage = await darkCtx.newPage()
-      await darkPage.goto(`${BASE_URL}/dashboard`, { waitUntil: 'networkidle', timeout: NAV_TIMEOUT })
-      await settle(darkPage)
-      await darkPage.screenshot({ path: join(OUT_DIRS[0], 'dashboard-dark.png') })
-      console.log('  ✓ dashboard-dark.png')
-      await darkCtx.close()
     } finally {
       await browser.close()
     }

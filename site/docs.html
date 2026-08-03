@@ -80,8 +80,16 @@ nav.links a:hover{color:var(--text)}
 @media (max-width:560px){.brand .tag{display:none}}
 
 /* ── Shell ────────────────────────────────────────────────────────────────── */
-.shell{display:grid;grid-template-columns:250px minmax(0,1fr) 208px;gap:40px;align-items:start;
-  padding-top:34px;padding-bottom:90px}
+/* Docs is a reading application, not a marketing page, so the shell does not
+   inherit the landing's centred --max column: that left the nav floating well
+   in from the window edge with dead space beside it. Explicit tracks packed to
+   the left keep nav, prose and contents as one group against the left edge and
+   put the slack in the right margin — a flexible middle track instead flings
+   the contents rail far from the text it indexes. */
+.shell{display:grid;grid-template-columns:252px minmax(0,830px) 208px;justify-content:start;
+  gap:clamp(24px,2.6vw,40px);align-items:start;
+  padding-top:34px;padding-bottom:90px;padding-inline:clamp(16px,2.4vw,34px);max-width:none}
+@media (min-width:1900px){.shell{justify-content:center}}
 @media (max-width:1180px){.shell{grid-template-columns:240px minmax(0,1fr);gap:32px}.toc{display:none}}
 @media (max-width:900px){.shell{grid-template-columns:1fr;gap:22px;padding-top:16px}}
 
@@ -170,10 +178,16 @@ main{min-width:0}
 .tok-cmd{color:var(--teal)}
 .tok-flag{color:#a5b4fc}
 .tok-var{color:#fbbf24}
-.md pre .copy{position:absolute;top:9px;right:9px;font-family:var(--mono);font-size:10.5px;color:var(--faint);
-  background:var(--surface2);border:1px solid var(--border2);border-radius:5px;padding:3px 8px;cursor:pointer;
+.md pre .copy{position:absolute;top:9px;right:9px;font-family:var(--mono);font-size:12px;color:var(--faint);
+  background:var(--surface2);border:1px solid var(--border2);border-radius:5px;padding:4px 9px;cursor:pointer;
   opacity:0;transition:opacity .15s,color .15s}
 .md pre:hover .copy,.md pre .copy:focus{opacity:1}
+/* A hover-revealed control is a control that does not exist on a phone: with
+   no pointer to hover, the copy button stayed at opacity 0 permanently. Show
+   it outright wherever hover is unavailable, and give it a 44px touch target. */
+@media (hover:none){
+  .md pre .copy{opacity:1;min-height:32px;padding:6px 11px}
+}
 .md pre .copy:hover{color:var(--teal);border-color:rgba(45,212,191,.4)}
 .md blockquote{margin:1.3em 0;padding:14px 18px;border-left:2px solid var(--teal);background:rgba(45,212,191,.05);
   border-radius:0 10px 10px 0;color:var(--muted)}
@@ -195,9 +209,11 @@ main{min-width:0}
 .pager a{border:1px solid var(--border);border-radius:11px;background:var(--surface);padding:14px 18px;transition:.18s}
 .pager a:hover{border-color:color-mix(in srgb,var(--teal) 45%,var(--border));background:var(--surface2)}
 .pager a span{display:block;font-family:var(--mono);font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--faint);margin-bottom:5px}
+.pager a.next{text-align:right}
 .pager a b{font-family:var(--display);font-size:16px;font-weight:600;letter-spacing:-.02em;color:var(--text)}
 .pager a.next{text-align:right}
-.pager .void{border:1px dashed var(--border);border-radius:11px;opacity:.35}
+.pager a.next:only-child{grid-column:2}
+@media (max-width:620px){.pager a.next:only-child{grid-column:1}}
 
 .err{color:#fca5a5;background:rgba(248,113,113,.08);border:1px solid rgba(248,113,113,.24);padding:16px 18px;border-radius:11px}
 .err code{font-family:var(--mono)}
@@ -276,9 +292,6 @@ footer.site nav a:hover{color:var(--text)}
   <aside class="toc" id="toc" aria-label="On this page"></aside>
 </div>
 
-<footer class="site">
-  <a class="vulos-foot" href="https://vulos.org" target="_blank" rel="noopener"><img src="./assets/vulos-logo.png" alt="" width="18" height="18"><span>Part of <strong>Vulos</strong> — open, self-hostable software</span></a>
-</footer>
 
 <script>
 /* The site is static: pages render straight from this repo's own markdown. */
@@ -368,6 +381,10 @@ const slugify = (s) => s.toLowerCase().trim().replace(/[^\w\s-]/g, '').replace(/
 const ESC = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 
 const RULES = {
+  /* Languages the docs actually fence. jsonc and caddyfile were being written
+     but had no rules, so those blocks rendered as flat grey text next to
+     highlighted ones — checked against the fences in docs/*.md rather than
+     guessed. mermaid is deliberately absent: it is rendered as a diagram. */
   bash: [
     [/#[^\n]*/g, 'com'],
     [/'[^'\n]*'|"[^"\n]*"/g, 'str'],
@@ -383,6 +400,14 @@ const RULES = {
     [/"(?:[^"\\\n]|\\.)*"/g, 'str'],
     [/\b-?\d+(?:\.\d+)?\b/g, 'num'],
     [/\b(true|false|null)\b/g, 'key'],
+  ],
+  caddyfile: [
+    [/#[^\n]*/g, 'com'],
+    [/"(?:[^"\\\n]|\\.)*"/g, 'str'],
+    [/\{[^}\n]*\}/g, 'var'],
+    [/\b(reverse_proxy|encode|tls|header|handle|handle_path|route|respond|file_server|log|redir|import|root|bind|basicauth)\b/g, 'key'],
+    [/(^|\n)\s*([A-Za-z0-9*.:-]+\.[A-Za-z0-9*.:-]+)/g, 'typ', 2],
+    [/\b-?\d+(?:\.\d+)?\b/g, 'num'],
   ],
   rust: [
     [/\/\/[^\n]*/g, 'com'],
@@ -439,10 +464,16 @@ function highlight(src, lang) {
   return out + ESC(src.slice(at))
 }
 
+// Fence names that are really another grammar. Without this, ```jsonc blocks
+// sat unhighlighted beside identical ```json ones.
+const LANG_ALIAS = { jsonc: 'json', js: 'js', javascript: 'js', sh: 'bash', shell: 'bash', zsh: 'bash', yml: 'yaml' }
+
 function highlightAll() {
   contentEl.querySelectorAll('pre code').forEach((code) => {
-    const lang = [...code.classList].find((c) => c.startsWith('language-'))?.slice(9)
-    if (!lang || lang === 'mermaid' || !RULES[lang]) return
+    const raw = [...code.classList].find((c) => c.startsWith('language-'))?.slice(9)
+    if (!raw || raw === 'mermaid') return
+    const lang = RULES[raw] ? raw : LANG_ALIAS[raw]
+    if (!lang || !RULES[lang]) return
     code.innerHTML = highlight(code.textContent, lang)
   })
 }
@@ -535,9 +566,13 @@ function buildPager(slug) {
   const i = DOCS.findIndex((d) => d.slug === slug)
   const prev = DOCS[i - 1]
   const next = DOCS[i + 1]
+  // No placeholder element. The first and last chapters used to render a dashed
+  // empty card where the missing link would be, which reads as a failed load
+  // rather than as "there is nothing before this". A lone "next" is placed in
+  // the second column so it still sits on the right.
   pagerEl.innerHTML =
-    (prev ? `<a href="#${prev.slug}"><span>← previous</span><b>${prev.title}</b></a>` : '<div class="void"></div>') +
-    (next ? `<a class="next" href="#${next.slug}"><span>next →</span><b>${next.title}</b></a>` : '<div class="void"></div>')
+    (prev ? `<a href="#${prev.slug}"><span>← previous</span><b>${prev.title}</b></a>` : '') +
+    (next ? `<a class="next" href="#${next.slug}"><span>next →</span><b>${next.title}</b></a>` : '')
 }
 
 async function load(slug) {
