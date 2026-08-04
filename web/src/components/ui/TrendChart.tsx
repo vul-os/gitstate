@@ -67,7 +67,6 @@ export function TrendChart({
       plotH: Math.max(0, height - PAD.top - PAD.bottom),
       ticks: [0, 0.25, 0.5, 0.75, 1].map((f) => m * f),
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [live, width, height])
 
   if (!live.length || n === 0) {

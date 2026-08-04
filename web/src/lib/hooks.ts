@@ -68,7 +68,6 @@ export function useAsync<T>(loader: () => Promise<T>, deps: unknown[] = []): Asy
     return () => {
       cancelled = true
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [runKey])
 
   const current = settled.key === runKey
@@ -108,7 +107,6 @@ export function useAction<Args extends unknown[], R>(
         setPending(false)
       }
     },
-    // eslint-disable-next-line react-hooks/exhaustive-deps
     [fn],
   )
   return [run, { pending, error }]
