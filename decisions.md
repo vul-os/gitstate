@@ -94,6 +94,43 @@ generator. → No payment provider, no exchange-rate service, no charging path.
 > This proves the fail-closed verify path end-to-end. **Production must re-sign the default taxonomy
 > with the offline release key** and update the pinned constant before any signed distribution.
 
+> **T11 resolution (2026-08-04).** Every `internal/` package and `cmd/` binary was read against its
+> Rust counterpart (or lack of one) and classified PORTED / SAAS-ONLY-DROP / NOT-YET-PORTED — full
+> evidence in the domain-map commit and in [docs/MIGRATION-NOTES.md](docs/MIGRATION-NOTES.md). The
+> port is **not complete**; this is a partial removal, not the "only then is its Go source removed"
+> closure T11 describes for the whole tree.
+>
+> Removed (`git rm`, history preserved): the domains with a verified Rust equivalent —
+> `internal/git`, `internal/sync`, `internal/contribution`, `internal/contributors`,
+> `internal/metrics`, `internal/importer`, `cmd/seed`, `cmd/seedgit` — and everything that only ever
+> served the abandoned multi-tenant SaaS server — `cmd/gitstate`, `internal/api`, `internal/admin`,
+> `internal/auth`, `internal/middleware`, `internal/oauth`, `internal/calendar`, `internal/capacity`
+> (package), `internal/chat`, `internal/notifications`, `internal/email`, `internal/webhooks`,
+> `internal/githubapp`, `internal/web`, `internal/docs`, `internal/jobs`, `internal/analytics`.
+>
+> **Not removed — genuinely not yet ported, real functionality that would be lost:**
+> `internal/report` (NL→report + dashboard burndown/throughput; no Rust equivalent at all),
+> `internal/calibration` (empirical-Bayes effort-calibration curves; no Rust equivalent),
+> `internal/embed` + `store/search.go` + `store/embeddings.go` (local semantic + fuzzy search over
+> issues; no Rust equivalent), `store/agent_runs.go` + `cmd/gitstate-mcp` + `cmd/gittrack`'s
+> `log-run`/`runs`/`whoami`/`context` (the agent-native write path and the MCP bridge — `gitstate-cli`
+> has neither today), and `store/context_bundle.go` (token-efficient issue+PR context for an agent,
+> distinct from `gitstate-cli context`'s CRDT saved-working-sets).
+>
+> **Kept only as scaffolding** (not wanted features in themselves, but load-bearing for the packages
+> above to keep building and testing against Postgres in CI): `internal/config`, `internal/db`,
+> `internal/crypto`, `internal/llm` (its diff-difficulty domain IS ported to `gitstate-classify`; the
+> Go package stays because `internal/report` still imports it for status synthesis), and
+> `internal/gitanalysis` (its domain IS ported to `gitstate-git`; the Go package stays only because
+> `internal/store`'s persistence layer imports its types). `internal/store` itself stays whole — one
+> Go package interleaving not-yet-ported files with already-ported and SaaS-only ones — rather than
+> risk file-level surgery breaking the still-needed `report`/`calibration` build. `migrations/` and
+> `cmd/migrate` stay to keep provisioning that Postgres schema. `go.mod`/`go.sum` are **not** removed:
+> not all Go fell into PORTED/SAAS-ONLY, so the T11 exit condition ("only then is its Go source
+> removed") has not been reached for the tree as a whole. `scripts/go-gate.sh`'s coverage floors were
+> re-measured against the smaller tree (12 packages / 105 files / 10 tested, was 37/243/29) so the
+> `go:` CI job keeps meaning something instead of asserting stale numbers.
+
 ---
 
 ## Product disciplines (unchanged by the transform)
