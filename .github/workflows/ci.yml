@@ -136,17 +136,28 @@ jobs:
     runs-on: ubuntu-latest
     # The Go tree under cmd/ + internal/ is the pre-port server implementation
     # kept in-tree (the Makefile deliberately does not build it). It had no CI
-    # at all — 243 files, 37 packages, 29 of them with tests, none of it
-    # compiled or run on a push. This job is that gate. It is fail-closed and
-    # asserts coverage counts; see scripts/go-gate.sh for the contract.
+    # at all when this job was added — 243 files, 37 packages, 29 of them with
+    # tests, none of it compiled or run on a push. This job is that gate. It is
+    # fail-closed and asserts coverage counts; see scripts/go-gate.sh for the
+    # contract.
     #
-    # ~80 of those tests (internal/store + internal/jobs are the largest two,
-    # 49 between them, but middleware/metrics/chat/calibration/gitanalysis/
-    # admin/api/contributors/contribution/sync/webhooks each have at least one
-    # too) are Postgres integration tests that `t.Skip` whenever DATABASE_URL
+    # 2026-08-04: the fully-ported domains and everything that only served the
+    # abandoned multi-tenant SaaS server were removed (decisions.md T11's
+    # resolution note) — cmd/gitstate, internal/api, admin, auth, calendar,
+    # capacity, chat, middleware, notifications, oauth, web, webhooks,
+    # githubapp, docs, jobs, sync, analytics, email, contribution,
+    # contributors, metrics, importer, git, cmd/seed, cmd/seedgit. What is
+    # left (report, calibration, embed/search inside internal/store, plus the
+    # config/db/crypto/llm/gitanalysis scaffolding and the standalone
+    # gittrack/gitstate-mcp CLIs) is genuinely NOT YET PORTED — see the domain
+    # map in that commit. go-gate.sh's floors were re-measured against this
+    # smaller tree (12 packages, 105 files, 10 tested).
+    #
+    # ~46 of those tests (nearly all in internal/store, a few in calibration)
+    # are Postgres integration tests that `t.Skip` whenever DATABASE_URL
     # is unset. `go test` still prints `ok` for a package where every test
     # skipped, so without a real database here this job was asserting nothing
-    # about ~80 tests while reporting them as part of "29 packages tested".
+    # about those tests while reporting them as part of "tested" packages.
     # This service provisions a real `gitstate_test` database with the
     # project's own scripts/provision-db.sh (same roles/RLS-grant path a
     # developer runs locally) so those tests genuinely execute, and

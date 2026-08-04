@@ -6,9 +6,21 @@
 # gitstate's product code is the Rust workspace under crates/. The Go tree
 # (cmd/ + internal/) is the older server-side implementation kept in-tree for a
 # staged port — the Makefile says so explicitly and does not build it. That is
-# fine as a build policy, but it meant 243 Go files across 37 packages (29 of
-# them with tests) had NO CI at all: nothing compiled them, nothing ran their
-# tests, and a breaking edit would land green. This script is that missing gate.
+# fine as a build policy, but it meant Go files across many packages had NO CI
+# at all: nothing compiled them, nothing ran their tests, and a breaking edit
+# would land green. This script is that missing gate.
+#
+# 2026-08-04: the fully-ported domains (contribution, contributors, metrics,
+# importer, local git reading) and everything that only ever served the
+# abandoned multi-tenant SaaS server (cmd/gitstate, internal/api, admin, auth,
+# calendar, capacity, chat, middleware, notifications, oauth, web, webhooks,
+# githubapp, docs, jobs, sync, analytics, email, cmd/seed, cmd/seedgit) were
+# removed — see decisions.md T11's resolution note. What remains under cmd/ +
+# internal/ is genuinely NOT YET PORTED (report/NL→report, calibration,
+# semantic search/embed, agent_runs+context_bundle inside internal/store) plus
+# the scaffolding (config/db/crypto/llm/gitanalysis) and standalone CLIs
+# (gittrack, gitstate-mcp) it needs to keep building. The floors below were
+# re-measured against that smaller tree; they are not the original 243/37/29.
 #
 # FAIL-CLOSED CONTRACT
 # --------------------
@@ -24,11 +36,9 @@
 #
 # DB-GATED TESTS ARE NOT FREE COVERAGE
 # -------------------------------------
-# ~80 tests across this tree (internal/store and internal/jobs the largest two,
-# 49 between them, but also middleware/metrics/chat/calibration/gitanalysis/
-# admin/api/contributors/contribution/sync/webhooks) call `t.Skip(...)` when
-# DATABASE_URL (and, for internal/jobs, ADMIN_DATABASE_URL) is unset. `go test`
-# still prints `ok` for a package where every test skipped — indistinguishable
+# ~46 tests across this tree (internal/store by far the largest, plus
+# calibration and gitanalysis) call `t.Skip(...)` when DATABASE_URL is unset.
+# `go test` still prints `ok` for a package where every test skipped — indistinguishable
 # from a package that actually ran and passed, in the `ok_count` check above.
 # This gate does NOT let that pass as coverage: it re-runs with `-v`, counts
 # `--- SKIP` lines explicitly, and asserts that count (see step 6 below) rather
@@ -51,18 +61,24 @@ cd "$ROOT"
 # whether or not the frontend has been installed.
 PKGS=(./cmd/... ./internal/...)
 
-# Coverage floors — measured against the tree at the time this gate was added.
-MIN_PKGS="${MIN_PKGS:-37}"          # packages under cmd/ + internal/
-MIN_TESTED_PKGS="${MIN_TESTED_PKGS:-29}"  # of those, ones carrying _test.go
-MIN_GO_FILES="${MIN_GO_FILES:-243}" # .go files handed to gofmt
+# Coverage floors — re-measured 2026-08-04 after the SaaS-only and
+# fully-ported packages were removed (decisions.md T11 resolution note). The
+# tree used to be 243 files / 37 packages / 29 tested; it is now the
+# not-yet-ported reference (report, calibration, embed/search, and
+# internal/store's still-unported files) plus the scaffolding it needs
+# (config/db/crypto/llm/gitanalysis) and two standalone CLIs (gittrack,
+# gitstate-mcp).
+MIN_PKGS="${MIN_PKGS:-12}"          # packages under cmd/ + internal/
+MIN_TESTED_PKGS="${MIN_TESTED_PKGS:-10}"  # of those, ones carrying _test.go
+MIN_GO_FILES="${MIN_GO_FILES:-105}" # .go files handed to gofmt
 
 # Exact, not a floor: how many top-level Go tests are expected to `t.Skip` when
 # no DATABASE_URL is set. Measured directly with `go test -v` across
-# ./cmd/... ./internal/... on a clean tree (2026-07-30) — see the "DB-GATED
-# TESTS" note above. Update this deliberately (with a comment saying why) if a
-# DB-gated test is genuinely added or removed; never bump it to silence a
-# failure without knowing which test moved.
-EXPECTED_DB_SKIPPED_TESTS="${EXPECTED_DB_SKIPPED_TESTS:-80}"
+# ./cmd/... ./internal/... on a clean tree (2026-08-04, post Go-removal) — see
+# the "DB-GATED TESTS" note above. Update this deliberately (with a comment
+# saying why) if a DB-gated test is genuinely added or removed; never bump it
+# to silence a failure without knowing which test moved.
+EXPECTED_DB_SKIPPED_TESTS="${EXPECTED_DB_SKIPPED_TESTS:-46}"
 
 fail() { echo "GO GATE FAILED: $*" >&2; exit 1; }
 step() { CURRENT_STEP="$*"; printf '\n\033[1m── %s\033[0m\n' "$*"; }
@@ -206,7 +222,7 @@ $(grep -B1 '^--- SKIP' "$test_log" | grep -E '_test\.go:[0-9]+:' | sed 's/^/    
   echo "  ok — DATABASE_URL set and zero DB-gated tests skipped"
 else
   echo "  NOTE: DATABASE_URL not set — $skip_count DB-backed integration tests"
-  echo "        SKIPPED, not run (internal/store, internal/jobs, and others; see"
+  echo "        SKIPPED, not run (internal/store, mostly, plus calibration; see"
   echo "        the DB-GATED TESTS note at the top of this file). This gate does"
   echo "        NOT count that as coverage — it asserts the exact skip count below"
   echo "        instead of trusting the packages' 'ok'. CI sets DATABASE_URL (+"
