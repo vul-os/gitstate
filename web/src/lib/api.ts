@@ -10,6 +10,8 @@
  * `fetch` directly.
  */
 import type {
+  AgentDiffSummary,
+  AgentRun,
   Analytics,
   Category,
   CategoryInput,
@@ -23,6 +25,7 @@ import type {
   EffortEstimate,
   EngHealth,
   HealthResp,
+  HumanAction,
   ImportResp,
   ImportedItem,
   Involvement,
@@ -458,6 +461,47 @@ export function verifyTaxonomy(doc: Taxonomy): Promise<VerifyResp> {
 /** GET /api/sync/status — P2P sync state ({ enabled:false, … } when off). */
 export function syncStatus(): Promise<SyncStatus> {
   return get<SyncStatus>('/api/sync/status')
+}
+
+// ── Agent runs (the AI-agent write path) ────────────────────────────────────────
+
+export interface NewAgentRunInput {
+  goal: string
+  repo_id?: string
+  pr_id?: string
+  issue_id?: string
+  supervisor_id?: string
+  agent_name?: string
+  branch?: string
+  diff_summary?: AgentDiffSummary
+  tests_passed?: boolean
+  human_action?: HumanAction
+  iterations?: number
+  cost_usd?: number
+}
+
+/** POST /api/agent-runs — record one agent run. Only `goal` is required. */
+export function logAgentRun(body: NewAgentRunInput): Promise<AgentRun> {
+  return post<AgentRun>('/api/agent-runs', body)
+}
+
+export interface AgentRunQuery {
+  repo_id?: string
+  pr_id?: string
+  issue_id?: string
+  agent_name?: string
+  limit?: number
+}
+
+/** GET /api/agent-runs — logged agent runs, newest-first. */
+export function listAgentRuns({
+  repo_id,
+  pr_id,
+  issue_id,
+  agent_name,
+  limit,
+}: AgentRunQuery = {}): Promise<AgentRun[]> {
+  return get<AgentRun[]>(`/api/agent-runs${qs({ repo_id, pr_id, issue_id, agent_name, limit })}`)
 }
 
 // ── External links ──────────────────────────────────────────────────────────────
