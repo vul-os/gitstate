@@ -29,6 +29,24 @@ export default defineConfig([
       parserOptions: { ecmaFeatures: { jsx: true } },
     },
   },
+  // check-lint-config.mjs is ".mjs", not ".js" — the block above's
+  // `**/*.{js,jsx}` glob never matched it, so `eslint .` was enumerating this
+  // file while applying zero rules to it (confirmed via --print-config and
+  // an injected unused-var probe that went unflagged before this block
+  // existed). It runs under Node only, never the browser. Scoped to this one
+  // file rather than a `scripts/**/*.mjs` or `**/*.mjs` glob: scripts/screenshots.mjs
+  // and tests/runner.mjs both embed Playwright `page.evaluate()` callbacks
+  // that execute in the browser (`window.localStorage`, `document`), which
+  // `no-undef` would flag under Node-only globals — a real fix for those
+  // needs a per-file globals decision, not a blanket glob.
+  {
+    files: ['scripts/check-lint-config.mjs'],
+    extends: [js.configs.recommended],
+    languageOptions: {
+      globals: globals.node,
+      sourceType: 'module',
+    },
+  },
   // web/src is now TS/TSX end to end — parse it with the typescript-eslint
   // parser and lint it with the type-aware TS rule set. projectService
   // resolves real type information from tsconfig.json (include: ["src"]),
