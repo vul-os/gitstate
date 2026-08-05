@@ -30,16 +30,23 @@ export default defineConfig([
     },
   },
   // web/src is now TS/TSX end to end — parse it with the typescript-eslint
-  // parser and lint it with the recommended TS rule set.
+  // parser and lint it with the type-aware TS rule set. projectService
+  // resolves real type information from tsconfig.json (include: ["src"]),
+  // which is what makes no-floating-promises and the no-unsafe-* family
+  // actually run — the untyped `recommended` set silently skipped them.
   {
     files: ['**/*.{ts,tsx}'],
     extends: [
-      ...tseslint.configs.recommended,
+      ...tseslint.configs.recommendedTypeChecked,
       reactHooks.configs.flat.recommended,
     ],
     languageOptions: {
       globals: globals.browser,
-      parserOptions: { ecmaFeatures: { jsx: true } },
+      parserOptions: {
+        ecmaFeatures: { jsx: true },
+        projectService: true,
+        tsconfigRootDir: import.meta.dirname,
+      },
     },
   },
 ])
