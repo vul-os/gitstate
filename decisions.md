@@ -191,6 +191,59 @@ generator. → No payment provider, no exchange-rate service, no charging path.
 > upserts, backfill idempotency, exemplar ordering). `internal/calibration` and `store/calibration.go`
 > stay in-tree unchanged; nothing is deleted until the final cleanup wave. `cargo test --workspace`
 > 227 → 245 (+18: 14 in the new `gitstate-calibrate` crate, 4 in `gitstate-store`).
+>
+> **Wave 3 shipped (2026-08-05, branch `port-context-bundle`): `store/context_bundle.go` +
+> `cmd/gittrack`'s `context <issue>`/`pr <id>`.** Bundle-assembly types land in
+> `gitstate-core::domain` (`IssueContextBundle`, `IssueSummary`, `PrBrief`, `CommitBrief`,
+> `SimilarIssue`, `EstimateBrief`, `PrContextBundle`, `PrDetail`, `PrChangeShape`, plus `EffortRow` —
+> a read-only view of `effort`'s base columns AND wave 2's five calibration columns together, kept
+> separate from `EffortEstimate` so no existing `save_effort`/`list_effort` caller is touched). Two
+> new read-only `Store` methods: `get_work_item(id)` (a bare-id lookup `list_work_items(repo)` can't
+> do) and `get_effort(item)`. The assembly itself is `crates/gitstate-daemon/src/ops.rs`'s new
+> `build_issue_context`/`build_pr_context`, mirroring Go's `BuildIssueContext`/`BuildPRContext`
+> function-for-function (`relatedPRs`, `recentCommits`, `similarIssues`, the trim/cap constants) —
+> called by `gitstate-cli`'s new `agent context <issue-id>`/`agent pr <id>` subcommands and by two new
+> MCP tools, `get_issue`/`get_pr_context` (`crates/gitstate-cli/src/cmd/mcp.rs`), both in-process, no
+> HTTP, matching wave 1's established pattern. `get_issue`/`get_pr_context` are exactly the two MCP
+> tools wave 1 left unwired ("Go's other five tools ... depend on domains this wave explicitly
+> excludes ... context_bundle = a later wave") — the daemon now has 3 of 6 Go MCP tools ported
+> (`log_agent_run`, `get_issue`, `get_pr_context`); `search_issues` (search/embeddings, a later wave)
+> and `list_issues`/`update_issue_state` (plain work-item listing/mutation, a different domain) remain
+> unstubbed on purpose. **No daemon HTTP route**: unlike wave 1's `/api/agent-runs` (added for parity
+> even without a web screen), this wave declines one with the same discipline wave 2 used for
+> calibration — nothing consumes it. The CLI and MCP both call `ops` in-process; no web UI reads a
+> bundle; and Go's own HTTP handler for this domain, `internal/api`, was already `git rm`'d as
+> SaaS-only in the 2026-08-04 sweep, so there is not even a Go reference implementation left calling
+> this over HTTP to point at. Two deliberate shape departures, both forced by earlier waves' schema
+> choices, not invented here: `codeAreas` no longer reads a `task_files` table (none exists in Rust,
+> and the table backed a planning feature with zero live callers even in Go, `docs/PORT-PLAN.md` §3)
+> — it is re-derived from `WorkItem.files_touched` via `gitstate_calibrate::cohort::top_dirs_from_paths`,
+> reusing wave 2's own helper rather than inventing a second one. `IssueSummary` drops `assigneeId`:
+> `WorkItem` has no assignee field (only `author_login`, a different person in general), so the field
+> is dropped rather than faked. **The one genuine behaviour change, made deliberately and flagged
+> here rather than smuggled in:** Go's `predicted_secs` column has no writer in EITHER language today
+> (`internal/store/estimates.go`'s own comment says it is "populated by `EstimateForPR`", but that
+> function does not exist anywhere in the Go tree — confirmed by grep), so a byte-faithful port would
+> forever read `NULL` and defeat the entire reason wave 2 was sequenced before this one. Instead,
+> `build_estimate_brief` calls `gitstate_calibrate::curve::calibrated_secs` LIVE whenever a persisted
+> value is absent (true for every row today), yielding a real calibrated number — falling back to the
+> cold-start fixed prior with zero calibration history, never a placeholder or null. `size_bucket`/
+> `change_type` are computed the same way (live, via `gitstate_calibrate::cohort`) when not already
+> persisted, using `WorkItem.files_touched`/`title`/`repo_id` as the diff-shape input — churn
+> (additions/deletions) is always 0, the same documented degradation `ops::effort_items` already
+> lives with, since `WorkItem` never persisted per-item add/delete counts. Commit `isAgent` reuses
+> `gitstate_git::util::detect_agent` (the same heuristic contributor-derivation already uses) rather
+> than inventing a second one — `Commit` carries no `is_agent` column of its own. `store/issues.go`/
+> `store/pull_requests.go` remain unported, per the plan: the bundle reads through `WorkItem`
+> (`WorkKind::Issue`/`WorkKind::Pr`), not a replica of the Postgres-shaped structs. Tested with 14 new
+> tests specifically exercising the token-budget/truncation logic (every cap — `related_prs` at 5,
+> `recent_commits` at 8, `similar_issues` at 3, `code_areas` at 10, body at 800 chars, titles at 100 —
+> seeded past its limit and asserted to land exactly at the limit, not over or silently under) plus
+> the live-vs-persisted calibration read path, in `crates/gitstate-daemon/tests/context_bundle.rs`
+> (11) and `crates/gitstate-store` (2: `get_work_item`, `get_effort`), plus 1 direct unit test for the
+> new `gitstate_core::analytics::lead_time_secs` helper. `internal/store/context_bundle.go` and
+> `cmd/gittrack` stay in-tree unchanged; nothing is deleted until the final cleanup wave. `cargo test
+> --workspace` 245 → 259 (+14: 11 in `gitstate-daemon`, 2 in `gitstate-store`, 1 in `gitstate-core`).
 
 ---
 
