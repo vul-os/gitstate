@@ -95,6 +95,14 @@ enum Command {
     /// an agent host (Claude Code, Cursor, …). Folded from the standalone Go
     /// `gitstate-mcp` binary; see `cmd::mcp` for the auth-scope reasoning.
     Mcp,
+
+    /// Dashboard extras (burndown, recent activity, LLM status synthesis)
+    /// plus NL→report (`internal/report`, T11 port plan wave 5 — the last
+    /// domain). See `cmd::report` for what's new here vs. already served at
+    /// `GET /api/analytics`, and `gitstate_report::nl` for the NL→report
+    /// security redesign.
+    #[command(subcommand)]
+    Report(cmd::report::ReportCmd),
 }
 
 #[tokio::main]
@@ -129,5 +137,6 @@ async fn run() -> anyhow::Result<()> {
         Command::Data(c) => cmd::misc::data(&ctx, c),
         Command::Agent(c) => cmd::agent::run(&ctx, c).await,
         Command::Mcp => cmd::mcp::run().await,
+        Command::Report(c) => cmd::report::run(&ctx, c).await,
     }
 }

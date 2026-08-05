@@ -919,6 +919,7 @@ dependencies = [
  "gitstate-core",
  "gitstate-forge",
  "gitstate-git",
+ "gitstate-report",
  "gitstate-search",
  "gitstate-store",
  "gitstate-sync",
@@ -953,6 +954,19 @@ dependencies = [
  "regex",
  "tempfile",
  "time",
+]
+
+[[package]]
+name = "gitstate-report"
+version = "0.1.0"
+dependencies = [
+ "gitstate-classify",
+ "gitstate-core",
+ "gitstate-store",
+ "serde",
+ "serde_json",
+ "time",
+ "tokio",
 ]
 
 [[package]]

@@ -1,0 +1,26 @@
+[package]
+name = "gitstate-report"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "gitstate reporting: dashboard assembly (burndown/activity/status) plus NL→report — a fixed-intent question answerer, not a SQL generator"
+
+[dependencies]
+gitstate-core = { workspace = true }
+gitstate-classify = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+time = { workspace = true }
+
+[dev-dependencies]
+# A real Store to dispatch against, so intent execution is tested against the
+# actual SQLite persistence path rather than a hand-rolled stand-in — same
+# rationale as `gitstate-calibrate`'s and `gitstate-search`'s dev-dep on
+# `gitstate-store`.
+gitstate-store = { workspace = true }
+tokio = { workspace = true }
+
+[lints]
+workspace = true

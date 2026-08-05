@@ -25,6 +25,7 @@ rust-version = "1.85"
 [workspace.dependencies]
 gitstate-calibrate = { path = "crates/gitstate-calibrate" }
 gitstate-core = { path = "crates/gitstate-core" }
+gitstate-report = { path = "crates/gitstate-report" }
 gitstate-git = { path = "crates/gitstate-git" }
 gitstate-forge = { path = "crates/gitstate-forge" }
 gitstate-classify = { path = "crates/gitstate-classify" }

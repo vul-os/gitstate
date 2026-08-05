@@ -98,6 +98,39 @@ pub struct Slice {
     pub count: u32,
 }
 
+/// One day's open-vs-total ISSUE count — a burndown chart point.
+///
+/// Net-new for T11 port plan wave 5 (`docs/PORT-PLAN.md` §1/§2, row 1a): the
+/// Go reference (`store.BurndownSeries`) had no analogue anywhere in
+/// `crates/` before this. See [`burndown`] for the scope and the one
+/// deliberate improvement over the Go behaviour.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BurndownPoint {
+    pub date: String,
+    pub open: u32,
+    pub total: u32,
+}
+
+/// One entry in the "what happened recently" feed — issues, PRs, and commits
+/// merged into a single timeline.
+///
+/// Net-new for wave 5, matching Go's `store.RecentActivityItem` shape
+/// (`kind`/`title`/`author`/`state` plus a timestamp), see [`recent_activity`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ActivityItem {
+    /// "issue" | "pr" | "review" | "commit".
+    pub kind: String,
+    pub title: String,
+    /// Empty string when the source has no author field populated (matches
+    /// Go's `COALESCE(author_login, '')`/`COALESCE(author_login, '')` union).
+    pub author: String,
+    /// Empty string for commits, which have no lifecycle state.
+    pub state: String,
+    /// RFC3339 (or day-only) timestamp this item was last touched — the sort
+    /// key.
+    pub at: String,
+}
+
 /// Headline scalars for the stat-card row.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Totals {
@@ -445,8 +478,132 @@ pub fn throughput(items: &[WorkItem], from: &str, to: &str) -> Vec<ThroughputPoi
     acc.into_values().collect()
 }
 
+/// Dense per-day open-vs-total ISSUE count across `[from, to]` inclusive
+/// (YYYY-MM-DD), for a burndown chart. Every day in range is emitted (zero
+/// days included), matching [`daily_buckets`]'s zero-fill contract.
+///
+/// **Scope**: issues only, matching Go's own `store.BurndownSeries`, which
+/// reads `FROM issues` and never joins `pull_requests` — PRs have their own
+/// lifecycle chart ([`cycle_times`]/[`throughput`]), and mixing the two into
+/// one "open count" would blur two different kinds of "done".
+///
+/// **A genuine improvement, not a faithful copy of Go's proxy**: Go's
+/// Postgres schema had no issue-close timestamp column, so `BurndownSeries`
+/// approximated "closed by day D" with `updated_at <= D` and its own doc
+/// comment calls this out as a best-effort stand-in for "a proper
+/// point-in-time snapshot", which "would require a history table". `WorkItem`
+/// already carries a real `closed_at` (populated the same way wave 3's
+/// `context_bundle` already relies on it) — this port uses that field
+/// directly instead of reproducing the approximation, so "open as of day D"
+/// here is exact, not estimated.
+pub fn burndown(items: &[WorkItem], from: &str, to: &str) -> Vec<BurndownPoint> {
+    let (Some(start), Some(end)) = (parse_date(from), parse_date(to)) else {
+        return Vec::new();
+    };
+    if end < start {
+        return Vec::new();
+    }
+
+    struct IssueSpan {
+        created: Date,
+        /// `None` = not observed closed (still open, or a closed timestamp
+        /// that failed to parse — treated as "not yet closed" rather than
+        /// silently dropping the issue from the total).
+        closed: Option<Date>,
+    }
+
+    let mut spans = Vec::new();
+    for w in items {
+        if w.kind != WorkKind::Issue {
+            continue;
+        }
+        let Some(created) = day_key(&w.created_at).and_then(parse_date) else {
+            continue;
+        };
+        let is_terminal = matches!(w.state, WorkState::Closed | WorkState::Done);
+        let closed = if is_terminal {
+            w.closed_at
+                .as_deref()
+                .and_then(day_key)
+                .and_then(parse_date)
+        } else {
+            None
+        };
+        spans.push(IssueSpan { created, closed });
+    }
+
+    let mut out = Vec::new();
+    let mut d = start;
+    while d <= end {
+        let mut total = 0u32;
+        let mut open = 0u32;
+        for s in &spans {
+            if s.created > d {
+                continue;
+            }
+            total += 1;
+            if s.closed.is_none_or(|c| c > d) {
+                open += 1;
+            }
+        }
+        out.push(BurndownPoint {
+            date: fmt_date(d),
+            open,
+            total,
+        });
+        d += Duration::days(1);
+    }
+    out
+}
+
+/// The `limit` most recent items across `items` (issues/PRs/reviews) and
+/// `commits`, newest first — the dashboard's "recent activity" feed.
+///
+/// Net-new for wave 5: Go's `store.RecentActivity` was a `UNION ALL` SQL
+/// query over three Postgres tables; there is no persisted table to union
+/// here, so this is a plain in-memory merge-and-sort over data the caller
+/// already loaded (`list_all_work_items`/`list_commits`) — "trivial", per
+/// `docs/PORT-PLAN.md` §1's own assessment.
+///
+/// An issue/PR/review's activity timestamp is its `updated_at`; a commit's is
+/// `committed_at`. Ties break by kind then title for a deterministic order —
+/// Go's plain `ORDER BY updated_at DESC` had no documented tie-break at all.
+pub fn recent_activity(items: &[WorkItem], commits: &[Commit], limit: usize) -> Vec<ActivityItem> {
+    let mut out: Vec<ActivityItem> = Vec::with_capacity(items.len() + commits.len());
+    for w in items {
+        out.push(ActivityItem {
+            kind: w.kind.as_str().to_string(),
+            title: w.title.clone(),
+            author: w.author_login.clone().unwrap_or_default(),
+            state: w.state.as_str().to_string(),
+            at: w.updated_at.clone(),
+        });
+    }
+    for c in commits {
+        out.push(ActivityItem {
+            kind: "commit".to_string(),
+            title: c.summary.clone(),
+            author: c.author_name.clone(),
+            state: String::new(),
+            at: c.committed_at.clone(),
+        });
+    }
+    out.sort_by(|a, b| {
+        b.at.cmp(&a.at)
+            .then_with(|| a.kind.cmp(&b.kind))
+            .then_with(|| a.title.cmp(&b.title))
+    });
+    out.truncate(limit);
+    out
+}
+
 /// Count `items` by a string key, ordered by count desc then key asc.
-fn tally<'a>(keys: impl Iterator<Item = &'a str>) -> Vec<Slice> {
+///
+/// `pub` (not just crate-internal) since T11 wave 5: `gitstate_report`'s
+/// `label_breakdown` NL→report intent reuses this directly rather than
+/// re-deriving the same tally-and-sort logic — the same "reused, not
+/// rewritten" bar every prior wave held itself to.
+pub fn tally<'a>(keys: impl Iterator<Item = &'a str>) -> Vec<Slice> {
     let mut acc: HashMap<&str, u32> = HashMap::new();
     for k in keys {
         *acc.entry(k).or_insert(0) += 1;
@@ -624,6 +781,29 @@ mod tests {
         }
     }
 
+    fn issue(reference: &str, created: &str, closed: Option<&str>) -> WorkItem {
+        WorkItem {
+            id: WorkItemId::from(reference.to_string()),
+            repo_id: RepoId::from("r1"),
+            kind: WorkKind::Issue,
+            external_ref: reference.into(),
+            title: format!("Issue {reference}"),
+            body: String::new(),
+            state: if closed.is_some() {
+                WorkState::Closed
+            } else {
+                WorkState::Open
+            },
+            author_login: Some("dev".into()),
+            labels: vec!["backend".into()],
+            created_at: created.into(),
+            updated_at: closed.unwrap_or(created).into(),
+            merged_at: None,
+            closed_at: closed.map(String::from),
+            files_touched: vec![],
+        }
+    }
+
     #[test]
     fn day_key_extracts_the_date_prefix() {
         assert_eq!(day_key("2026-06-15T09:00:00Z"), Some("2026-06-15"));
@@ -796,6 +976,107 @@ mod tests {
         assert_eq!(t[0].week_start, "2026-06-01");
         assert_eq!(t[0].merged_prs, 2);
         assert_eq!(t[1].merged_prs, 1);
+    }
+
+    #[test]
+    fn burndown_tracks_open_and_total_per_day_using_real_closed_at() {
+        // Created day 1, closed day 3 — the whole point of using `closed_at`
+        // directly instead of Go's `updated_at` proxy is that this is exact.
+        let items = vec![issue(
+            "#1",
+            "2026-06-01T00:00:00Z",
+            Some("2026-06-03T00:00:00Z"),
+        )];
+        let series = burndown(&items, "2026-06-01", "2026-06-04");
+        assert_eq!(series.len(), 4);
+        assert_eq!(
+            series[0],
+            BurndownPoint {
+                date: "2026-06-01".into(),
+                open: 1,
+                total: 1
+            }
+        );
+        assert_eq!(
+            series[1],
+            BurndownPoint {
+                date: "2026-06-02".into(),
+                open: 1,
+                total: 1
+            }
+        );
+        assert_eq!(
+            series[2],
+            BurndownPoint {
+                date: "2026-06-03".into(),
+                open: 0,
+                total: 1
+            }
+        );
+        assert_eq!(
+            series[3],
+            BurndownPoint {
+                date: "2026-06-04".into(),
+                open: 0,
+                total: 1
+            }
+        );
+    }
+
+    #[test]
+    fn burndown_counts_an_issue_created_after_the_window_start_only_from_its_day() {
+        let items = vec![issue("#1", "2026-06-02T00:00:00Z", None)];
+        let series = burndown(&items, "2026-06-01", "2026-06-03");
+        assert_eq!(series[0].total, 0, "not yet created on day 1");
+        assert_eq!(series[1].total, 1, "created on day 2");
+        assert_eq!(series[1].open, 1, "never closed");
+        assert_eq!(series[2].total, 1);
+    }
+
+    #[test]
+    fn burndown_ignores_prs_scoped_to_issues_only_like_go() {
+        let items = vec![pr(
+            "#1",
+            "2026-06-01T00:00:00Z",
+            Some("2026-06-02T00:00:00Z"),
+        )];
+        let series = burndown(&items, "2026-06-01", "2026-06-02");
+        assert!(series.iter().all(|p| p.total == 0 && p.open == 0));
+    }
+
+    #[test]
+    fn burndown_rejects_an_inverted_range() {
+        assert!(burndown(&[], "2026-06-05", "2026-06-01").is_empty());
+    }
+
+    #[test]
+    fn recent_activity_merges_and_sorts_newest_first() {
+        let items = vec![
+            issue("#1", "2026-06-01T00:00:00Z", None),
+            pr("#2", "2026-06-03T00:00:00Z", Some("2026-06-05T00:00:00Z")),
+        ];
+        let commits = vec![commit("a", "2026-06-04T00:00:00Z", "dev@x", 10, 2)];
+        let out = recent_activity(&items, &commits, 10);
+        assert_eq!(out.len(), 3);
+        // PR's activity timestamp is `updated_at` (= created_at here, "2026-06-03"),
+        // which sorts between the commit (06-04, newest) and the issue (06-01, oldest)
+        // only once merged_at/updated_at are compared correctly.
+        assert_eq!(out[0].kind, "commit");
+        assert_eq!(out[1].kind, "pr");
+        assert_eq!(out[2].kind, "issue");
+    }
+
+    #[test]
+    fn recent_activity_truncates_to_the_limit() {
+        let items = vec![
+            issue("#1", "2026-06-01T00:00:00Z", None),
+            issue("#2", "2026-06-02T00:00:00Z", None),
+            issue("#3", "2026-06-03T00:00:00Z", None),
+        ];
+        let out = recent_activity(&items, &[], 2);
+        assert_eq!(out.len(), 2);
+        assert_eq!(out[0].title, "Issue #3");
+        assert_eq!(out[1].title, "Issue #2");
     }
 
     #[test]

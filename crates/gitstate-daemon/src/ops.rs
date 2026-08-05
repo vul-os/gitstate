@@ -1072,6 +1072,122 @@ pub fn embed_pending(state: &AppState, limit: u32) -> Result<u64> {
     gitstate_search::embed_pending(state.store.as_ref(), limit)
 }
 
+// ──────────────────────────── report (T11 wave 5) ────────────────────────────
+//
+// Ported from Go's `internal/report` (`report.go`) — the last of the five
+// domains in T11's port plan (`docs/PORT-PLAN.md` §7 explains the ordering).
+// Most of the rollup math (throughput, cycle-time trend, state counts)
+// already existed in `gitstate_core::analytics` before this wave;
+// `burndown`/`recent_activity` were the two genuinely missing pure
+// functions, added directly there rather than duplicated in a new crate.
+// NL→report is a security-relevant redesign, not a port — see
+// `gitstate_report::nl`'s module doc for the full threat-model writeup and
+// why Go's SQL-generation-plus-regex-allowlist design was not carried
+// forward.
+//
+// No daemon HTTP route: `web/` has no consumer for burndown, the activity
+// feed, status synthesis, or NL→report (checked — `/api/analytics` is the
+// only report-shaped endpoint anything in `web/src` calls). This is CLI
+// (`gitstate report ...`) surface only, the same evidence-based call waves
+// 2/3/4 made for their own domains.
+
+/// Dense per-day open-vs-total ISSUE count. See
+/// `gitstate_core::analytics::burndown` for the exact scope and how it
+/// improves on Go's `updated_at`-proxy approximation. The window ends today
+/// (wall clock) — unlike [`analytics`], burndown has no "anchor on the
+/// latest commit" concern, since an empty store simply produces an
+/// all-zero series rather than a misleadingly-shifted one.
+pub fn burndown(
+    state: &AppState,
+    repo_id: Option<&RepoId>,
+    days: Option<u32>,
+) -> Result<Vec<analytics_lib::BurndownPoint>> {
+    let items = match repo_id {
+        Some(r) => state.store.list_work_items(r)?,
+        None => state.store.list_all_work_items()?,
+    };
+    let today = now_rfc3339()[..10].to_string();
+    let window = days.unwrap_or(30).clamp(1, MAX_ANALYTICS_DAYS);
+    let (from, to) = analytics_lib::range_ending(&today, window)
+        .ok_or_else(|| Error::invalid(format!("bad burndown anchor date: {today}")))?;
+    Ok(analytics_lib::burndown(&items, &from, &to))
+}
+
+/// The most recent `limit` issues/PRs/commits, newest first — the
+/// dashboard's "recent activity" feed (`gitstate_core::analytics::recent_activity`).
+pub fn recent_activity(
+    state: &AppState,
+    repo_id: Option<&RepoId>,
+    limit: u32,
+) -> Result<Vec<analytics_lib::ActivityItem>> {
+    let items = match repo_id {
+        Some(r) => state.store.list_work_items(r)?,
+        None => state.store.list_all_work_items()?,
+    };
+    let commits = state.store.list_commits(repo_id)?;
+    Ok(analytics_lib::recent_activity(
+        &items,
+        &commits,
+        limit.clamp(1, 500) as usize,
+    ))
+}
+
+/// A leadership-readable prose status paragraph over the recent-activity
+/// feed, via `gitstate_classify::LlmClassifier::chat` (Go's
+/// `llm.SynthesizeStatus`, prompt ported near-verbatim). Best-effort:
+/// `Ok(None)` — not an error — when no LLM endpoint is configured or there is
+/// no activity to summarize, mirroring Go's own `ErrLLMNotConfigured` swallow
+/// in `report.Dashboard`.
+pub async fn status_synthesis(
+    state: &AppState,
+    repo_id: Option<&RepoId>,
+    limit: u32,
+) -> Result<Option<String>> {
+    let Some(llm) = gitstate_classify::LlmClassifier::from_env() else {
+        return Ok(None);
+    };
+    let items = recent_activity(state, repo_id, limit)?;
+    if items.is_empty() {
+        return Ok(None);
+    }
+    use std::fmt::Write as _;
+    let mut prompt = String::from("Recent activity:\n\n");
+    for (i, a) in items.iter().enumerate() {
+        let _ = write!(prompt, "{}. [{}] {}", i + 1, a.kind.to_uppercase(), a.title);
+        if !a.author.is_empty() {
+            let _ = write!(prompt, " (by {})", a.author);
+        }
+        if !a.state.is_empty() {
+            let _ = write!(prompt, " — {}", a.state);
+        }
+        prompt.push('\n');
+    }
+    const SYSTEM: &str = "You are a senior engineering lead writing a concise project status \
+        summary for non-technical leadership.\n\nSummarize the provided recent activity (PRs, \
+        issues, commits) into a leadership-readable status update. Focus on:\n- What shipped and \
+        is ready to use\n- What is at risk or blocked\n- Key open questions requiring decisions\n\
+        - No individual rankings or performance judgments — show work patterns, not worker \
+        scores\n\nWrite 3-5 short paragraphs. Plain prose, no bullet lists. Be direct and \
+        specific.";
+    let text = llm.chat(SYSTEM, &prompt).await?;
+    Ok(Some(text.trim().to_string()))
+}
+
+/// NL→report: translate `question` into a fixed, closed
+/// `gitstate_report::nl::ReportIntent`, dispatch it against this node's own
+/// store, and (best-effort) synthesize prose. Returns an error immediately
+/// if no LLM is configured — unlike [`status_synthesis`], there is nothing
+/// useful to fall back to when the translation step itself cannot run (Go's
+/// `AnswerQuery` returned `ErrLLMNotConfigured` immediately for the same
+/// reason). See `gitstate_report::nl` for the full security model this
+/// replaces Go's SQL-generation design with.
+pub async fn ask_report(state: &AppState, question: &str) -> Result<gitstate_report::nl::NlAnswer> {
+    let llm = gitstate_classify::LlmClassifier::from_env().ok_or_else(|| {
+        Error::invalid("no LLM endpoint configured (set VULOS_LLMUX_URL or OPENAI_BASE_URL)")
+    })?;
+    gitstate_report::nl::answer_question(&llm, state.store.as_ref(), question).await
+}
+
 // ──────────────────────────── taxonomy ────────────────────────────
 
 pub fn taxonomy(state: &AppState) -> Taxonomy {
