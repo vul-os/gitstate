@@ -224,6 +224,42 @@ pub trait Store: Send + Sync {
     /// Up to `limit` recent merged PRs in `cohort_key` that have BOTH a
     /// prediction and an actual, newest-first — used as prompt anchors.
     fn list_exemplars(&self, cohort_key: &str, limit: u32) -> Result<Vec<Exemplar>>;
+
+    // ── search + embeddings (T11 port plan, wave 4 — see `gitstate_search`) ──
+    /// Full-text search over work items (issues/PRs) and commits, ranked by
+    /// SQLite FTS5's `bm25()` (sign-flipped so higher is better, matching
+    /// cosine's convention). Rebuilds the FTS index from the current
+    /// `work_items`/`commits` rows on every call — see migration `0005`'s
+    /// doc for why a full rebuild is the right trade at this app's local,
+    /// single-user scale rather than incremental triggers. `kinds` is never
+    /// empty in practice — the caller (`gitstate_search::search`) resolves
+    /// "no filter" to "every kind" before calling this.
+    fn search_fts(&self, kinds: &[SearchKind], query: &str, limit: u32) -> Result<Vec<SearchHit>>;
+    /// Issues (kind = issue only) whose embedding is missing or stale: no
+    /// row yet in `work_item_embeddings`, the work item was updated after it
+    /// was last embedded, or the stored model differs from `model`.
+    /// Oldest-touched first, capped at `limit`. Mirrors Go's
+    /// `ListIssuesNeedingEmbedding`.
+    fn list_issues_needing_embedding(
+        &self,
+        model: &str,
+        limit: u32,
+    ) -> Result<Vec<PendingEmbedding>>;
+    /// Persist a freshly-computed embedding for one issue. `vector` is the
+    /// raw little-endian f32 bytes (`gitstate_search::embed::to_bytes`) —
+    /// SQLite has no `pgvector` column type, so the port stores a BLOB
+    /// instead of Go's `::vector`-cast text literal. Returns
+    /// [`crate::Error::NotFound`] if `item_id` has no row in `work_items`.
+    fn set_work_item_embedding(
+        &self,
+        item_id: &WorkItemId,
+        vector: &[u8],
+        model: &str,
+    ) -> Result<()>;
+    /// Every currently-embedded issue's id + raw vector bytes, for
+    /// brute-force cosine KNN in `gitstate_search` — no ANN/HNSW index is
+    /// needed at this local, single-user scale (`docs/PORT-PLAN.md` §2/§5).
+    fn list_issue_embeddings(&self) -> Result<Vec<(WorkItemId, Vec<u8>)>>;
 }
 
 /// Optional narrowing for [`Store::list_agent_runs`]. Every field left `None`

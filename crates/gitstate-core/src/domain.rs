@@ -897,3 +897,78 @@ pub struct PrChangeShape {
     pub deletions: u32,
     pub changed_files: u32,
 }
+
+// ──────────────────────────── search (T11 wave 4) ────────────────────────────
+//
+// Ported from Go's `store/search.go` + `store/embeddings.go` — hybrid
+// full-text/vector/fuzzy search over issues, PRs, and commits. See
+// `gitstate_search`'s crate doc for the fuzzy-fallback and FTS5 spike
+// writeup; these are just the wire types shared between the store and the
+// search crate (same split `AgentRun`/`CalibrationCell` already use).
+
+/// Search result entity kinds. Mirrors Go's `SearchTypeIssue`/`SearchTypePR`/
+/// `SearchTypeCommit` string constants as a real enum.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SearchKind {
+    Issue,
+    Pr,
+    Commit,
+}
+
+impl SearchKind {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            SearchKind::Issue => "issue",
+            SearchKind::Pr => "pr",
+            SearchKind::Commit => "commit",
+        }
+    }
+
+    /// Accepts the API-facing plural aliases too (`issues`, `prs`,
+    /// `commits`), matching Go's `searchTypeAliases`. Unknown input is
+    /// simply not matched (`None`) — the caller drops it, same as Go's
+    /// "unrecognised type is ignored" rule.
+    pub fn parse(s: &str) -> Option<Self> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "issue" | "issues" => Some(SearchKind::Issue),
+            "pr" | "prs" => Some(SearchKind::Pr),
+            "commit" | "commits" => Some(SearchKind::Commit),
+            _ => None,
+        }
+    }
+}
+
+/// One hybrid-search hit: from full-text (FTS5/bm25), vector KNN, RRF fusion
+/// of the two, or the fuzzy fallback. Mirrors Go's `store.SearchResult`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SearchHit {
+    #[serde(rename = "type")]
+    pub kind: SearchKind,
+    pub id: String,
+    /// Issue/PR number recovered from `external_ref`; `None` for commits or
+    /// a native item with no leading digits. Go's `SearchResult.Number` was
+    /// a plain `int` defaulting to 0 for "no number" — replaced here with an
+    /// explicit optional, the same convention wave 3 already established for
+    /// `PrBrief`/`SimilarIssue`, rather than porting an ambiguous zero.
+    pub number: Option<i64>,
+    pub title: String,
+    pub snippet: String,
+    /// Whichever ranker produced this hit: FTS5's `bm25()` (sign-flipped so
+    /// higher is better, matching cosine's convention), the RRF fused score,
+    /// or the fuzzy trigram similarity. Comparable only within one response,
+    /// never across calls or ranking modes.
+    pub rank: f64,
+    pub repo_id: String,
+    /// `""` for commits, matching Go.
+    pub state: String,
+}
+
+/// One issue whose embedding is missing or stale. Mirrors Go's
+/// `store.IssueForEmbedding`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PendingEmbedding {
+    pub id: WorkItemId,
+    pub title: String,
+    pub body: String,
+}

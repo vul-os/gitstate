@@ -30,9 +30,9 @@ pub use domain::{
     CatField, Category, CategorySource, Classification, CohortSample, Commit, CommitBrief, Context,
     ContextPrRef, Contribution, Contributor, CtxField, DiffSummary, DimensionRaw, Dimensions,
     EffortEstimate, EffortMethod, EffortRow, EstimateBrief, EstimateOutcome, Exemplar, Forge,
-    HumanAction, IssueContextBundle, IssueSummary, PrBrief, PrChangeShape, PrContextBundle,
-    PrDetail, ProjectState, Repo, SimilarIssue, SyncOp, Weights, WorkItem, WorkKind, WorkState,
-    AGENT_RUN_DEFAULT_LIMIT, AGENT_RUN_MAX_LIMIT,
+    HumanAction, IssueContextBundle, IssueSummary, PendingEmbedding, PrBrief, PrChangeShape,
+    PrContextBundle, PrDetail, ProjectState, Repo, SearchHit, SearchKind, SimilarIssue, SyncOp,
+    Weights, WorkItem, WorkKind, WorkState, AGENT_RUN_DEFAULT_LIMIT, AGENT_RUN_MAX_LIMIT,
 };
 pub use ids::{
     now_rfc3339, now_wall_ms, AgentRunId, CategoryId, ContextId, ContributorId, Hlc, PeerId,
