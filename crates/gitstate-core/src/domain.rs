@@ -740,3 +740,160 @@ pub struct Exemplar {
     pub predicted_secs: Option<f64>,
     pub actual_secs: Option<i64>,
 }
+
+/// The full `effort` row for one item: the base judgement plus whatever
+/// calibration has (or hasn't yet) written onto it. A separate type from
+/// [`EffortEstimate`] rather than new fields on it — this wave only *reads*
+/// the calibration columns (`crates/gitstate-store/migrations/0004_calibration.sql`);
+/// every existing caller of `save_effort`/`list_effort`/`EffortEstimate` is
+/// left untouched. Backs [`EstimateBrief`] in [`crate::traits::Store::get_effort`].
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct EffortRow {
+    pub item_id: WorkItemId,
+    pub difficulty: f64,
+    pub method: EffortMethod,
+    pub rationale: String,
+    pub confidence: f64,
+    /// Calibrated estimate at write time, if calibration has ever run for
+    /// this item (nothing currently writes this column live — see the
+    /// migration's caveat — so today this is `None` for every row).
+    pub predicted_secs: Option<f64>,
+    /// Observed lead time, backfilled by [`crate::traits::Store::backfill_actual_secs`].
+    pub actual_secs: Option<i64>,
+    pub cohort_key: Option<String>,
+    pub size_bucket: Option<String>,
+    pub change_type: Option<String>,
+}
+
+// ── context bundle (T11 port plan, wave 3 — see `gitstate_daemon::ops` for the
+// read-only assembly logic that builds these; this module only carries the
+// shapes) ──────────────────────────────────────────────────────────────────
+//
+// Ported from Go's `store/context_bundle.go`. Two deliberate departures from
+// a literal port, both forced by choices earlier waves already made, not
+// invented here:
+// - `codeAreas` no longer reads a `task_files` table: no such table exists in
+//   Rust and none is planned (`docs/PORT-PLAN.md` §3 — `task_files` backed a
+//   planning feature with zero live callers even in Go). It is re-derived
+//   from `WorkItem.files_touched` via `gitstate_calibrate::cohort::top_dirs_from_paths`.
+// - `IssueSummary` drops `assigneeId`: `WorkItem` (wave 0's schema) has no
+//   assignee field, only `author_login` — a different person in general.
+//   Inventing a value here would misattribute work, so the field is dropped
+//   rather than faked.
+//
+// `EstimateBrief.predicted_secs` is a genuine departure in behaviour, not
+// just shape: Go's own `predicted_secs` column has no live writer anywhere in
+// the Go tree either (grep confirms `EstimateForPR`, the function its own
+// comment says populates it, does not exist), so a literal port would read a
+// column that is always NULL forever. Since wave 2 landed `gitstate_calibrate`
+// specifically so this wave could do better, the assembly logic computes a
+// REAL calibrated value live (`gitstate_calibrate::curve::calibrated_secs`)
+// whenever a persisted value is absent, rather than porting the Go column
+// read verbatim into a permanent no-op. See `gitstate_daemon::ops::build_estimate_brief`.
+
+/// The curated, token-efficient payload an agent can start work from on one
+/// issue: the issue itself, related PRs, recent commits, historically-touched
+/// code areas, and similar past issues (with how they were resolved).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IssueContextBundle {
+    pub issue: IssueSummary,
+    pub estimate: Option<EstimateBrief>,
+    pub related_prs: Vec<PrBrief>,
+    pub recent_commits: Vec<CommitBrief>,
+    pub code_areas: Vec<String>,
+    pub similar_issues: Vec<SimilarIssue>,
+}
+
+/// The trimmed issue itself — `body` is capped so the bundle fits an agent's
+/// context window (see `gitstate_daemon::ops::BODY_TRIM_CHARS`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IssueSummary {
+    pub id: WorkItemId,
+    /// Parsed from `external_ref` (e.g. `"#123"`); `None` for a native issue
+    /// with no platform number.
+    pub number: Option<i64>,
+    pub title: String,
+    pub body: String,
+    pub state: String,
+    pub labels: Vec<String>,
+    pub repo_id: RepoId,
+}
+
+/// A one-line PR with the signal an agent cares about: is it merged, and how
+/// long did it take.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PrBrief {
+    pub id: WorkItemId,
+    pub number: Option<i64>,
+    pub title: String,
+    pub state: String,
+    pub merged: bool,
+    pub lead_time_secs: Option<i64>,
+}
+
+/// A short-sha + subject line, the smallest useful trace of recent activity.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CommitBrief {
+    pub sha: String,
+    pub subject: String,
+    pub author: String,
+    pub is_agent: bool,
+}
+
+/// A past issue sharing labels with the one being bundled, plus (best-effort)
+/// the PR that resolved it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SimilarIssue {
+    pub id: WorkItemId,
+    pub number: Option<i64>,
+    pub title: String,
+    pub state: String,
+    pub shared_labels: Vec<String>,
+    pub resolved_by_pr: Option<PrBrief>,
+}
+
+/// The calibrated effort estimate for an issue/PR — see the module doc above
+/// for why `predicted_secs` is computed live rather than read from a column
+/// that no writer (Go or Rust) ever populates.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EstimateBrief {
+    pub difficulty: f64,
+    pub predicted_secs: Option<f64>,
+    pub actual_secs: Option<i64>,
+    pub size_bucket: Option<String>,
+    pub change_type: Option<String>,
+}
+
+/// The curated payload for the PR-context endpoint: diff shape (no raw diff
+/// — just its size), cycle time, and the calibrated effort estimate.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PrContextBundle {
+    pub pr: PrDetail,
+    pub diff_summary: PrChangeShape,
+    pub cycle_time_secs: Option<i64>,
+    pub estimate: Option<EstimateBrief>,
+}
+
+/// The trimmed PR header.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PrDetail {
+    pub id: WorkItemId,
+    pub number: Option<i64>,
+    pub title: String,
+    pub state: String,
+    pub merged: bool,
+    pub author_login: Option<String>,
+    pub merged_at: Option<String>,
+}
+
+/// The size of a PR's change — no raw diff, just its shape. `additions`/
+/// `deletions` are always 0: `WorkItem` (wave 0's schema) never persisted
+/// per-item add/delete counts, only `files_touched` paths (the same
+/// documented limitation `gitstate_daemon::ops::effort_items` already lives
+/// with for the same reason). `changed_files` is real (`files_touched.len()`).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
+pub struct PrChangeShape {
+    pub additions: u32,
+    pub deletions: u32,
+    pub changed_files: u32,
+}

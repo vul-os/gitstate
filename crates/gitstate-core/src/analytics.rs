@@ -349,6 +349,24 @@ pub fn contributor_stats(
     out
 }
 
+/// Whole-second lead time between two RFC3339 timestamps (`b - a`), or `None`
+/// if either fails to parse or `b` predates `a` (a negative duration is
+/// treated as "not measurable", same as [`cycle_times`] dropping such points
+/// rather than emitting a negative one). Shared by `gitstate_daemon::ops`'s
+/// context_bundle assembly (T11 wave 3) for one PR's lead time on demand,
+/// where `cycle_times`'s whole-window/`f64`-hours shape (built for the
+/// dashboard trend) is the wrong grain — a single caller wants one item's
+/// exact seconds, not an hours-scale series.
+pub fn lead_time_secs(created_at: &str, merged_at: &str) -> Option<i64> {
+    let (a, b) = (parse_ts(created_at)?, parse_ts(merged_at)?);
+    let secs = (b - a).whole_seconds();
+    if secs < 0 {
+        None
+    } else {
+        Some(secs)
+    }
+}
+
 /// Lead time (created → merged) for every merged PR in range, oldest first.
 /// Items with a merge timestamp that predates creation are dropped rather than
 /// contributing a negative point.
