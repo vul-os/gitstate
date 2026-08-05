@@ -157,6 +157,8 @@ jobs:
       # and asserts a real file-coverage floor.
       - name: Lint config gate (type-awareness, TS pin, coverage floor)
         run: npm run check:lint-config
+      - name: Typecheck
+        run: npx tsc --noEmit
       - name: Build
         run: npm run build
 
