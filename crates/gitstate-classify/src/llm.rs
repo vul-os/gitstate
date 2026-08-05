@@ -95,7 +95,14 @@ impl LlmClassifier {
         }
     }
 
-    async fn chat(&self, system: &str, user: &str) -> Result<String> {
+    /// One raw chat-completion call against whatever OpenAI-compatible
+    /// endpoint this classifier is configured with.
+    ///
+    /// Promoted from `pub(crate)` to `pub` for T11 port plan wave 5
+    /// (`docs/PORT-PLAN.md` §5's recommendation): `gitstate_report`'s
+    /// NL→report reuses this one primitive instead of standing up a second
+    /// HTTP LLM client, exactly as `classify`/`judge_effort` already do below.
+    pub async fn chat(&self, system: &str, user: &str) -> Result<String> {
         let url = format!("{}/chat/completions", self.base_url);
         let body = json!({
             "model": self.model,

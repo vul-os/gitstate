@@ -542,7 +542,7 @@ pub fn burndown(items: &[WorkItem], from: &str, to: &str) -> Vec<BurndownPoint> 
                 continue;
             }
             total += 1;
-            if !s.closed.is_some_and(|c| c <= d) {
+            if s.closed.is_none_or(|c| c > d) {
                 open += 1;
             }
         }
@@ -982,13 +982,45 @@ mod tests {
     fn burndown_tracks_open_and_total_per_day_using_real_closed_at() {
         // Created day 1, closed day 3 — the whole point of using `closed_at`
         // directly instead of Go's `updated_at` proxy is that this is exact.
-        let items = vec![issue("#1", "2026-06-01T00:00:00Z", Some("2026-06-03T00:00:00Z"))];
+        let items = vec![issue(
+            "#1",
+            "2026-06-01T00:00:00Z",
+            Some("2026-06-03T00:00:00Z"),
+        )];
         let series = burndown(&items, "2026-06-01", "2026-06-04");
         assert_eq!(series.len(), 4);
-        assert_eq!(series[0], BurndownPoint { date: "2026-06-01".into(), open: 1, total: 1 });
-        assert_eq!(series[1], BurndownPoint { date: "2026-06-02".into(), open: 1, total: 1 });
-        assert_eq!(series[2], BurndownPoint { date: "2026-06-03".into(), open: 0, total: 1 });
-        assert_eq!(series[3], BurndownPoint { date: "2026-06-04".into(), open: 0, total: 1 });
+        assert_eq!(
+            series[0],
+            BurndownPoint {
+                date: "2026-06-01".into(),
+                open: 1,
+                total: 1
+            }
+        );
+        assert_eq!(
+            series[1],
+            BurndownPoint {
+                date: "2026-06-02".into(),
+                open: 1,
+                total: 1
+            }
+        );
+        assert_eq!(
+            series[2],
+            BurndownPoint {
+                date: "2026-06-03".into(),
+                open: 0,
+                total: 1
+            }
+        );
+        assert_eq!(
+            series[3],
+            BurndownPoint {
+                date: "2026-06-04".into(),
+                open: 0,
+                total: 1
+            }
+        );
     }
 
     #[test]
@@ -1003,7 +1035,11 @@ mod tests {
 
     #[test]
     fn burndown_ignores_prs_scoped_to_issues_only_like_go() {
-        let items = vec![pr("#1", "2026-06-01T00:00:00Z", Some("2026-06-02T00:00:00Z"))];
+        let items = vec![pr(
+            "#1",
+            "2026-06-01T00:00:00Z",
+            Some("2026-06-02T00:00:00Z"),
+        )];
         let series = burndown(&items, "2026-06-01", "2026-06-02");
         assert!(series.iter().all(|p| p.total == 0 && p.open == 0));
     }
@@ -1019,13 +1055,7 @@ mod tests {
             issue("#1", "2026-06-01T00:00:00Z", None),
             pr("#2", "2026-06-03T00:00:00Z", Some("2026-06-05T00:00:00Z")),
         ];
-        let commits = vec![commit(
-            "a",
-            "2026-06-04T00:00:00Z",
-            "dev@x",
-            10,
-            2,
-        )];
+        let commits = vec![commit("a", "2026-06-04T00:00:00Z", "dev@x", 10, 2)];
         let out = recent_activity(&items, &commits, 10);
         assert_eq!(out.len(), 3);
         // PR's activity timestamp is `updated_at` (= created_at here, "2026-06-03"),

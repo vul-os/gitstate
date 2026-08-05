@@ -956,6 +956,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "gitstate-report"
+version = "0.1.0"
+dependencies = [
+ "gitstate-classify",
+ "gitstate-core",
+ "gitstate-store",
+ "serde",
+ "serde_json",
+ "time",
+ "tokio",
+]
+
+[[package]]
 name = "gitstate-search"
 version = "0.1.0"
 dependencies = [
