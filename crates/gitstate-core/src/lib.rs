@@ -27,11 +27,12 @@ pub use analytics::Analytics;
 // `use gitstate_core::{Repo, WorkItem, ...}`.
 pub use domain::{
     AccuracyRow, AgentDiffSummary, AgentRun, AuthorSurvival, BugIntroduction, CalibrationCell,
-    CatField, Category, CategorySource, Classification, CohortSample, Commit, Context,
+    CatField, Category, CategorySource, Classification, CohortSample, Commit, CommitBrief, Context,
     ContextPrRef, Contribution, Contributor, CtxField, DiffSummary, DimensionRaw, Dimensions,
-    EffortEstimate, EffortMethod, EstimateOutcome, Exemplar, Forge, HumanAction, ProjectState,
-    Repo, SyncOp, Weights, WorkItem, WorkKind, WorkState, AGENT_RUN_DEFAULT_LIMIT,
-    AGENT_RUN_MAX_LIMIT,
+    EffortEstimate, EffortMethod, EffortRow, EstimateBrief, EstimateOutcome, Exemplar, Forge,
+    HumanAction, IssueContextBundle, IssueSummary, PrBrief, PrChangeShape, PrContextBundle,
+    PrDetail, ProjectState, Repo, SimilarIssue, SyncOp, Weights, WorkItem, WorkKind, WorkState,
+    AGENT_RUN_DEFAULT_LIMIT, AGENT_RUN_MAX_LIMIT,
 };
 pub use ids::{
     now_rfc3339, now_wall_ms, AgentRunId, CategoryId, ContextId, ContributorId, Hlc, PeerId,

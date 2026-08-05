@@ -669,6 +669,366 @@ pub fn list_agent_runs(state: &AppState, q: AgentRunQuery) -> Result<Vec<AgentRu
     state.store.list_agent_runs(&filter)
 }
 
+// ──────────────────────────── context bundle ────────────────────────────
+//
+// Ported from Go's `store/context_bundle.go` (T11 port plan, wave 3): curated,
+// token-efficient issue/PR context for an agent starting work. Called both by
+// `gitstate agent context`/`gitstate agent pr` (CLI, in-process — see
+// `gitstate_cli::cmd::agent`) and by the `get_issue`/`get_pr_context` MCP
+// tools (`gitstate_cli::cmd::mcp`), the same in-process pattern wave 1
+// established. No HTTP route: nothing consumes one — see the doc on
+// `IssueContextBundle` in `gitstate_core::domain` for the two shape
+// departures this wave makes deliberately (dropped `assigneeId`, re-derived
+// `codeAreas`), and why `EstimateBrief.predicted_secs` is computed LIVE via
+// `gitstate_calibrate` (wave 2) rather than read from a column nothing, in
+// either language, ever writes.
+
+const BUNDLE_MAX_RELATED_PRS: usize = 5;
+const BUNDLE_MAX_RELATED_COMMITS: usize = 8;
+const BUNDLE_MAX_SIMILAR_ISSUES: usize = 3;
+const BUNDLE_MAX_CODE_AREAS: usize = 10;
+const BUNDLE_BODY_TRIM_CHARS: usize = 800;
+const BUNDLE_TITLE_TRIM_CHARS: usize = 100;
+
+/// Trims whitespace then caps to `n` **characters** (not bytes — Go's
+/// `s[:n]` byte-slices, which can split a multi-byte rune; this is a
+/// deliberate, safer departure, not a faithfully-ported bug), appending an
+/// ellipsis when truncated.
+fn bundle_trim(s: &str, n: usize) -> String {
+    let s = s.trim();
+    if s.chars().count() <= n {
+        return s.to_string();
+    }
+    let head: String = s.chars().take(n).collect();
+    format!("{}…", head.trim_end())
+}
+
+/// First 10 characters of a sha, matching Go's `shortSHA`.
+fn bundle_short_sha(sha: &str) -> String {
+    if sha.chars().count() > 10 {
+        sha.chars().take(10).collect()
+    } else {
+        sha.to_string()
+    }
+}
+
+/// Best-effort platform number recovered from an `external_ref` like `"#123"`
+/// or `"!45"`. Go's `Issue.Number`/`PullRequest.Number` were their own int
+/// columns; `WorkItem` (wave 0's schema) has none, so this re-derives the
+/// same value from the ref string every forge client already formats it into
+/// (`gitstate_forge::github`/`gitlab`). `None` for a native/local item with
+/// no leading digits.
+fn bundle_parse_number(external_ref: &str) -> Option<i64> {
+    let rest = external_ref.trim_start_matches(|c: char| !c.is_ascii_digit());
+    let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+    digits.parse::<i64>().ok().filter(|n| *n > 0)
+}
+
+/// The diff-shape inputs `gitstate_calibrate::cohort` needs, degraded the
+/// same documented way `effort_items` already is: `WorkItem` never persisted
+/// add/delete counts, only `files_touched` paths, so churn is always 0 and
+/// only the file-count/top-dirs signals are real.
+fn bundle_diff_shape(
+    item: &WorkItem,
+) -> (
+    gitstate_calibrate::cohort::PrMeta,
+    gitstate_calibrate::cohort::DiffStats,
+) {
+    let top_dirs = gitstate_calibrate::cohort::top_dirs_from_paths(&item.files_touched);
+    let stats = gitstate_calibrate::cohort::DiffStats {
+        additions: 0,
+        deletions: 0,
+        changed_files: item.files_touched.len() as u32,
+        top_dirs,
+    };
+    let meta = gitstate_calibrate::cohort::PrMeta {
+        repo_id: item.repo_id.0.clone(),
+        title: item.title.clone(),
+        branch: String::new(),
+        paths: item.files_touched.clone(),
+    };
+    (meta, stats)
+}
+
+/// Builds the calibrated `EstimateBrief` for one item, or `None` if it has
+/// never been judged (no `effort` row — matches Go's behaviour when
+/// `effort_estimates` has no row for the issue/PR). When calibration has not
+/// yet persisted `predicted_secs`/`size_bucket`/`change_type` for this item
+/// (true for every row today — see the migration's caveat and the crate doc
+/// on `gitstate_calibrate`), they are computed LIVE here via the calibration
+/// crate rather than left null: this is the wave's whole payoff, not a stub.
+fn build_estimate_brief(
+    state: &AppState,
+    item: &WorkItem,
+) -> Result<Option<gitstate_core::EstimateBrief>> {
+    let Some(row) = state.store.get_effort(&item.id)? else {
+        return Ok(None);
+    };
+
+    let actual_secs = row.actual_secs.or_else(|| {
+        item.merged_at
+            .as_deref()
+            .and_then(|m| analytics_lib::lead_time_secs(&item.created_at, m))
+    });
+
+    let (meta, stats) = bundle_diff_shape(item);
+    let change_type = row
+        .change_type
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| gitstate_calibrate::cohort::change_type(&meta).to_string());
+    let size_bucket = row
+        .size_bucket
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| gitstate_calibrate::cohort::size_bucket(&stats).to_string());
+
+    let predicted_secs = match row.predicted_secs {
+        Some(p) => Some(p),
+        None => {
+            let candidates =
+                gitstate_calibrate::cohort::cohort_candidates(&meta, &stats, &change_type);
+            gitstate_calibrate::curve::calibrated_secs(
+                state.store.as_ref(),
+                row.difficulty,
+                &candidates,
+            )
+            .ok()
+            .map(|r| r.predicted_secs)
+        }
+    };
+
+    Ok(Some(gitstate_core::EstimateBrief {
+        difficulty: row.difficulty,
+        predicted_secs,
+        actual_secs,
+        size_bucket: Some(size_bucket),
+        change_type: Some(change_type),
+    }))
+}
+
+fn bundle_pr_brief(item: &WorkItem) -> gitstate_core::PrBrief {
+    let lead_time_secs = item
+        .merged_at
+        .as_deref()
+        .and_then(|m| analytics_lib::lead_time_secs(&item.created_at, m));
+    gitstate_core::PrBrief {
+        id: item.id.clone(),
+        number: bundle_parse_number(&item.external_ref),
+        title: bundle_trim(&item.title, BUNDLE_TITLE_TRIM_CHARS),
+        state: item.state.as_str().to_string(),
+        merged: item.merged_at.is_some(),
+        lead_time_secs,
+    }
+}
+
+/// Recent PRs in the same repo, newest-first (merged_at, falling back to
+/// created_at for unmerged PRs), capped. Mirrors Go's `relatedPRs`.
+fn bundle_related_prs(state: &AppState, repo_id: &RepoId) -> Result<Vec<gitstate_core::PrBrief>> {
+    let mut prs: Vec<WorkItem> = state
+        .store
+        .list_work_items(repo_id)?
+        .into_iter()
+        .filter(|w| w.kind == gitstate_core::WorkKind::Pr)
+        .collect();
+    prs.sort_by(|a, b| {
+        let ka = a.merged_at.as_deref().unwrap_or(&a.created_at);
+        let kb = b.merged_at.as_deref().unwrap_or(&b.created_at);
+        kb.cmp(ka)
+    });
+    prs.truncate(BUNDLE_MAX_RELATED_PRS);
+    Ok(prs.iter().map(bundle_pr_brief).collect())
+}
+
+/// Recent commits in the repo, newest-first, capped. Mirrors Go's
+/// `recentCommits`; `isAgent` is derived from the SAME agent-detection
+/// heuristic `gitstate-git` already uses when it classifies commit
+/// contributors (`gitstate_git::util::detect_agent`), rather than a
+/// re-invented one — `Commit` (wave 0's schema) carries no `is_agent` column
+/// of its own the way Go's `commits.is_agent` did.
+fn bundle_recent_commits(
+    state: &AppState,
+    repo_id: &RepoId,
+) -> Result<Vec<gitstate_core::CommitBrief>> {
+    // `list_commits` returns oldest-first; take the newest N off the end.
+    let mut commits = state.store.list_commits(Some(repo_id))?;
+    let start = commits.len().saturating_sub(BUNDLE_MAX_RELATED_COMMITS);
+    let recent = commits.split_off(start);
+    Ok(recent
+        .into_iter()
+        .rev()
+        .map(|c| gitstate_core::CommitBrief {
+            sha: bundle_short_sha(&c.sha),
+            subject: bundle_trim(&c.summary, BUNDLE_TITLE_TRIM_CHARS),
+            is_agent: gitstate_git::util::detect_agent(&c.author_name, &c.author_email, None)
+                .is_some(),
+            author: c.author_name,
+        })
+        .collect())
+}
+
+/// The historically-touched top-level directories in this repo's work items,
+/// re-derived from `WorkItem.files_touched` via the same
+/// `top_dirs_from_paths` helper `gitstate_calibrate::cohort` uses for cohort
+/// keys. Go's `codeAreas` read a `task_files` table that has no Rust
+/// equivalent and no live caller even in Go (`docs/PORT-PLAN.md` §3) — this
+/// is the re-derivation the plan calls for, not a stub.
+fn bundle_code_areas(state: &AppState, repo_id: &RepoId) -> Result<Vec<String>> {
+    let items = state.store.list_work_items(repo_id)?;
+    let mut paths: Vec<String> = Vec::new();
+    for w in &items {
+        paths.extend(w.files_touched.iter().cloned());
+    }
+    let mut areas = gitstate_calibrate::cohort::top_dirs_from_paths(&paths);
+    areas.truncate(BUNDLE_MAX_CODE_AREAS);
+    Ok(areas)
+}
+
+/// The most-recently-merged PR in a repo, if any. Mirrors the single-repo
+/// case of Go's `latestMergedPRsByRepo` (the Go version batches this across
+/// every candidate repo in one query to avoid an N+1; at this domain's local,
+/// hundreds-of-items scale, `list_work_items` is already an in-memory scan
+/// per repo, so the N+1 shape costs nothing worth batching for).
+fn bundle_latest_merged_pr(
+    state: &AppState,
+    repo_id: &RepoId,
+) -> Result<Option<gitstate_core::PrBrief>> {
+    let mut prs: Vec<WorkItem> = state
+        .store
+        .list_work_items(repo_id)?
+        .into_iter()
+        .filter(|w| w.kind == gitstate_core::WorkKind::Pr && w.merged_at.is_some())
+        .collect();
+    prs.sort_by(|a, b| b.merged_at.cmp(&a.merged_at));
+    Ok(prs.into_iter().next().map(|w| bundle_pr_brief(&w)))
+}
+
+/// Past issues sharing ≥1 label with `iss`, ranked by shared-label count then
+/// recency, capped, each with its best-effort "resolved by" PR. Mirrors Go's
+/// `similarIssues` — searched across every repo (there is only one tenant to
+/// scope to), not just `iss`'s own repo, matching Go's org-wide (not
+/// repo-scoped) query.
+fn bundle_similar_issues(
+    state: &AppState,
+    iss: &WorkItem,
+) -> Result<Vec<gitstate_core::SimilarIssue>> {
+    if iss.labels.is_empty() {
+        return Ok(Vec::new());
+    }
+    let all = state.store.list_all_work_items()?;
+    let mut cands: Vec<(WorkItem, Vec<String>)> = all
+        .into_iter()
+        .filter(|w| w.kind == gitstate_core::WorkKind::Issue && w.id != iss.id)
+        .filter_map(|w| {
+            let shared: Vec<String> = w
+                .labels
+                .iter()
+                .filter(|l| iss.labels.contains(l))
+                .cloned()
+                .collect();
+            if shared.is_empty() {
+                None
+            } else {
+                Some((w, shared))
+            }
+        })
+        .collect();
+    cands.sort_by(|(wa, sa), (wb, sb)| {
+        sb.len()
+            .cmp(&sa.len())
+            .then_with(|| wb.updated_at.cmp(&wa.updated_at))
+    });
+    cands.truncate(BUNDLE_MAX_SIMILAR_ISSUES);
+
+    let mut out = Vec::with_capacity(cands.len());
+    for (w, shared) in cands {
+        let resolved_by_pr = bundle_latest_merged_pr(state, &w.repo_id)?;
+        out.push(gitstate_core::SimilarIssue {
+            id: w.id.clone(),
+            number: bundle_parse_number(&w.external_ref),
+            title: bundle_trim(&w.title, BUNDLE_TITLE_TRIM_CHARS),
+            state: w.state.as_str().to_string(),
+            shared_labels: shared,
+            resolved_by_pr,
+        });
+    }
+    Ok(out)
+}
+
+/// Assembles the curated issue-context bundle. Mirrors Go's
+/// `BuildIssueContext`. Errors [`Error::NotFound`] if `issue_id` does not
+/// resolve to a work item of kind `issue` (a PR id, or an unknown id, both
+/// 404 the same way `GetIssue` did against the issues-only table).
+pub fn build_issue_context(
+    state: &AppState,
+    issue_id: &WorkItemId,
+) -> Result<gitstate_core::IssueContextBundle> {
+    let iss = state
+        .store
+        .get_work_item(issue_id)?
+        .filter(|w| w.kind == gitstate_core::WorkKind::Issue)
+        .ok_or_else(|| Error::not_found("issue", issue_id.0.clone()))?;
+
+    let estimate = build_estimate_brief(state, &iss)?;
+    let related_prs = bundle_related_prs(state, &iss.repo_id)?;
+    let recent_commits = bundle_recent_commits(state, &iss.repo_id)?;
+    let code_areas = bundle_code_areas(state, &iss.repo_id)?;
+    let similar_issues = bundle_similar_issues(state, &iss)?;
+
+    Ok(gitstate_core::IssueContextBundle {
+        issue: gitstate_core::IssueSummary {
+            id: iss.id.clone(),
+            number: bundle_parse_number(&iss.external_ref),
+            title: iss.title.clone(),
+            body: bundle_trim(&iss.body, BUNDLE_BODY_TRIM_CHARS),
+            state: iss.state.as_str().to_string(),
+            labels: iss.labels.clone(),
+            repo_id: iss.repo_id.clone(),
+        },
+        estimate,
+        related_prs,
+        recent_commits,
+        code_areas,
+        similar_issues,
+    })
+}
+
+/// Assembles the curated PR-context bundle. Mirrors Go's `BuildPRContext`.
+pub fn build_pr_context(
+    state: &AppState,
+    pr_id: &WorkItemId,
+) -> Result<gitstate_core::PrContextBundle> {
+    let pr = state
+        .store
+        .get_work_item(pr_id)?
+        .filter(|w| w.kind == gitstate_core::WorkKind::Pr)
+        .ok_or_else(|| Error::not_found("pull request", pr_id.0.clone()))?;
+
+    let cycle_time_secs = pr
+        .merged_at
+        .as_deref()
+        .and_then(|m| analytics_lib::lead_time_secs(&pr.created_at, m));
+    let estimate = build_estimate_brief(state, &pr)?;
+    let changed_files = pr.files_touched.len() as u32;
+
+    Ok(gitstate_core::PrContextBundle {
+        pr: gitstate_core::PrDetail {
+            id: pr.id.clone(),
+            number: bundle_parse_number(&pr.external_ref),
+            title: bundle_trim(&pr.title, BUNDLE_TITLE_TRIM_CHARS),
+            state: pr.state.as_str().to_string(),
+            merged: pr.merged_at.is_some(),
+            author_login: pr.author_login.clone(),
+            merged_at: pr.merged_at.clone(),
+        },
+        diff_summary: gitstate_core::PrChangeShape {
+            additions: 0,
+            deletions: 0,
+            changed_files,
+        },
+        cycle_time_secs,
+        estimate,
+    })
+}
+
 // ──────────────────────────── taxonomy ────────────────────────────
 
 pub fn taxonomy(state: &AppState) -> Taxonomy {

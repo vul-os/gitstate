@@ -66,6 +66,10 @@ pub trait Store: Send + Sync {
     fn get_contributions(&self, repo: &RepoId, from: &str, to: &str) -> Result<Vec<Contribution>>;
     fn save_work_items(&self, items: &[WorkItem]) -> Result<()>;
     fn list_work_items(&self, repo: &RepoId) -> Result<Vec<WorkItem>>;
+    /// Fetch one work item (issue, PR, or review) by id, regardless of which
+    /// repo it belongs to. Added for context_bundle (T11 wave 3), which is
+    /// handed a bare id with no repo already in hand.
+    fn get_work_item(&self, id: &WorkItemId) -> Result<Option<WorkItem>>;
     /// Cached commits, oldest first. `repo: None` spans every repo — the
     /// analytics rollups read across the whole local ledger.
     fn list_commits(&self, repo: Option<&RepoId>) -> Result<Vec<Commit>>;
@@ -79,6 +83,11 @@ pub trait Store: Send + Sync {
     fn list_classifications(&self, repo: &RepoId) -> Result<Vec<Classification>>;
     /// Every stored effort estimate for a repo's work items. Read-only.
     fn list_effort(&self, repo: &RepoId) -> Result<Vec<EffortEstimate>>;
+    /// The full effort row for one item — base judgement plus whatever
+    /// calibration has (or hasn't yet) written onto it — or `None` if the
+    /// item has never been judged. Added for context_bundle's
+    /// `EstimateBrief` (T11 wave 3); read-only.
+    fn get_effort(&self, item: &WorkItemId) -> Result<Option<EffortRow>>;
     // contexts (CRDT-backed)
     fn upsert_context(&self, c: &Context) -> Result<()>;
     fn get_context(&self, id: &ContextId) -> Result<Option<Context>>;

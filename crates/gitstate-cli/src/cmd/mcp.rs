@@ -39,20 +39,24 @@
 //!
 //! ## Scope
 //!
-//! Only `log_agent_run` is wired up in this wave — it is the one Go MCP tool
-//! this wave's domain (`store/agent_runs.go`) covers. Go's other five tools
-//! (`search_issues`, `get_issue`, `get_pr_context`, `list_issues`,
-//! `update_issue_state`) depend on domains this wave explicitly excludes
-//! (search/embeddings = a later wave; context_bundle = a later wave) or on
-//! work-item mutation with no Rust equivalent yet. They are deliberately not
-//! stubbed here — `tools/list` must never advertise a tool that would
-//! immediately fail every call.
+//! Wave 1 wired only `log_agent_run` — the one Go MCP tool that wave's domain
+//! (`store/agent_runs.go`) covered. Wave 3 (`store/context_bundle.go`) adds
+//! `get_issue` and `get_pr_context`, the exact surface `context_bundle` was
+//! missing — both call `gitstate_daemon::ops::build_issue_context`/
+//! `build_pr_context` in-process, same as every other tool here.
+//!
+//! Go's three remaining tools still depend on domains out of scope here:
+//! `search_issues` needs search/embeddings (a later wave); `list_issues` and
+//! `update_issue_state` need plain work-item listing/mutation, a different
+//! domain from `context_bundle` entirely. They stay unstubbed — `tools/list`
+//! must never advertise a tool that would immediately fail every call.
 
 use std::io::{self, BufRead, Write};
 
 use serde::Deserialize;
 use serde_json::{json, Value};
 
+use gitstate_core::WorkItemId;
 use gitstate_daemon::dto::NewAgentRun;
 use gitstate_daemon::{ops, AppState};
 
@@ -150,7 +154,10 @@ async fn handle_line(state: &AppState, line: &str) -> Option<Value> {
                 "serverInfo": { "name": SERVER_NAME, "version": env!("CARGO_PKG_VERSION") },
             }),
         ),
-        "tools/list" => result_response(id, json!({ "tools": [log_agent_run_schema()] })),
+        "tools/list" => result_response(
+            id,
+            json!({ "tools": [log_agent_run_schema(), get_issue_schema(), get_pr_context_schema()] }),
+        ),
         "tools/call" => handle_call_tool(state, id, req.params).await,
         "ping" => result_response(id, json!({})),
         other => error_response(id, METHOD_NOT_FOUND, format!("method not found: {other}")),
@@ -189,10 +196,44 @@ fn log_agent_run_schema() -> Value {
     })
 }
 
+fn get_issue_schema() -> Value {
+    json!({
+        "name": "get_issue",
+        "description": "Fetch a curated, token-efficient context bundle for an issue: the issue \
+            itself, related PRs, recent commits, historically-touched code areas, a calibrated \
+            effort estimate, and similar past issues (with how they were resolved). Everything \
+            is trimmed to fit an agent's context window. Runs entirely locally — no network call.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "issue_id": { "type": "string", "description": "The issue's id (required)." }
+            },
+            "required": ["issue_id"]
+        }
+    })
+}
+
+fn get_pr_context_schema() -> Value {
+    json!({
+        "name": "get_pr_context",
+        "description": "Fetch a curated context bundle for a pull request: its diff shape (no \
+            raw diff — just size), cycle time, and a calibrated effort estimate. Runs entirely \
+            locally — no network call.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "pr_id": { "type": "string", "description": "The pull request's id (required)." }
+            },
+            "required": ["pr_id"]
+        }
+    })
+}
+
 /// Dispatches `tools/call`. Tool-level failures (bad args, a rejected
-/// `human_action`, …) are returned in-band as `isError: true`, per the MCP
-/// convention — never as a JSON-RPC protocol error, so the host can show the
-/// message to the model instead of treating the whole call as transport-dead.
+/// `human_action`, an unknown id, …) are returned in-band as `isError: true`,
+/// per the MCP convention — never as a JSON-RPC protocol error, so the host
+/// can show the message to the model instead of treating the whole call as
+/// transport-dead.
 async fn handle_call_tool(state: &AppState, id: Value, params: Value) -> Value {
     let name = params
         .get("name")
@@ -200,17 +241,51 @@ async fn handle_call_tool(state: &AppState, id: Value, params: Value) -> Value {
         .unwrap_or_default();
     let args = params.get("arguments").cloned().unwrap_or(json!({}));
 
-    if name != "log_agent_run" {
-        return result_response(id, tool_error(format!("unknown tool: {name}")));
-    }
+    let result = match name {
+        "log_agent_run" => call_log_agent_run(state, &args)
+            .await
+            .map(|run| serde_json::to_string_pretty(&run).unwrap_or_else(|_| "{}".to_string())),
+        "get_issue" => call_get_issue(state, &args)
+            .map(|b| serde_json::to_string_pretty(&b).unwrap_or_else(|_| "{}".to_string())),
+        "get_pr_context" => call_get_pr_context(state, &args)
+            .map(|b| serde_json::to_string_pretty(&b).unwrap_or_else(|_| "{}".to_string())),
+        other => return result_response(id, tool_error(format!("unknown tool: {other}"))),
+    };
 
-    match call_log_agent_run(state, &args).await {
-        Ok(run) => result_response(
-            id,
-            tool_text(serde_json::to_string_pretty(&run).unwrap_or_else(|_| "{}".to_string())),
-        ),
+    match result {
+        Ok(text) => result_response(id, tool_text(text)),
         Err(e) => result_response(id, tool_error(e.to_string())),
     }
+}
+
+fn call_get_issue(
+    state: &AppState,
+    args: &Value,
+) -> anyhow::Result<gitstate_core::IssueContextBundle> {
+    let issue_id = args
+        .get("issue_id")
+        .and_then(Value::as_str)
+        .filter(|s| !s.trim().is_empty())
+        .ok_or_else(|| anyhow::anyhow!("missing required argument \"issue_id\""))?;
+    Ok(ops::build_issue_context(
+        state,
+        &WorkItemId::from(issue_id.to_string()),
+    )?)
+}
+
+fn call_get_pr_context(
+    state: &AppState,
+    args: &Value,
+) -> anyhow::Result<gitstate_core::PrContextBundle> {
+    let pr_id = args
+        .get("pr_id")
+        .and_then(Value::as_str)
+        .filter(|s| !s.trim().is_empty())
+        .ok_or_else(|| anyhow::anyhow!("missing required argument \"pr_id\""))?;
+    Ok(ops::build_pr_context(
+        state,
+        &WorkItemId::from(pr_id.to_string()),
+    )?)
 }
 
 async fn call_log_agent_run(
@@ -275,7 +350,7 @@ mod tests {
     /// env var, so keeping every scenario in one thread avoids a race with
     /// any other test that might set it.
     #[tokio::test]
-    async fn mcp_dispatch_covers_the_protocol_envelope_and_the_one_wired_tool() {
+    async fn mcp_dispatch_covers_the_protocol_envelope_and_the_wired_tools() {
         let dir = std::env::temp_dir().join(format!("gitstate-mcp-test-{}", std::process::id()));
         std::env::set_var("GITSTATE_DATA_DIR", &dir);
         let state = gitstate_daemon::build_state_from_env().unwrap();
@@ -303,9 +378,16 @@ mod tests {
             .await
             .unwrap();
         let tools = resp["result"]["tools"].as_array().unwrap();
-        assert_eq!(tools.len(), 1, "only log_agent_run is wired up this wave");
-        assert_eq!(tools[0]["name"], "log_agent_run");
+        assert_eq!(
+            tools.len(),
+            3,
+            "log_agent_run (wave 1) + get_issue/get_pr_context (wave 3) are wired"
+        );
+        let names: Vec<&str> = tools.iter().map(|t| t["name"].as_str().unwrap()).collect();
+        assert_eq!(names, vec!["log_agent_run", "get_issue", "get_pr_context"]);
         assert_eq!(tools[0]["inputSchema"]["required"][0], "goal");
+        assert_eq!(tools[1]["inputSchema"]["required"][0], "issue_id");
+        assert_eq!(tools[2]["inputSchema"]["required"][0], "pr_id");
 
         let resp = handle_line(&state, r#"{"jsonrpc":"2.0","id":3,"method":"ping"}"#)
             .await
@@ -375,6 +457,96 @@ mod tests {
                 "name":"log_agent_run",
                 "arguments":{"goal":"bad","human_action":"approved"}
             }}"#,
+        )
+        .await
+        .unwrap();
+        assert_eq!(resp["result"]["isError"], true);
+
+        // ── get_issue: missing `issue_id` is an in-band error. ──
+        let resp = handle_line(
+            &state,
+            r#"{"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"get_issue","arguments":{}}}"#,
+        )
+        .await
+        .unwrap();
+        assert_eq!(resp["result"]["isError"], true);
+        assert!(resp["result"]["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("issue_id"));
+
+        // ── get_issue: an unknown id is an in-band error (not_found), not a crash. ──
+        let resp = handle_line(
+            &state,
+            r#"{"jsonrpc":"2.0","id":10,"method":"tools/call",
+                "params":{"name":"get_issue","arguments":{"issue_id":"nope"}}}"#,
+        )
+        .await
+        .unwrap();
+        assert_eq!(resp["result"]["isError"], true);
+
+        // ── get_issue: a real issue round-trips the curated bundle. ──
+        let repo = gitstate_core::RepoId::from("r1".to_string());
+        state
+            .store
+            .upsert_repo(&gitstate_core::Repo {
+                id: repo.clone(),
+                slug: "demo/r1".into(),
+                path: String::new(),
+                remote_url: None,
+                forge: gitstate_core::Forge::Local,
+                default_branch: "main".into(),
+                last_scanned_at: None,
+                added_at: gitstate_core::now_rfc3339(),
+            })
+            .unwrap();
+        state
+            .store
+            .save_work_items(&[gitstate_core::WorkItem {
+                id: gitstate_core::WorkItemId("iss-1".into()),
+                repo_id: repo.clone(),
+                kind: gitstate_core::WorkKind::Issue,
+                external_ref: "#9".into(),
+                title: "fix the flaky test".into(),
+                body: "".into(),
+                state: gitstate_core::WorkState::Open,
+                author_login: None,
+                labels: vec![],
+                created_at: gitstate_core::now_rfc3339(),
+                updated_at: gitstate_core::now_rfc3339(),
+                merged_at: None,
+                closed_at: None,
+                files_touched: vec![],
+            }])
+            .unwrap();
+
+        let resp = handle_line(
+            &state,
+            r#"{"jsonrpc":"2.0","id":11,"method":"tools/call",
+                "params":{"name":"get_issue","arguments":{"issue_id":"iss-1"}}}"#,
+        )
+        .await
+        .unwrap();
+        assert_eq!(resp["result"]["isError"], false);
+        let text = resp["result"]["content"][0]["text"].as_str().unwrap();
+        let bundle: Value = serde_json::from_str(text).unwrap();
+        assert_eq!(bundle["issue"]["title"], "fix the flaky test");
+        assert_eq!(bundle["issue"]["number"], 9);
+
+        // ── get_pr_context: missing `pr_id` is an in-band error. ──
+        let resp = handle_line(
+            &state,
+            r#"{"jsonrpc":"2.0","id":12,"method":"tools/call","params":{"name":"get_pr_context","arguments":{}}}"#,
+        )
+        .await
+        .unwrap();
+        assert_eq!(resp["result"]["isError"], true);
+
+        // ── get_pr_context: an issue id (wrong kind) is an in-band not_found. ──
+        let resp = handle_line(
+            &state,
+            r#"{"jsonrpc":"2.0","id":13,"method":"tools/call",
+                "params":{"name":"get_pr_context","arguments":{"pr_id":"iss-1"}}}"#,
         )
         .await
         .unwrap();

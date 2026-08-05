@@ -12,9 +12,9 @@ use gitstate_core::{
     ids::now_rfc3339, AccuracyRow, AgentDiffSummary, AgentRun, AgentRunFilter, CalibrationCell,
     CatField, Category, CategorySource, Classification, CohortSample, Commit, Context,
     ContextPrRef, Contribution, Contributor, CtxField, DimensionRaw, Dimensions, EffortEstimate,
-    EffortMethod, Error, EstimateOutcome, Exemplar, Forge, Hlc, HumanAction, PeerId, ProjectState,
-    Repo, Result, Store, SyncOp, WorkItem, WorkKind, WorkState, AGENT_RUN_DEFAULT_LIMIT,
-    AGENT_RUN_MAX_LIMIT, HLC_SKEW_MS,
+    EffortMethod, EffortRow, Error, EstimateOutcome, Exemplar, Forge, Hlc, HumanAction, PeerId,
+    ProjectState, Repo, Result, Store, SyncOp, WorkItem, WorkKind, WorkState,
+    AGENT_RUN_DEFAULT_LIMIT, AGENT_RUN_MAX_LIMIT, HLC_SKEW_MS,
 };
 use gitstate_core::{AgentRunId, CategoryId, ContextId, ContributorId, RepoId, WorkItemId};
 use gitstate_core::{NodeIdentity, SignedOp, SyncPeer};
@@ -1584,6 +1584,17 @@ impl Store for SqliteStore {
         Ok(rows)
     }
 
+    fn get_work_item(&self, id: &WorkItemId) -> Result<Option<WorkItem>> {
+        let conn = self.conn.lock().unwrap();
+        conn.query_row(
+            &format!("SELECT {WI_COLS} FROM work_items WHERE id = ?1"),
+            [&id.0],
+            map_work_item,
+        )
+        .optional()
+        .map_err(st)
+    }
+
     fn list_commits(&self, repo: Option<&RepoId>) -> Result<Vec<Commit>> {
         let conn = self.conn.lock().unwrap();
         // Oldest first so every downstream series is already in chronological
@@ -1751,6 +1762,33 @@ impl Store for SqliteStore {
             .collect::<rusqlite::Result<_>>()
             .map_err(st)?;
         Ok(rows)
+    }
+
+    fn get_effort(&self, item: &WorkItemId) -> Result<Option<EffortRow>> {
+        let conn = self.conn.lock().unwrap();
+        conn.query_row(
+            "SELECT item_id, difficulty, method, rationale, confidence, \
+                    predicted_secs, actual_secs, cohort_key, size_bucket, change_type \
+             FROM effort WHERE item_id = ?1",
+            [&item.0],
+            |r| {
+                Ok(EffortRow {
+                    item_id: WorkItemId(r.get(0)?),
+                    difficulty: r.get(1)?,
+                    method: EffortMethod::parse(&r.get::<_, String>(2)?)
+                        .unwrap_or(EffortMethod::Heuristic),
+                    rationale: r.get(3)?,
+                    confidence: r.get(4)?,
+                    predicted_secs: r.get(5)?,
+                    actual_secs: r.get(6)?,
+                    cohort_key: r.get(7)?,
+                    size_bucket: r.get(8)?,
+                    change_type: r.get(9)?,
+                })
+            },
+        )
+        .optional()
+        .map_err(st)
     }
 
     fn upsert_context(&self, c: &Context) -> Result<()> {
@@ -3299,6 +3337,26 @@ mod tests {
     }
 
     #[test]
+    fn get_work_item_finds_by_id_regardless_of_repo_and_is_none_when_absent() {
+        let s = store();
+        let r1 = seed_repo(&s, "r1");
+        let r2 = seed_repo(&s, "r2");
+        let issue = seed_work_item(&s, &r2, "iss-1", WorkKind::Issue);
+
+        let found = s.get_work_item(&issue).unwrap().expect("row exists");
+        assert_eq!(found.repo_id, r2);
+        assert_eq!(found.kind, WorkKind::Issue);
+
+        // Scoping to the wrong repo is irrelevant — get_work_item takes a
+        // bare id, unlike list_work_items(repo).
+        assert!(s.list_work_items(&r1).unwrap().is_empty());
+        assert!(s
+            .get_work_item(&WorkItemId("nope".into()))
+            .unwrap()
+            .is_none());
+    }
+
+    #[test]
     fn analytics_compute_over_stored_rows() {
         // The store's read path feeds the pure analytics module end to end.
         let s = store();
@@ -3712,6 +3770,47 @@ mod tests {
 
         let samples2 = s.list_cohort_samples().unwrap();
         assert_eq!(samples2[0].cohort_key, "repo:r1");
+    }
+
+    #[test]
+    fn get_effort_reads_base_fields_and_calibration_columns_together() {
+        let s = store();
+        let repo = seed_repo(&s, "r1");
+        let item = merged_pr_with_effort(
+            &s,
+            &repo,
+            "pr1",
+            "fix the thing",
+            "2026-01-01T00:00:00Z",
+            "2026-01-01T00:16:40Z",
+            5.0,
+        );
+
+        // Freshly judged: base fields present, every calibration column NULL.
+        let row = s.get_effort(&item).unwrap().expect("row exists");
+        assert_eq!(row.difficulty, 5.0);
+        assert_eq!(row.method, EffortMethod::Heuristic);
+        assert_eq!(row.predicted_secs, None);
+        assert_eq!(row.actual_secs, None);
+        assert_eq!(row.cohort_key, None);
+        assert_eq!(row.size_bucket, None);
+        assert_eq!(row.change_type, None);
+
+        // After backfill + calibration, get_effort sees the SAME row updated
+        // in place (one row per item — see migration 0004's caveat), with
+        // every calibration column now populated.
+        s.backfill_actual_secs().unwrap();
+        s.update_effort_calibration(&item, 1200.0, "repo:r1", "s", "fix")
+            .unwrap();
+        let row2 = s.get_effort(&item).unwrap().expect("row exists");
+        assert_eq!(row2.actual_secs, Some(1000));
+        assert_eq!(row2.predicted_secs, Some(1200.0));
+        assert_eq!(row2.cohort_key.as_deref(), Some("repo:r1"));
+        assert_eq!(row2.size_bucket.as_deref(), Some("s"));
+        assert_eq!(row2.change_type.as_deref(), Some("fix"));
+
+        // No effort row at all for an un-judged item.
+        assert!(s.get_effort(&WorkItemId("nope".into())).unwrap().is_none());
     }
 
     #[test]
