@@ -269,6 +269,7 @@ function ConnectMode({ repos, configured, reload }: { repos: Repo[]; configured:
               <Button
                 variant="ghost"
                 size="xs"
+                // eslint-disable-next-line @typescript-eslint/no-misused-promises -- this handler's rejection is caught by useAction(deleteTracker) and rendered as `delState.error` below; it never escapes unhandled.
                 onClick={async () => {
                   await doDelete(kind)
                   setStatus(null)
@@ -282,6 +283,9 @@ function ConnectMode({ repos, configured, reload }: { repos: Repo[]; configured:
             </span>
           )}
         </div>
+        {delState.error && (
+          <p role="alert" className="text-xs text-[var(--bad)]">{delState.error.message}</p>
+        )}
 
         <div className="grid gap-4 sm:grid-cols-2">
           {meta.needsSite && (
@@ -343,11 +347,13 @@ function ConnectMode({ repos, configured, reload }: { repos: Repo[]; configured:
         )}
 
         <div className="flex flex-wrap items-center gap-2">
+          {/* eslint-disable-next-line @typescript-eslint/no-misused-promises -- save's rejection is caught by useAction(saveTracker) and rendered as `saveState.error` above; it never escapes unhandled. */}
           <Button onClick={save} disabled={saveState.pending}>
             {saveState.pending ? 'Saving…' : 'Save credentials'}
           </Button>
           <Button
             variant="outline"
+            // eslint-disable-next-line @typescript-eslint/no-misused-promises -- this handler's rejection is caught by useAction(testTracker) and rendered as `testState.error` below; it never escapes unhandled.
             onClick={async () => setStatus(await doTest(kind))}
             disabled={testState.pending || !stored.configured}
             leftIcon={<FlaskConical size={14} />}
@@ -372,6 +378,7 @@ function ConnectMode({ repos, configured, reload }: { repos: Repo[]; configured:
         <div className="flex flex-wrap items-center gap-2">
           <Button
             variant="outline"
+            // eslint-disable-next-line @typescript-eslint/no-misused-promises -- this handler's rejection is caught by useAction(importPreview) and rendered as `previewState.error` below; it never escapes unhandled.
             onClick={async () => setPreview(await doPreview({ kind, limit: 50 }))}
             disabled={previewState.pending || !stored.configured}
           >
@@ -392,6 +399,7 @@ function ConnectMode({ repos, configured, reload }: { repos: Repo[]; configured:
           </label>
 
           <Button
+            // eslint-disable-next-line @typescript-eslint/no-misused-promises -- this handler's rejection is caught by useAction(importRun) and rendered as `runState.error` below; it never escapes unhandled.
             onClick={async () => setResult(await doRun({ kind, repo_id: repoId }))}
             disabled={runState.pending || !stored.configured || !repoId}
             rightIcon={<ArrowRight size={14} />}
@@ -430,16 +438,26 @@ function FileMode({ repos }: { repos: Repo[] }) {
   const [repoId, setRepoId] = useState(repos[0]?.id ?? '')
   const [fileName, setFileName] = useState('')
   const [result, setResult] = useState<ImportResp | null>(null)
+  const [readError, setReadError] = useState<string | null>(null)
   const [doImport, importState] = useAction(importFile)
 
   // Read the file in the browser and drop it into the textarea, so the user
   // can see exactly what is about to be parsed before committing to it.
+  // file.text() can reject (a revoked blob, a mid-read I/O error) — rare, but
+  // unlike the useAction-wrapped handlers on this page nothing else here
+  // would have surfaced it, so it gets its own try/catch.
   async function onFile(e: ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
     if (!file) return
-    setFileName(file.name)
-    setContent(await file.text())
-    setResult(null)
+    setReadError(null)
+    try {
+      const text = await file.text()
+      setFileName(file.name)
+      setContent(text)
+      setResult(null)
+    } catch (err) {
+      setReadError(err instanceof Error ? err.message : String(err))
+    }
   }
 
   return (
@@ -460,6 +478,7 @@ function FileMode({ repos }: { repos: Repo[] }) {
             <input
               type="file"
               accept=".csv,.json,text/csv,application/json"
+              // eslint-disable-next-line @typescript-eslint/no-misused-promises -- onFile wraps its whole body in try/catch and renders the failure as `readError` below; it never rejects.
               onChange={onFile}
               className="block w-full text-xs text-[var(--text-muted)] file:mr-3 file:rounded-[var(--radius-btn)] file:border-0 file:bg-[var(--bg-surface3)] file:px-3 file:py-1.5 file:text-xs file:text-[var(--text)]"
             />
@@ -491,6 +510,9 @@ function FileMode({ repos }: { repos: Repo[] }) {
           />
         </Field>
 
+        {readError && (
+          <p role="alert" className="text-xs text-[var(--bad)]">{readError}</p>
+        )}
         {importState.error && (
           <p role="alert" className="text-xs text-[var(--bad)]">{importState.error.message}</p>
         )}
@@ -503,6 +525,7 @@ function FileMode({ repos }: { repos: Repo[] }) {
 
         <div>
           <Button
+            // eslint-disable-next-line @typescript-eslint/no-misused-promises -- this handler's rejection is caught by useAction(importFile) and rendered as `importState.error` above; it never escapes unhandled.
             onClick={async () =>
               setResult(await doImport({ source: source || undefined, repo_id: repoId, content }))
             }
@@ -533,6 +556,7 @@ export default function Import() {
           icon={<DownloadCloud size={22} />}
           title="Add a repo first"
           description="Imported issues attach to a repo, so gitstate needs at least one before it can pull anything in."
+          // eslint-disable-next-line @typescript-eslint/no-misused-promises -- navigate()'s type is `void | Promise<void>` (react-router view-transitions); it never rejects on a plain path change with no transition configured.
           action={<Button onClick={() => navigate('/repos')} rightIcon={<ArrowRight size={15} />}>Add a repo</Button>}
         />
       </div>
