@@ -334,17 +334,17 @@ export interface TrackerInput {
 }
 
 /** PUT /api/trackers/:kind — save a credential ({ base_url, email, token, project }). */
-export function saveTracker(kind: TrackerKind | string, body: TrackerInput): Promise<TrackerView> {
+export function saveTracker(kind: TrackerKind, body: TrackerInput): Promise<TrackerView> {
   return put<TrackerView>(`/api/trackers/${encodeURIComponent(kind)}`, body)
 }
 
 /** DELETE /api/trackers/:kind — forget the stored credential. */
-export function deleteTracker(kind: TrackerKind | string): Promise<DeletedResp> {
+export function deleteTracker(kind: TrackerKind): Promise<DeletedResp> {
   return del<DeletedResp>(`/api/trackers/${encodeURIComponent(kind)}`)
 }
 
 /** POST /api/trackers/:kind/test — verify without importing. */
-export function testTracker(kind: TrackerKind | string): Promise<TrackerStatus> {
+export function testTracker(kind: TrackerKind): Promise<TrackerStatus> {
   return post<TrackerStatus>(`/api/trackers/${encodeURIComponent(kind)}/test`)
 }
 
