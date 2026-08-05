@@ -1,0 +1,22 @@
+[package]
+name = "gitstate-calibrate"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "gitstate empirical-Bayes effort calibration: difficulty -> calibrated seconds, learned from this machine's own merged-PR history"
+
+[dependencies]
+gitstate-core = { workspace = true }
+time = { workspace = true }
+
+[dev-dependencies]
+# A real Store to recompute against, so the whole pipeline (backfill -> curves
+# -> accuracy) is tested against the actual SQLite persistence path rather
+# than a hand-rolled stand-in — same rationale as `gitstate-sync`'s dev-dep
+# on `gitstate-store`.
+gitstate-store = { workspace = true }
+
+[lints]
+workspace = true

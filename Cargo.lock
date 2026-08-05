@@ -855,6 +855,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "gitstate-calibrate"
+version = "0.1.0"
+dependencies = [
+ "gitstate-core",
+ "gitstate-store",
+ "time",
+]
+
+[[package]]
 name = "gitstate-classify"
 version = "0.1.0"
 dependencies = [
