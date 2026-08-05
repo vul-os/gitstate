@@ -64,6 +64,10 @@ enum Command {
     #[command(subcommand)]
     Context(ContextCmd),
 
+    /// Hybrid full-text + semantic + fuzzy search across issues, PRs, and
+    /// commits (`store/search.go` + `internal/embed`, T11 port plan wave 4).
+    Search(cmd::search::SearchArgs),
+
     /// Manage categories.
     #[command(subcommand)]
     Category(cmd::category::CategoryCmd),
@@ -118,6 +122,7 @@ async fn run() -> anyhow::Result<()> {
         Command::Classify(a) => cmd::insight::classify(&ctx, a).await,
         Command::Effort(a) => cmd::insight::effort(&ctx, a).await,
         Command::Context(c) => cmd::context::run(&ctx, c),
+        Command::Search(a) => cmd::search::run(&ctx, a),
         Command::Category(c) => cmd::category::run(&ctx, c),
         Command::Taxonomy(c) => cmd::misc::taxonomy(&ctx, c),
         Command::Sync(c) => cmd::misc::sync(&ctx, c).await,

@@ -8,6 +8,7 @@ pub mod insight;
 pub mod mcp;
 pub mod misc;
 pub mod repo;
+pub mod search;
 pub mod seed;
 pub mod serve;
 

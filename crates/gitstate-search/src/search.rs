@@ -28,7 +28,7 @@ const FUZZY_PR_COMMIT_FLOOR: f64 = 0.4;
 
 /// The result of one `search` call. Mirrors Go's `(results, fuzzy,
 /// semantic, error)` return shape.
-#[derive(Debug, Clone, PartialEq, Default)]
+#[derive(Debug, Clone, PartialEq, Default, serde::Serialize)]
 pub struct SearchOutcome {
     pub results: Vec<SearchHit>,
     /// `true` when the fuzzy fallback produced the hits (FTS and vector both

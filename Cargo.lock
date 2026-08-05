@@ -918,6 +918,7 @@ dependencies = [
  "gitstate-core",
  "gitstate-forge",
  "gitstate-git",
+ "gitstate-search",
  "gitstate-store",
  "gitstate-sync",
  "gitstate-tracker",
@@ -959,6 +960,7 @@ version = "0.1.0"
 dependencies = [
  "gitstate-core",
  "gitstate-store",
+ "serde",
 ]
 
 [[package]]

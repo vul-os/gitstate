@@ -9,6 +9,7 @@ description = "gitstate local hybrid search: FTS5 + a local hashing-trick embedd
 
 [dependencies]
 gitstate-core = { workspace = true }
+serde = { workspace = true }
 
 [dev-dependencies]
 # A real Store to search against, so the orchestrator (search_fts + vector
