@@ -130,6 +130,16 @@ generator. → No payment provider, no exchange-rate service, no charging path.
 > removed") has not been reached for the tree as a whole. `scripts/go-gate.sh`'s coverage floors were
 > re-measured against the smaller tree (12 packages / 105 files / 10 tested, was 37/243/29) so the
 > `go:` CI job keeps meaning something instead of asserting stale numbers.
+>
+> **Port plan (2026-08-05, branch `port-plan`, plan-only — no code moved).** The remaining five
+> domains (report, calibration, search/embeddings, agent_runs/MCP, context_bundle) all fit the
+> single-file SQLite model with no architectural gap; see [docs/PORT-PLAN.md](docs/PORT-PLAN.md) for
+> the full per-domain table, dependency graph, drop candidates (`store/planning.go` — zero live
+> callers; `internal/crypto` — no path to any real domain, both missed by the file-level granularity
+> of the 2026-08-04 sweep), third-party-dependency check (none need a new crate — even the LLM client
+> and the embedder already have a Rust home or a dependency-free path), and the recommended six-wave
+> order (agent_runs/MCP → calibration → context_bundle → search/embeddings → report/NL→report →
+> final `internal`/`migrations`/`go.mod` cleanup).
 
 ---
 
