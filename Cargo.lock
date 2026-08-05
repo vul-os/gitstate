@@ -883,6 +883,7 @@ dependencies = [
  "clap",
  "gitstate-core",
  "gitstate-daemon",
+ "gitstate-search",
  "gitstate-store",
  "hex",
  "serde",
@@ -918,6 +919,7 @@ dependencies = [
  "gitstate-core",
  "gitstate-forge",
  "gitstate-git",
+ "gitstate-search",
  "gitstate-store",
  "gitstate-sync",
  "gitstate-tracker",
@@ -951,6 +953,15 @@ dependencies = [
  "regex",
  "tempfile",
  "time",
+]
+
+[[package]]
+name = "gitstate-search"
+version = "0.1.0"
+dependencies = [
+ "gitstate-core",
+ "gitstate-store",
+ "serde",
 ]
 
 [[package]]

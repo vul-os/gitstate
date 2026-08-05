@@ -160,6 +160,16 @@ pub async fn scan_repo(
     .map_err(|e| Error::git(format!("scan task join: {e}")))??;
 
     warnings.extend(warn);
+
+    // Keep the local semantic-search index fresh — mirrors Go's post-sync
+    // `EmbedPendingIssues` hook (`internal/embed/batch.go`, T11 wave 4).
+    // Non-fatal: Go's own version treated a per-issue embedding failure as
+    // "log and move on, never abort the sync", and there is even less reason
+    // to fail an entire scan over it here.
+    if let Err(e) = embed_pending(state, 0) {
+        warnings.push(format!("embed pending issues: {e}"));
+    }
+
     // Mark the repo scanned.
     let mut updated = repo;
     updated.last_scanned_at = Some(now_rfc3339());
@@ -1027,6 +1037,39 @@ pub fn build_pr_context(
         cycle_time_secs,
         estimate,
     })
+}
+
+// ──────────────────────────── search (T11 wave 4) ────────────────────────────
+//
+// Ported from Go's `store/search.go` + `store/embeddings.go` via the new
+// `gitstate-search` crate — FTS5 + a local hashing-trick embedder (vector
+// KNN + RRF fusion with FTS) + a hand-rolled trigram fuzzy fallback (SQLite
+// has no `pg_trgm` — see `gitstate_search::fuzzy`'s doc for the full spike
+// writeup). These are thin wrappers, the same shape every other domain-crate
+// call in this file already has (e.g. `build_issue_context` calling into
+// `gitstate_calibrate`). No HTTP route: nothing in `web/` consumes search
+// today (checked — no page calls anything resembling `/api/search`), so
+// this is CLI (`gitstate search`) + MCP (`search_issues`) surface only, the
+// same evidence-based call waves 2 and 3 made for their own domains.
+
+/// Hybrid full-text + semantic + fuzzy search across issues, PRs, and
+/// commits. See `gitstate_search::search` for the ranking pipeline.
+pub fn search(
+    state: &AppState,
+    query: &str,
+    kinds: &[gitstate_core::SearchKind],
+    limit: u32,
+) -> Result<gitstate_search::SearchOutcome> {
+    gitstate_search::search(state.store.as_ref(), query, kinds, limit)
+}
+
+/// (Re)embeds every issue whose local semantic-search vector is missing or
+/// stale. Called automatically at the end of [`scan_repo`] (non-fatal); also
+/// exposed here so a caller can force a pass without a full rescan (e.g.
+/// after restoring a database from an export). `limit` of `0` uses
+/// [`gitstate_search::search::EMBED_BATCH_LIMIT`].
+pub fn embed_pending(state: &AppState, limit: u32) -> Result<u64> {
+    gitstate_search::embed_pending(state.store.as_ref(), limit)
 }
 
 // ──────────────────────────── taxonomy ────────────────────────────

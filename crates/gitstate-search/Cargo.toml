@@ -1,0 +1,22 @@
+[package]
+name = "gitstate-search"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "gitstate local hybrid search: FTS5 + a local hashing-trick embedder + a hand-rolled fuzzy fallback, over this machine's own issues/PRs/commits"
+
+[dependencies]
+gitstate-core = { workspace = true }
+serde = { workspace = true }
+
+[dev-dependencies]
+# A real Store to search against, so the orchestrator (search_fts + vector
+# KNN + fuzzy fallback fusion) is tested against the actual SQLite
+# persistence path rather than a hand-rolled stand-in — same rationale as
+# `gitstate-calibrate`'s dev-dep on `gitstate-store`.
+gitstate-store = { workspace = true }
+
+[lints]
+workspace = true

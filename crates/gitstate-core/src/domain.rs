@@ -897,3 +897,94 @@ pub struct PrChangeShape {
     pub deletions: u32,
     pub changed_files: u32,
 }
+
+// ──────────────────────────── search (T11 wave 4) ────────────────────────────
+//
+// Ported from Go's `store/search.go` + `store/embeddings.go` — hybrid
+// full-text/vector/fuzzy search over issues, PRs, and commits. See
+// `gitstate_search`'s crate doc for the fuzzy-fallback and FTS5 spike
+// writeup; these are just the wire types shared between the store and the
+// search crate (same split `AgentRun`/`CalibrationCell` already use).
+
+/// Search result entity kinds. Mirrors Go's `SearchTypeIssue`/`SearchTypePR`/
+/// `SearchTypeCommit` string constants as a real enum.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SearchKind {
+    Issue,
+    Pr,
+    Commit,
+}
+
+impl SearchKind {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            SearchKind::Issue => "issue",
+            SearchKind::Pr => "pr",
+            SearchKind::Commit => "commit",
+        }
+    }
+
+    /// Accepts the API-facing plural aliases too (`issues`, `prs`,
+    /// `commits`), matching Go's `searchTypeAliases`. Unknown input is
+    /// simply not matched (`None`) — the caller drops it, same as Go's
+    /// "unrecognised type is ignored" rule.
+    pub fn parse(s: &str) -> Option<Self> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "issue" | "issues" => Some(SearchKind::Issue),
+            "pr" | "prs" => Some(SearchKind::Pr),
+            "commit" | "commits" => Some(SearchKind::Commit),
+            _ => None,
+        }
+    }
+}
+
+/// One hybrid-search hit: from full-text (FTS5/bm25), vector KNN, RRF fusion
+/// of the two, or the fuzzy fallback. Mirrors Go's `store.SearchResult`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SearchHit {
+    #[serde(rename = "type")]
+    pub kind: SearchKind,
+    pub id: String,
+    /// Issue/PR number recovered from `external_ref`; `None` for commits or
+    /// a native item with no leading digits. Go's `SearchResult.Number` was
+    /// a plain `int` defaulting to 0 for "no number" — replaced here with an
+    /// explicit optional, the same convention wave 3 already established for
+    /// `PrBrief`/`SimilarIssue`, rather than porting an ambiguous zero.
+    pub number: Option<i64>,
+    pub title: String,
+    pub snippet: String,
+    /// Whichever ranker produced this hit: FTS5's `bm25()` (sign-flipped so
+    /// higher is better, matching cosine's convention), the RRF fused score,
+    /// or the fuzzy trigram similarity. Comparable only within one response,
+    /// never across calls or ranking modes.
+    pub rank: f64,
+    pub repo_id: String,
+    /// `""` for commits, matching Go.
+    pub state: String,
+}
+
+/// One issue whose embedding is missing or stale. Mirrors Go's
+/// `store.IssueForEmbedding`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PendingEmbedding {
+    pub id: WorkItemId,
+    pub title: String,
+    pub body: String,
+}
+
+/// Best-effort platform number recovered from an `external_ref` like
+/// `"#123"` or `"!45"`; `None` for no leading digits. `WorkItem` (wave 0's
+/// schema) stores only the ref string, not a separate numeric column the
+/// way Go's `issues`/`pull_requests` tables did (`docs/PORT-PLAN.md` §3), so
+/// every reader that wants a display number re-derives it from the string.
+/// Shared by `gitstate-store`'s and `gitstate-search`'s search paths, both of
+/// which need this; `gitstate_daemon::ops`'s context_bundle assembly (T11
+/// wave 3) predates this and keeps its own private copy of the same four
+/// lines rather than being refactored onto this one here, out of caution
+/// about touching a prior wave's file for a non-functional dedupe.
+pub fn parse_ref_number(external_ref: &str) -> Option<i64> {
+    let rest = external_ref.trim_start_matches(|c: char| !c.is_ascii_digit());
+    let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+    digits.parse::<i64>().ok().filter(|n| *n > 0)
+}

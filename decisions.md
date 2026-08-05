@@ -244,6 +244,69 @@ generator. → No payment provider, no exchange-rate service, no charging path.
 > new `gitstate_core::analytics::lead_time_secs` helper. `internal/store/context_bundle.go` and
 > `cmd/gittrack` stay in-tree unchanged; nothing is deleted until the final cleanup wave. `cargo test
 > --workspace` 245 → 259 (+14: 11 in `gitstate-daemon`, 2 in `gitstate-store`, 1 in `gitstate-core`).
+>
+> **Wave 4 shipped (2026-08-05, branch `port-search`): `internal/embed` + `store/search.go` +
+> `store/embeddings.go`.** **The wave's flagged spike, resolved:** SQLite has **FTS5**, confirmed
+> available with **zero `Cargo.toml` change** — the plan's suggestion of enabling an `fts5` `rusqlite`
+> feature was wrong; no such feature exists on `rusqlite` 0.32 at all, and `libsqlite3-sys`'s
+> `bundled` build (already on) passes `-DSQLITE_ENABLE_FTS5` unconditionally when it compiles SQLite
+> from source. SQLite has **no `pg_trgm` and no trigram function of any kind**, and this build wires
+> in neither `spellfix1` nor `editdist3` (separate, non-default `libsqlite3-sys` extensions this
+> workspace does not enable — adding one would have been exactly the from-scratch-verification risk
+> the plan flagged this domain for). The fuzzy fallback is therefore a **hand-rolled trigram-Jaccard
+> function** (`gitstate_search::fuzzy::trigram_similarity`) — no new crate (`strsim` was the plan's
+> other named option; declined, since Levenshtein/Jaro-Winkler are a different algorithm shape than
+> trigram-set overlap, and the embedder already proves hand-rolled trigram logic is cheap and correct
+> in this codebase). It replicates pg_trgm's own padding convention and exact Jaccard formula for the
+> **symmetric** `similarity()` function pg_trgm exposes. **It does NOT implement `word_similarity()`**
+> — Postgres's *asymmetric* "does some substring of the longer text closely match the shorter query"
+> search, which Go used specifically for PR titles and commit messages (issues used `similarity`
+> already, so that half ports with no behaviour change). **The real, stated ranking difference:** a
+> long PR title or commit subject that only partially echoes the query will rank LOWER under this
+> port than it did in Go, because whole-string Jaccard is diluted by the rest of a long text where
+> Go's asymmetric search would have ignored the irrelevant remainder. The floor number (0.4) is kept
+> unchanged even though the function it gates is not the same function, so the practical effect is
+> "somewhat stricter for long targets, unchanged for short ones", not a re-tuned threshold.
+> `internal/embed`'s claim of being dependency-free stdlib Go checked out exactly as the plan said: no
+> new crate, `gitstate_search::embed` is FNV-1a + `std` math, near-line-for-line, with one deliberate
+> hardening — a `BTreeMap` replaces Go's `map` for the term-frequency accumulator so bucket-collision
+> summation order is deterministic by construction rather than incidentally-almost-always-deterministic
+> the way Go's randomized map iteration is. Storage: SQLite has no `pgvector` column type, so an
+> embedding is a BLOB of little-endian f32 bytes (`embed::to_bytes`/`from_bytes`), not Go's
+> `::vector`-cast text literal — round-tripped losslessly, proven byte-for-byte in
+> `gitstate-search`'s test suite, not just "close enough". Persistence: migration `0005_search.sql`
+> adds an FTS5 virtual table (`search_fts`, covering `work_items`' issue/PR rows plus `commits`,
+> rebuilt fresh on every `search_fts` call rather than kept in sync via triggers — `work_items`/
+> `commits`' TEXT primary keys can't address FTS5's external-content rowid mode anyway, and a full
+> rebuild costs low milliseconds at this app's local scale) and `work_item_embeddings` (issues only,
+> matching Go's own scope), plus four new `Store` methods (`search_fts`, `list_issues_needing_embedding`,
+> `set_work_item_embedding`, `list_issue_embeddings`) — `org_id` dropped, same reasoning as every
+> prior wave. New `gitstate-search` crate mirrors Go's own module split (`embed`/`fuzzy` are pure math,
+> `rrf` is the Reciprocal Rank Fusion of FTS + vector-KNN issue rankings ported from `fuseHybrid`,
+> `search` is the orchestrator calling `Store` the same way `gitstate_calibrate::recompute` does).
+> **Ranking correctness tested three ways, not just "it ran":** (1) `rrf::fuse_hybrid` unit-tested
+> with fixed FTS/vector fixtures and a hand-computed expected fusion order (not re-derived); (2)
+> `embed`'s near-duplicate/typo-robustness properties tested with fixed strings and known-correct
+> orderings, mirroring Go's own `embed_test.go` cases; (3) an end-to-end suite against a real
+> `SqliteStore` (`gitstate-search/tests/search_against_real_store.rs`) proving each of the three
+> ranking paths — FTS, vector-KNN, fuzzy — finds a **known-correct top result**, including a typo
+> query that FTS5 structurally cannot match (a different stemmed token) but the vector path still
+> ranks correctly via trigram-robust embedding. **Surface**: `ops::search`/`ops::embed_pending`
+> wrappers (mirroring every prior wave's `ops` shape); `embed_pending` is now also called
+> automatically, non-fatally, at the end of `scan_repo` — mirroring Go's own post-sync
+> `EmbedPendingIssues` hook, so semantic search actually has vectors once a user scans a real repo;
+> a new `gitstate search <query> [--type ...] [--limit N]` CLI command; and the `search_issues` MCP
+> tool (schema ported from `cmd/gitstate-mcp/tools.go` near-verbatim, including Go's own
+> single-value, non-array `type` filter) — **the exact tool wave 3's doc named as blocked on "a later
+> wave"**, now unblocked. MCP has **4 of Go's 6 tools ported** (`log_agent_run`, `get_issue`,
+> `get_pr_context`, `search_issues`); only `list_issues`/`update_issue_state` (plain work-item
+> listing/mutation, wave 5's report/NL→report territory) remain unstubbed. **No daemon HTTP route**:
+> checked `web/` for a consumer (none — the one `type="search"` input in `People.tsx` is an unrelated
+> client-side filter box), so this follows waves 2/3's evidence-based precedent rather than wave 1's
+> parity-route default. `internal/embed`, `store/search.go`, `store/embeddings.go` stay in-tree
+> unchanged; nothing is deleted until the final cleanup wave. `cargo test --workspace` 259 → 294
+> (+35: 6 in `gitstate-store`, 26 in the new `gitstate-search` crate [21 unit + 5 real-store
+> integration], 3 in `gitstate-daemon`).
 
 ---
 

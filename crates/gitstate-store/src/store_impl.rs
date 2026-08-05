@@ -13,8 +13,8 @@ use gitstate_core::{
     CatField, Category, CategorySource, Classification, CohortSample, Commit, Context,
     ContextPrRef, Contribution, Contributor, CtxField, DimensionRaw, Dimensions, EffortEstimate,
     EffortMethod, EffortRow, Error, EstimateOutcome, Exemplar, Forge, Hlc, HumanAction, PeerId,
-    ProjectState, Repo, Result, Store, SyncOp, WorkItem, WorkKind, WorkState,
-    AGENT_RUN_DEFAULT_LIMIT, AGENT_RUN_MAX_LIMIT, HLC_SKEW_MS,
+    PendingEmbedding, ProjectState, Repo, Result, SearchHit, SearchKind, Store, SyncOp, WorkItem,
+    WorkKind, WorkState, AGENT_RUN_DEFAULT_LIMIT, AGENT_RUN_MAX_LIMIT, HLC_SKEW_MS,
 };
 use gitstate_core::{AgentRunId, CategoryId, ContextId, ContributorId, RepoId, WorkItemId};
 use gitstate_core::{NodeIdentity, SignedOp, SyncPeer};
@@ -2491,6 +2491,187 @@ impl Store for SqliteStore {
             .map_err(st)?;
         Ok(rows)
     }
+
+    // ── search + embeddings (T11 port plan, wave 4) ──
+
+    fn search_fts(&self, kinds: &[SearchKind], query: &str, limit: u32) -> Result<Vec<SearchHit>> {
+        let limit = if limit == 0 { 20 } else { limit };
+        let conn = self.conn.lock().unwrap();
+        // Rebuild the index fresh on every call — see migration 0005's doc
+        // for why this beats trigger-based incremental sync at this app's
+        // local, single-user scale.
+        conn.execute_batch(
+            "DELETE FROM search_fts;
+             INSERT INTO search_fts (entity_type, entity_id, external_ref, repo_id, state, title, body)
+               SELECT 'issue', id, external_ref, repo_id, state, title, body
+                 FROM work_items WHERE kind = 'issue'
+             UNION ALL
+               SELECT 'pr', id, external_ref, repo_id, state, title, body
+                 FROM work_items WHERE kind = 'pr'
+             UNION ALL
+               SELECT 'commit', sha, '', repo_id, '', summary, ''
+                 FROM commits;",
+        )
+        .map_err(st)?;
+
+        let match_expr = fts_match_expr(query);
+        if match_expr.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        // One MATCH scan across every kind, then narrow to the requested
+        // kinds in Rust (over-fetching a little first) — simpler than Go's
+        // per-type UNION-of-branches SQL, and correct at this app's local
+        // scale since `kinds` rarely excludes more than one of the three.
+        let fetch_limit = (limit as i64).saturating_mul(4).max(limit as i64);
+        let mut stmt = conn
+            .prepare(
+                "SELECT entity_type, entity_id, external_ref, repo_id, state, title,
+                        snippet(search_fts, -1, '<b>', '</b>', '…', 12) AS snip,
+                        -bm25(search_fts) AS rank
+                 FROM search_fts
+                 WHERE search_fts MATCH ?1
+                 ORDER BY rank DESC
+                 LIMIT ?2",
+            )
+            .map_err(st)?;
+        let rows = stmt
+            .query_map(params![match_expr, fetch_limit], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                    r.get::<_, String>(3)?,
+                    r.get::<_, String>(4)?,
+                    r.get::<_, String>(5)?,
+                    r.get::<_, String>(6)?,
+                    r.get::<_, f64>(7)?,
+                ))
+            })
+            .map_err(st)?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(st)?;
+
+        let mut out = Vec::with_capacity(limit as usize);
+        for (kind_str, id, external_ref, repo_id, state, title, snippet, rank) in rows {
+            let Some(kind) = SearchKind::parse(&kind_str) else {
+                continue;
+            };
+            if !kinds.contains(&kind) {
+                continue;
+            }
+            out.push(SearchHit {
+                kind,
+                id,
+                number: gitstate_core::parse_ref_number(&external_ref),
+                title,
+                snippet,
+                rank,
+                repo_id,
+                state,
+            });
+            if out.len() >= limit as usize {
+                break;
+            }
+        }
+        Ok(out)
+    }
+
+    fn list_issues_needing_embedding(
+        &self,
+        model: &str,
+        limit: u32,
+    ) -> Result<Vec<PendingEmbedding>> {
+        let limit = if limit == 0 { 500 } else { limit };
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn
+            .prepare(
+                "SELECT w.id, w.title, w.body
+                 FROM work_items w
+                 LEFT JOIN work_item_embeddings e ON e.item_id = w.id
+                 WHERE w.kind = 'issue'
+                   AND ( e.item_id IS NULL
+                      OR e.embedded_at < w.updated_at
+                      OR e.model IS NOT ?2 )
+                 ORDER BY w.updated_at ASC
+                 LIMIT ?1",
+            )
+            .map_err(st)?;
+        let rows = stmt
+            .query_map(params![limit, model], |r| {
+                Ok(PendingEmbedding {
+                    id: WorkItemId(r.get(0)?),
+                    title: r.get(1)?,
+                    body: r.get(2)?,
+                })
+            })
+            .map_err(st)?
+            .collect::<rusqlite::Result<_>>()
+            .map_err(st)?;
+        Ok(rows)
+    }
+
+    fn set_work_item_embedding(
+        &self,
+        item_id: &WorkItemId,
+        vector: &[u8],
+        model: &str,
+    ) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        let exists: bool = conn
+            .query_row(
+                "SELECT 1 FROM work_items WHERE id = ?1",
+                [&item_id.0],
+                |_| Ok(true),
+            )
+            .optional()
+            .map_err(st)?
+            .unwrap_or(false);
+        if !exists {
+            return Err(Error::not_found("work_item", item_id.0.clone()));
+        }
+        conn.execute(
+            "INSERT INTO work_item_embeddings (item_id, vector, model, embedded_at)
+             VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT(item_id) DO UPDATE SET
+               vector = excluded.vector, model = excluded.model, embedded_at = excluded.embedded_at",
+            params![item_id.0, vector, model, now_rfc3339()],
+        )
+        .map_err(st)?;
+        Ok(())
+    }
+
+    fn list_issue_embeddings(&self) -> Result<Vec<(WorkItemId, Vec<u8>)>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn
+            .prepare("SELECT item_id, vector FROM work_item_embeddings")
+            .map_err(st)?;
+        let rows = stmt
+            .query_map([], |r| Ok((WorkItemId(r.get(0)?), r.get(1)?)))
+            .map_err(st)?
+            .collect::<rusqlite::Result<_>>()
+            .map_err(st)?;
+        Ok(rows)
+    }
+}
+
+/// Turns free user text into a safe FTS5 MATCH expression: lowercase
+/// alphanumeric word tokens, ANDed together, each individually quoted so no
+/// token can be misread as an FTS5 operator (`-`, `:`, `*`, an unbalanced
+/// `"`, a bareword `NEAR`/`OR`, …). This is the same permissive intent as
+/// Go's `websearch_to_tsquery` (a search box must never 500 on stray
+/// punctuation) but implements only the implicit-AND-of-terms subset, not
+/// its quote/OR/exclusion syntax — see `gitstate_search`'s crate doc for why
+/// that is a stated, deliberate behaviour difference rather than an
+/// oversight. Empty or punctuation-only input yields `""`.
+fn fts_match_expr(query: &str) -> String {
+    let tokens: Vec<String> = query
+        .to_lowercase()
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|s| !s.is_empty())
+        .map(|s| format!("\"{s}\""))
+        .collect();
+    tokens.join(" AND ")
 }
 
 /// The `kv` key holding this node's sync secret seed (hex).
@@ -3866,5 +4047,197 @@ mod tests {
         assert_eq!(capped.len(), 2);
         assert_eq!(capped[0].title, "newest");
         assert_eq!(capped[1].title, "middle");
+    }
+
+    // ── search + embeddings (T11 wave 4) ──
+
+    fn work_item(repo: &RepoId, id: &str, kind: WorkKind, title: &str, body: &str) -> WorkItem {
+        // A distinct external_ref per id (not just per length!) — two ids of
+        // the same length previously collided on `(repo_id, kind,
+        // external_ref)`'s unique index and `INSERT OR REPLACE` silently
+        // dropped one row, which is exactly the bug this helper now avoids.
+        let digits: String = id.chars().filter(|c| c.is_ascii_digit()).collect();
+        WorkItem {
+            id: WorkItemId(id.into()),
+            repo_id: repo.clone(),
+            kind,
+            external_ref: format!("#{}", if digits.is_empty() { "0" } else { &digits }),
+            title: title.into(),
+            body: body.into(),
+            state: WorkState::Open,
+            author_login: None,
+            labels: vec![],
+            created_at: now_rfc3339(),
+            updated_at: now_rfc3339(),
+            merged_at: None,
+            closed_at: None,
+            files_touched: vec![],
+        }
+    }
+
+    #[test]
+    fn search_fts_matches_title_and_body_and_ranks_by_bm25() {
+        let s = store();
+        let r = seed_repo(&s, "r1");
+        s.save_work_items(&[
+            work_item(
+                &r,
+                "iss-1",
+                WorkKind::Issue,
+                "Fix authentication redirect loop",
+                "Users cannot log in; the login flow keeps redirecting.",
+            ),
+            work_item(
+                &r,
+                "iss-2",
+                WorkKind::Issue,
+                "Update billing invoice export",
+                "Unrelated to auth entirely.",
+            ),
+        ])
+        .unwrap();
+
+        let hits = s
+            .search_fts(&[SearchKind::Issue], "authentication", 20)
+            .unwrap();
+        assert_eq!(hits.len(), 1, "only the auth issue matches");
+        assert_eq!(hits[0].id, "iss-1");
+        assert_eq!(hits[0].kind, SearchKind::Issue);
+        assert!(hits[0].snippet.contains("<b>"), "snippet is highlighted");
+
+        // No match at all => empty, not an error.
+        assert!(s
+            .search_fts(&[SearchKind::Issue], "nonexistentword", 20)
+            .unwrap()
+            .is_empty());
+
+        // Punctuation-only query tokenizes to nothing => empty, no FTS5
+        // syntax error surfaced to the caller.
+        assert!(s
+            .search_fts(&[SearchKind::Issue], "\"@#$%", 20)
+            .unwrap()
+            .is_empty());
+    }
+
+    #[test]
+    fn search_fts_filters_by_requested_kind() {
+        let s = store();
+        let r = seed_repo(&s, "r1");
+        s.save_work_items(&[
+            work_item(
+                &r,
+                "iss-1",
+                WorkKind::Issue,
+                "widget crashes",
+                "crash on load",
+            ),
+            work_item(
+                &r,
+                "pr-1",
+                WorkKind::Pr,
+                "fix widget crash",
+                "resolves the crash",
+            ),
+        ])
+        .unwrap();
+        s.save_commits(&r, &[commit_at(&r, "abc123", "2026-01-01T00:00:00Z")])
+            .unwrap();
+
+        let issues_only = s.search_fts(&[SearchKind::Issue], "widget", 20).unwrap();
+        assert_eq!(issues_only.len(), 1);
+        assert_eq!(issues_only[0].kind, SearchKind::Issue);
+
+        let all_kinds = s
+            .search_fts(&[SearchKind::Issue, SearchKind::Pr], "widget", 20)
+            .unwrap();
+        assert_eq!(all_kinds.len(), 2, "issue + pr both match \"widget\"");
+    }
+
+    #[test]
+    fn search_fts_indexes_commit_summaries() {
+        let s = store();
+        let r = seed_repo(&s, "r1");
+        let mut c = commit_at(&r, "deadbeef", "2026-01-01T00:00:00Z");
+        c.summary = "fix flaky retry logic in the sync engine".into();
+        s.save_commits(&r, &[c]).unwrap();
+
+        let hits = s
+            .search_fts(&[SearchKind::Commit], "flaky retry", 20)
+            .unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].id, "deadbeef");
+        assert_eq!(hits[0].kind, SearchKind::Commit);
+        assert_eq!(hits[0].number, None, "commits carry no issue/PR number");
+    }
+
+    #[test]
+    fn set_work_item_embedding_rejects_unknown_item() {
+        let s = store();
+        let err = s
+            .set_work_item_embedding(&WorkItemId("nope".into()), &[0, 1, 2, 3], "local-hash-256")
+            .unwrap_err();
+        assert!(matches!(err, Error::NotFound { .. }));
+    }
+
+    #[test]
+    fn work_item_embedding_roundtrips_and_lists() {
+        let s = store();
+        let r = seed_repo(&s, "r1");
+        let id = seed_work_item(&s, &r, "iss-1", WorkKind::Issue);
+
+        assert!(s.list_issue_embeddings().unwrap().is_empty());
+
+        let vector: Vec<u8> = (0u8..40).collect(); // stand-in for 10 f32s' bytes
+        s.set_work_item_embedding(&id, &vector, "local-hash-256")
+            .unwrap();
+
+        let all = s.list_issue_embeddings().unwrap();
+        assert_eq!(all.len(), 1);
+        assert_eq!(all[0].0, id);
+        assert_eq!(
+            all[0].1, vector,
+            "the exact bytes round-trip through the BLOB column"
+        );
+
+        // Re-setting replaces, it does not duplicate.
+        let vector2: Vec<u8> = (0u8..40).map(|b| b.wrapping_add(1)).collect();
+        s.set_work_item_embedding(&id, &vector2, "local-hash-256")
+            .unwrap();
+        let all2 = s.list_issue_embeddings().unwrap();
+        assert_eq!(all2.len(), 1, "upsert, not append");
+        assert_eq!(all2[0].1, vector2);
+    }
+
+    #[test]
+    fn list_issues_needing_embedding_excludes_fresh_and_model_matched_rows() {
+        let s = store();
+        let r = seed_repo(&s, "r1");
+        let iss1 = seed_work_item(&s, &r, "iss-1", WorkKind::Issue);
+        let iss2 = seed_work_item(&s, &r, "iss-2", WorkKind::Issue);
+        // A PR must never show up here even though it shares the work_items
+        // table — only kind='issue' rows are ever embedded (mirrors Go).
+        let _pr = seed_work_item(&s, &r, "pr-1", WorkKind::Pr);
+
+        let pending = s
+            .list_issues_needing_embedding("local-hash-256", 10)
+            .unwrap();
+        let ids: Vec<String> = pending.iter().map(|p| p.id.0.clone()).collect();
+        assert_eq!(ids.len(), 2, "both issues are pending; the PR is excluded");
+        assert!(ids.contains(&iss1.0) && ids.contains(&iss2.0));
+
+        // Embed iss1 under the current model — it drops out of the pending list.
+        s.set_work_item_embedding(&iss1, &[1, 2, 3, 4], "local-hash-256")
+            .unwrap();
+        let pending2 = s
+            .list_issues_needing_embedding("local-hash-256", 10)
+            .unwrap();
+        assert_eq!(pending2.len(), 1);
+        assert_eq!(pending2[0].id, iss2);
+
+        // A model change makes the previously-fresh row pending again.
+        let pending3 = s
+            .list_issues_needing_embedding("local-hash-512", 10)
+            .unwrap();
+        assert_eq!(pending3.len(), 2, "stale model => re-embed everyone");
     }
 }

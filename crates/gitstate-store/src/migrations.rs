@@ -22,6 +22,11 @@ const MIGRATIONS: &[(&str, &str, &str)] = &[
         "calibration",
         include_str!("../migrations/0004_calibration.sql"),
     ),
+    (
+        "0005",
+        "search",
+        include_str!("../migrations/0005_search.sql"),
+    ),
 ];
 
 /// Apply every pending migration to `conn`.
