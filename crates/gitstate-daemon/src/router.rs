@@ -25,6 +25,7 @@ pub fn build_router(state: AppState) -> Router {
         .merge(routes::health_routes())
         .merge(routes::tracker_routes())
         .merge(routes::sync_admin_routes())
+        .merge(routes::agent_run_routes())
         .route_layer(middleware::from_fn_with_state(state.clone(), require_admin));
 
     // The peer API. NOT under `require_admin`: it carries its own, stronger

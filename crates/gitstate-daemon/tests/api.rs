@@ -750,3 +750,160 @@ async fn health_metrics_and_involvement_reflect_seeded_activity() {
     assert_eq!(inv["people"][0]["total_commits"], 3);
     assert_eq!(inv["people"][0]["repo_count"], 1);
 }
+
+// ── agent runs (T11 port plan wave 1) ──
+
+#[tokio::test]
+async fn agent_runs_start_empty() {
+    let resp = Daemon::new(state())
+        .router()
+        .oneshot(get("/api/agent-runs"))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let v = json(resp).await;
+    assert_eq!(v.as_array().unwrap().len(), 0);
+}
+
+#[tokio::test]
+async fn logging_a_run_requires_a_goal() {
+    // A blank goal is rejected by `ops::log_agent_run` itself (400/invalid).
+    let resp = Daemon::new(state())
+        .router()
+        .oneshot(post(
+            "/api/agent-runs",
+            serde_json::json!({ "goal": "   " }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    let v = json(resp).await;
+    assert_eq!(v["code"], "invalid");
+
+    // An entirely absent `goal` field fails JSON deserialization before ops
+    // ever runs (422, not 400) — still a rejection, just at the wire layer.
+    let resp = Daemon::new(state())
+        .router()
+        .oneshot(post("/api/agent-runs", serde_json::json!({})))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
+}
+
+#[tokio::test]
+async fn logging_a_run_rejects_an_unrecognised_human_action() {
+    let resp = Daemon::new(state())
+        .router()
+        .oneshot(post(
+            "/api/agent-runs",
+            serde_json::json!({ "goal": "fix it", "human_action": "approved" }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    let v = json(resp).await;
+    assert_eq!(v["code"], "invalid");
+}
+
+#[tokio::test]
+async fn log_and_list_agent_runs_round_trips_and_filters() {
+    let st = state();
+    let repo = seed_repo(&st, "repo-agent");
+
+    let created = json(
+        Daemon::new(st.clone())
+            .router()
+            .oneshot(post(
+                "/api/agent-runs",
+                serde_json::json!({
+                    "goal": "fix the login bug",
+                    "repo_id": repo.0,
+                    "agent_name": "claude-code",
+                    "branch": "fix/login",
+                    "diff_summary": { "additions": 12, "deletions": 3, "changed_files": 2 },
+                    "tests_passed": true,
+                    "human_action": "accepted",
+                    "iterations": 3,
+                    "cost_usd": 0.42
+                }),
+            ))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert!(created["id"].as_str().is_some());
+    assert_eq!(created["goal"], "fix the login bug");
+    assert_eq!(created["human_action"], "accepted");
+    assert_eq!(created["diff_summary"]["additions"], 12);
+    assert_eq!(created["tests_passed"], true);
+
+    // A second, minimal run under a different agent name — proves absent
+    // fields serialize as null, not as some zero-value default.
+    let _ = Daemon::new(st.clone())
+        .router()
+        .oneshot(post(
+            "/api/agent-runs",
+            serde_json::json!({ "goal": "second run", "agent_name": "cursor" }),
+        ))
+        .await
+        .unwrap();
+
+    let all = json(
+        Daemon::new(st.clone())
+            .router()
+            .oneshot(get("/api/agent-runs"))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(all.as_array().unwrap().len(), 2);
+    // newest-first: the second run was logged after the first.
+    assert_eq!(all[0]["goal"], "second run");
+    assert!(all[1]["human_action"].is_string());
+
+    let by_repo = json(
+        Daemon::new(st.clone())
+            .router()
+            .oneshot(get(&format!("/api/agent-runs?repo_id={}", repo.0)))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(by_repo.as_array().unwrap().len(), 1);
+    assert_eq!(by_repo[0]["goal"], "fix the login bug");
+
+    let by_agent = json(
+        Daemon::new(st)
+            .router()
+            .oneshot(get("/api/agent-runs?agent_name=cursor"))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(by_agent.as_array().unwrap().len(), 1);
+    assert_eq!(by_agent[0]["goal"], "second run");
+}
+
+#[tokio::test]
+async fn agent_runs_are_gated_by_the_same_admin_posture_as_everything_else() {
+    // Proves the auth-scope decision in code, not just in a comment: no
+    // separate token type exists for this route — it lives or dies by the
+    // same `require_admin` gate as `/api/repos`.
+    let mut st = state();
+    st.admin_auth = gitstate_daemon::AdminAuth::Token("s3cret".into());
+
+    let resp = Daemon::new(st.clone())
+        .router()
+        .oneshot(get("/api/agent-runs"))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+
+    let ok = Request::builder()
+        .uri("/api/agent-runs")
+        .header("authorization", "Bearer s3cret")
+        .body(Body::empty())
+        .unwrap();
+    let resp = Daemon::new(st).router().oneshot(ok).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+}
