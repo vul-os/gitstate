@@ -26,11 +26,12 @@ pub use analytics::Analytics;
 // The domain vocabulary is re-exported flat so adapter crates can
 // `use gitstate_core::{Repo, WorkItem, ...}`.
 pub use domain::{
-    AgentDiffSummary, AgentRun, AuthorSurvival, BugIntroduction, CatField, Category,
-    CategorySource, Classification, Commit, Context, ContextPrRef, Contribution, Contributor,
-    CtxField, DiffSummary, DimensionRaw, Dimensions, EffortEstimate, EffortMethod, Forge,
-    HumanAction, ProjectState, Repo, SyncOp, Weights, WorkItem, WorkKind, WorkState,
-    AGENT_RUN_DEFAULT_LIMIT, AGENT_RUN_MAX_LIMIT,
+    AccuracyRow, AgentDiffSummary, AgentRun, AuthorSurvival, BugIntroduction, CalibrationCell,
+    CatField, Category, CategorySource, Classification, CohortSample, Commit, Context,
+    ContextPrRef, Contribution, Contributor, CtxField, DiffSummary, DimensionRaw, Dimensions,
+    EffortEstimate, EffortMethod, EstimateOutcome, Exemplar, Forge, HumanAction, ProjectState,
+    Repo, SyncOp, Weights, WorkItem, WorkKind, WorkState, AGENT_RUN_DEFAULT_LIMIT,
+    AGENT_RUN_MAX_LIMIT,
 };
 pub use ids::{
     now_rfc3339, now_wall_ms, AgentRunId, CategoryId, ContextId, ContributorId, Hlc, PeerId,

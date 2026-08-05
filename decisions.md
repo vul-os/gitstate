@@ -158,6 +158,39 @@ generator. → No payment provider, no exchange-rate service, no charging path.
 > Go's `internal/store/agent_runs.go` stays in-tree unchanged; nothing is deleted until the final
 > cleanup wave. `cargo test --workspace` 218 → 227 (+9: 3 in `gitstate-store`, 5 in `gitstate-daemon`,
 > 1 in `gitstate-cli`).
+>
+> **Wave 2 shipped (2026-08-05, branch `port-calibration`): `internal/calibration` +
+> `store/calibration.go`.** New `gitstate-calibrate` crate, mirroring the Go package's own
+> `cohort.go`/`curve.go`/`recompute.go` split file-for-file: `cohort::size_bucket`/`change_type`/
+> `cohort_candidates`/`top_dirs_from_paths` are a near-line-for-line port with Go's own test tables
+> reproduced as Rust assertions (not re-derived from scratch), and `curve`'s empirical-Bayes math
+> (`default_secs_for_difficulty`, `difficulty_bucket`, `recency_weight`, `weighted_quantiles`,
+> `shrink_to_prior`, `calibrated_secs`) does the same. One deliberate divergence, forced by wave 0's
+> schema rather than invented here: Go's `BackfillActualSecs` reads a persisted Postgres `cycle_times`
+> table that Rust never built (`docs/PORT-PLAN.md` §1 already decided `analytics::cycle_times`
+> supersedes it), so `Store::backfill_actual_secs` computes lead time directly from
+> `work_items.merged_at - created_at` in whole seconds — deliberately *not* routed through
+> `analytics::cycle_times`'s `f64`-hours return, to avoid a needless float round-trip on a value this
+> store persists as an integer. Persistence: migration `0004_calibration.sql` adds
+> `effort_calibration` + `effort_accuracy` (both `org_id`-free, same reasoning as wave 1's
+> `agent_runs`) and five nullable columns on `effort` (`predicted_secs`, `actual_secs`, `cohort_key`,
+> `size_bucket`, `change_type`) via `ALTER TABLE`, following 0002's precedent — the migration's own
+> comment flags a latent (not active) hazard: `save_effort`'s `INSERT OR REPLACE` would reset these
+> columns on a re-judge, since Rust's `effort` table is one row per work item where Go's
+> `effort_estimates` is one row per estimate-in-time; left for whichever wave wires a live writer.
+> **No daemon route or CLI surface**, deliberately: `RecomputeCalibration`/`CalibratedSecs`/
+> `ListExemplars` have no live caller in the Go reference either — their only intended caller was the
+> multi-tenant HTTP server the 2026-08-04 sweep already removed as SaaS-only — so adding an `/api/*`
+> route here would be surface for its own sake. Ported as a library instead, for wave 3
+> (`context_bundle`) to call for a real `EstimateBrief`. Numerical fidelity was checked two ways: (1)
+> every Go unit-test fixture in `cohort_test.go`/`curve_test.go` reproduced verbatim as a Rust
+> assertion (12 tests), and (2) a full `recompute_calibration` pass against a real `SqliteStore` seeded
+> with hand-picked merged-PR timings, asserting the exact resulting median/p25/p75/mean/MAE/bias
+> numbers by hand computation, not just "it ran" (2 integration tests) — plus 4 new `Store`-level
+> roundtrip tests exercising the new SQL directly (the dynamic `IN (...)` clause, the `ON CONFLICT`
+> upserts, backfill idempotency, exemplar ordering). `internal/calibration` and `store/calibration.go`
+> stay in-tree unchanged; nothing is deleted until the final cleanup wave. `cargo test --workspace`
+> 227 → 245 (+18: 14 in the new `gitstate-calibrate` crate, 4 in `gitstate-store`).
 
 ---
 

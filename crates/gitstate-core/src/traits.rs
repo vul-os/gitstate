@@ -170,6 +170,51 @@ pub trait Store: Send + Sync {
     /// `filter.limit` defaults to [`crate::domain::AGENT_RUN_DEFAULT_LIMIT`]
     /// and is capped at [`crate::domain::AGENT_RUN_MAX_LIMIT`].
     fn list_agent_runs(&self, filter: &AgentRunFilter) -> Result<Vec<AgentRun>>;
+
+    // ── effort calibration (T11 port plan, wave 2 — see `gitstate_calibrate`) ──
+    /// Insert or replace one curve cell, keyed on (cohort_key, difficulty_bucket).
+    fn upsert_calibration_cell(&self, cell: &CalibrationCell) -> Result<()>;
+    /// The cells for the given cohort keys at one difficulty bucket, keyed by
+    /// cohort_key. A cohort with no cell is simply absent from the map (no error).
+    fn get_calibration_cells(
+        &self,
+        cohort_keys: &[String],
+        bucket: i64,
+    ) -> Result<std::collections::HashMap<String, CalibrationCell>>;
+    /// Every curve cell, ordered by cohort then bucket (for a future curve view).
+    fn list_calibration(&self) -> Result<Vec<CalibrationCell>>;
+    /// Insert or replace one cohort's accuracy summary.
+    fn upsert_accuracy(&self, row: &AccuracyRow) -> Result<()>;
+    /// Every accuracy row, most-sampled first.
+    fn list_accuracy(&self) -> Result<Vec<AccuracyRow>>;
+    /// Fill `effort.actual_secs` from each merged PR's observed lead time
+    /// (`work_items.merged_at - work_items.created_at`, the same signal
+    /// `gitstate_core::analytics::cycle_times` already derives) for effort
+    /// rows that have none yet or whose stored actual has drifted. Returns
+    /// the number of rows updated. Idempotent: safe to call after every scan.
+    fn backfill_actual_secs(&self) -> Result<u64>;
+    /// The latest calibration-ready outcome per work item: an effort row with
+    /// both a non-empty `cohort_key` and a non-null `actual_secs`, joined to
+    /// its work item's `merged_at`. Feeds the per-cohort accuracy pass.
+    fn list_estimate_outcomes(&self) -> Result<Vec<EstimateOutcome>>;
+    /// Persist the calibration fields onto an existing `effort` row. There is
+    /// no create path here — the base estimate must already exist (matches
+    /// the Go store's `UpdateEstimateCalibration`, a plain `UPDATE`, not an upsert).
+    fn update_effort_calibration(
+        &self,
+        item: &WorkItemId,
+        predicted_secs: f64,
+        cohort_key: &str,
+        size_bucket: &str,
+        change_type: &str,
+    ) -> Result<()>;
+    /// Every merged-PR outcome that has a `cohort_key` and an `actual_secs`,
+    /// one per work item, expanded so each cohort level it belongs to can be
+    /// rebuilt by the caller (`gitstate_calibrate::recompute::expand_cohorts`).
+    fn list_cohort_samples(&self) -> Result<Vec<CohortSample>>;
+    /// Up to `limit` recent merged PRs in `cohort_key` that have BOTH a
+    /// prediction and an actual, newest-first — used as prompt anchors.
+    fn list_exemplars(&self, cohort_key: &str, limit: u32) -> Result<Vec<Exemplar>>;
 }
 
 /// Optional narrowing for [`Store::list_agent_runs`]. Every field left `None`

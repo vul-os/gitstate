@@ -663,3 +663,80 @@ pub const AGENT_RUN_DEFAULT_LIMIT: u32 = 50;
 /// `agentRunMaxLimit`) — an unbounded `list_agent_runs` call must not be able
 /// to make the daemon materialize its entire log in one response.
 pub const AGENT_RUN_MAX_LIMIT: u32 = 200;
+
+// ── calibration persistence types (T11 port plan, wave 2 — see
+// `gitstate_calibrate` for the algorithm these rows feed) ──────────────────
+//
+// Ported from Go's `store/calibration.go`. `org_id` is dropped from every one
+// of these, same reasoning as `AgentRun` above: one tenant, one machine,
+// nothing left to scope. The two new tables (`effort_calibration`,
+// `effort_accuracy`) and the five new nullable columns on `effort`
+// (`predicted_secs`, `actual_secs`, `cohort_key`, `size_bucket`,
+// `change_type`) are documented in `crates/gitstate-store/migrations/0004_calibration.sql`.
+
+/// One (cohort_key, difficulty_bucket) cell of the calibration curve: the
+/// recency-weighted p25/median/p75/mean lead time (seconds) observed for
+/// that cohort at that rounded difficulty, plus the sample count `n` the
+/// read path uses to decide whether to trust the cell outright, shrink it
+/// toward a coarser prior, or fall back further.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CalibrationCell {
+    pub cohort_key: String,
+    /// `round(difficulty)`, clamped 1..=10 — see `gitstate_calibrate::curve::difficulty_bucket`.
+    pub difficulty_bucket: i64,
+    pub median_secs: i64,
+    pub p25_secs: i64,
+    pub p75_secs: i64,
+    pub mean_secs: i64,
+    pub n: i64,
+    pub updated_at: String,
+}
+
+/// Per-cohort estimation accuracy: mean absolute error and bias ratio over
+/// every estimate that has both a prediction and an observed actual.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AccuracyRow {
+    pub cohort_key: String,
+    pub n: i64,
+    pub mae_secs: i64,
+    /// mean(predicted/actual); < 1 means this cohort tends to under-estimate.
+    pub bias_ratio: f64,
+    pub updated_at: String,
+}
+
+/// One raw (cohort_key, difficulty, actual_secs, merged_at) tuple used to
+/// rebuild the calibration curves. Returned ungrouped so the caller can apply
+/// recency weighting per (cohort, bucket) — mirrors Go's `store.SampleRow`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CohortSample {
+    pub cohort_key: String,
+    pub difficulty: f64,
+    pub actual_secs: i64,
+    pub merged_at: String,
+}
+
+/// One merged-PR estimate joined to its observed actual time, used to build
+/// the per-cohort accuracy summary. Mirrors Go's `store.EstimateOutcome`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct EstimateOutcome {
+    pub item_id: WorkItemId,
+    pub cohort_key: String,
+    pub difficulty: f64,
+    pub predicted_secs: Option<f64>,
+    pub actual_secs: Option<i64>,
+    pub merged_at: String,
+}
+
+/// A past merged PR in a cohort, used as a prompt anchor ("ran ~Xh predicted
+/// vs ~Yh actual"). Mirrors Go's `store.Exemplar`. Note: as in the Go
+/// reference, nothing currently calls `Store::list_exemplars` in a live path
+/// — `internal/llm/service.go` has its own separate `Exemplar` type fed by a
+/// caller that never calls `store.ListExemplars` either. Ported for parity,
+/// not because a wired caller exists yet.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Exemplar {
+    pub title: String,
+    pub difficulty: f64,
+    pub predicted_secs: Option<f64>,
+    pub actual_secs: Option<i64>,
+}

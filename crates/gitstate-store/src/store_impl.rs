@@ -9,15 +9,17 @@
 use crate::migrations;
 use crate::schema::*;
 use gitstate_core::{
-    ids::now_rfc3339, AgentDiffSummary, AgentRun, AgentRunFilter, CatField, Category,
-    CategorySource, Classification, Commit, Context, ContextPrRef, Contribution, Contributor,
-    CtxField, DimensionRaw, Dimensions, EffortEstimate, EffortMethod, Error, Forge, Hlc,
-    HumanAction, PeerId, ProjectState, Repo, Result, Store, SyncOp, WorkItem, WorkKind, WorkState,
-    AGENT_RUN_DEFAULT_LIMIT, AGENT_RUN_MAX_LIMIT, HLC_SKEW_MS,
+    ids::now_rfc3339, AccuracyRow, AgentDiffSummary, AgentRun, AgentRunFilter, CalibrationCell,
+    CatField, Category, CategorySource, Classification, CohortSample, Commit, Context,
+    ContextPrRef, Contribution, Contributor, CtxField, DimensionRaw, Dimensions, EffortEstimate,
+    EffortMethod, Error, EstimateOutcome, Exemplar, Forge, Hlc, HumanAction, PeerId, ProjectState,
+    Repo, Result, Store, SyncOp, WorkItem, WorkKind, WorkState, AGENT_RUN_DEFAULT_LIMIT,
+    AGENT_RUN_MAX_LIMIT, HLC_SKEW_MS,
 };
 use gitstate_core::{AgentRunId, CategoryId, ContextId, ContributorId, RepoId, WorkItemId};
 use gitstate_core::{NodeIdentity, SignedOp, SyncPeer};
 use rusqlite::{params, Connection, OptionalExtension};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
@@ -2164,6 +2166,293 @@ impl Store for SqliteStore {
             .map_err(st)?;
         Ok(rows)
     }
+
+    // ── effort calibration (T11 port plan, wave 2) ──
+
+    fn upsert_calibration_cell(&self, cell: &CalibrationCell) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO effort_calibration
+                (cohort_key, difficulty_bucket, median_secs, p25_secs, p75_secs, mean_secs, n, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+             ON CONFLICT (cohort_key, difficulty_bucket) DO UPDATE SET
+                median_secs = excluded.median_secs,
+                p25_secs    = excluded.p25_secs,
+                p75_secs    = excluded.p75_secs,
+                mean_secs   = excluded.mean_secs,
+                n           = excluded.n,
+                updated_at  = excluded.updated_at",
+            params![
+                cell.cohort_key,
+                cell.difficulty_bucket,
+                cell.median_secs,
+                cell.p25_secs,
+                cell.p75_secs,
+                cell.mean_secs,
+                cell.n,
+                cell.updated_at,
+            ],
+        )
+        .map_err(st)?;
+        Ok(())
+    }
+
+    fn get_calibration_cells(
+        &self,
+        cohort_keys: &[String],
+        bucket: i64,
+    ) -> Result<HashMap<String, CalibrationCell>> {
+        let mut out = HashMap::new();
+        if cohort_keys.is_empty() {
+            return Ok(out);
+        }
+        let conn = self.conn.lock().unwrap();
+        let placeholders = std::iter::repeat_n("?", cohort_keys.len())
+            .collect::<Vec<_>>()
+            .join(", ");
+        let sql = format!(
+            "SELECT {CALIBRATION_COLS} FROM effort_calibration \
+             WHERE difficulty_bucket = ? AND cohort_key IN ({placeholders})"
+        );
+        let mut stmt = conn.prepare(&sql).map_err(st)?;
+        let mut args: Vec<&dyn rusqlite::ToSql> = Vec::with_capacity(cohort_keys.len() + 1);
+        args.push(&bucket);
+        for k in cohort_keys {
+            args.push(k);
+        }
+        let rows = stmt
+            .query_map(args.as_slice(), map_calibration_cell)
+            .map_err(st)?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(st)?;
+        for c in rows {
+            out.insert(c.cohort_key.clone(), c);
+        }
+        Ok(out)
+    }
+
+    fn list_calibration(&self) -> Result<Vec<CalibrationCell>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn
+            .prepare(&format!(
+                "SELECT {CALIBRATION_COLS} FROM effort_calibration \
+                 ORDER BY cohort_key, difficulty_bucket"
+            ))
+            .map_err(st)?;
+        let rows = stmt
+            .query_map([], map_calibration_cell)
+            .map_err(st)?
+            .collect::<rusqlite::Result<_>>()
+            .map_err(st)?;
+        Ok(rows)
+    }
+
+    fn upsert_accuracy(&self, row: &AccuracyRow) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO effort_accuracy (cohort_key, n, mae_secs, bias_ratio, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5)
+             ON CONFLICT (cohort_key) DO UPDATE SET
+                n          = excluded.n,
+                mae_secs   = excluded.mae_secs,
+                bias_ratio = excluded.bias_ratio,
+                updated_at = excluded.updated_at",
+            params![
+                row.cohort_key,
+                row.n,
+                row.mae_secs,
+                row.bias_ratio,
+                row.updated_at
+            ],
+        )
+        .map_err(st)?;
+        Ok(())
+    }
+
+    fn list_accuracy(&self) -> Result<Vec<AccuracyRow>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn
+            .prepare(
+                "SELECT cohort_key, n, mae_secs, bias_ratio, updated_at \
+                 FROM effort_accuracy ORDER BY n DESC, cohort_key",
+            )
+            .map_err(st)?;
+        let rows = stmt
+            .query_map([], |r| {
+                Ok(AccuracyRow {
+                    cohort_key: r.get(0)?,
+                    n: r.get(1)?,
+                    mae_secs: r.get(2)?,
+                    bias_ratio: r.get(3)?,
+                    updated_at: r.get(4)?,
+                })
+            })
+            .map_err(st)?
+            .collect::<rusqlite::Result<_>>()
+            .map_err(st)?;
+        Ok(rows)
+    }
+
+    fn backfill_actual_secs(&self) -> Result<u64> {
+        let mut conn = self.conn.lock().unwrap();
+        // Merged PRs only, matching Go's `BackfillActualSecs` which joins
+        // against `pull_requests` (calibration's persistence never modeled
+        // issues) and filters `pr.state = 'merged'` explicitly — a stricter
+        // condition than `gitstate_core::analytics::cycle_times`'s own
+        // filter (merge timestamp present, no state check), which is a
+        // *different* Go function's (`report.go`'s dashboard trend) filter,
+        // not calibration's. Kept distinct deliberately: this method is the
+        // faithful port of `store/calibration.go`, not a reuse of
+        // analytics' own rule.
+        let rows: Vec<(String, String, String, Option<i64>)> = {
+            let mut stmt = conn
+                .prepare(
+                    "SELECT w.id, w.created_at, w.merged_at, e.actual_secs \
+                     FROM work_items w \
+                     JOIN effort e ON e.item_id = w.id \
+                     WHERE w.kind = 'pr' AND w.state = 'merged' AND w.merged_at IS NOT NULL",
+                )
+                .map_err(st)?;
+            let out = stmt
+                .query_map([], |r| {
+                    Ok((
+                        r.get::<_, String>(0)?,
+                        r.get::<_, String>(1)?,
+                        r.get::<_, String>(2)?,
+                        r.get::<_, Option<i64>>(3)?,
+                    ))
+                })
+                .map_err(st)?
+                .collect::<rusqlite::Result<_>>()
+                .map_err(st)?;
+            out
+        };
+
+        let mut updated: u64 = 0;
+        let tx = conn.transaction().map_err(st)?;
+        for (item_id, created_at, merged_at, existing) in rows {
+            let Some(new_actual) = lead_time_secs(&created_at, &merged_at) else {
+                continue;
+            };
+            if existing == Some(new_actual) {
+                continue;
+            }
+            let n = tx
+                .execute(
+                    "UPDATE effort SET actual_secs = ?2 WHERE item_id = ?1",
+                    params![item_id, new_actual],
+                )
+                .map_err(st)?;
+            updated += n as u64;
+        }
+        tx.commit().map_err(st)?;
+        Ok(updated)
+    }
+
+    fn list_estimate_outcomes(&self) -> Result<Vec<EstimateOutcome>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn
+            .prepare(
+                "SELECT e.item_id, COALESCE(e.cohort_key, ''), e.difficulty, \
+                        e.predicted_secs, e.actual_secs, w.merged_at \
+                 FROM effort e \
+                 JOIN work_items w ON w.id = e.item_id \
+                 WHERE w.kind = 'pr' AND e.actual_secs IS NOT NULL AND w.merged_at IS NOT NULL",
+            )
+            .map_err(st)?;
+        let rows = stmt
+            .query_map([], |r| {
+                Ok(EstimateOutcome {
+                    item_id: WorkItemId(r.get(0)?),
+                    cohort_key: r.get(1)?,
+                    difficulty: r.get(2)?,
+                    predicted_secs: r.get(3)?,
+                    actual_secs: r.get(4)?,
+                    merged_at: r.get(5)?,
+                })
+            })
+            .map_err(st)?
+            .collect::<rusqlite::Result<_>>()
+            .map_err(st)?;
+        Ok(rows)
+    }
+
+    fn update_effort_calibration(
+        &self,
+        item: &WorkItemId,
+        predicted_secs: f64,
+        cohort_key: &str,
+        size_bucket: &str,
+        change_type: &str,
+    ) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE effort SET predicted_secs = ?2, cohort_key = ?3, size_bucket = ?4, change_type = ?5 \
+             WHERE item_id = ?1",
+            params![item.0, predicted_secs, cohort_key, size_bucket, change_type],
+        )
+        .map_err(st)?;
+        Ok(())
+    }
+
+    fn list_cohort_samples(&self) -> Result<Vec<CohortSample>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn
+            .prepare(
+                "SELECT COALESCE(e.cohort_key, ''), e.difficulty, e.actual_secs, w.merged_at \
+                 FROM effort e \
+                 JOIN work_items w ON w.id = e.item_id \
+                 WHERE w.kind = 'pr' AND e.actual_secs IS NOT NULL AND w.merged_at IS NOT NULL",
+            )
+            .map_err(st)?;
+        let rows = stmt
+            .query_map([], |r| {
+                Ok(CohortSample {
+                    cohort_key: r.get(0)?,
+                    difficulty: r.get(1)?,
+                    actual_secs: r.get(2)?,
+                    merged_at: r.get(3)?,
+                })
+            })
+            .map_err(st)?
+            .collect::<rusqlite::Result<_>>()
+            .map_err(st)?;
+        Ok(rows)
+    }
+
+    fn list_exemplars(&self, cohort_key: &str, limit: u32) -> Result<Vec<Exemplar>> {
+        // Go's `ListExemplars` selects everything matching then re-sorts by
+        // recency and caps in application code, because its Postgres query
+        // needs `DISTINCT ON (pr_id)` to pick one estimate per PR first.
+        // Rust's `effort` table is already one row per work item (wave 0's
+        // schema choice), so there is nothing to de-duplicate — the ORDER BY
+        // + LIMIT can run in SQL directly for the same end result.
+        let limit = if limit == 0 { 3 } else { limit };
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn
+            .prepare(
+                "SELECT COALESCE(w.title, ''), e.difficulty, e.predicted_secs, e.actual_secs \
+                 FROM effort e \
+                 JOIN work_items w ON w.id = e.item_id \
+                 WHERE w.kind = 'pr' AND e.cohort_key = ?1 \
+                   AND e.actual_secs IS NOT NULL AND e.predicted_secs IS NOT NULL \
+                 ORDER BY w.merged_at DESC LIMIT ?2",
+            )
+            .map_err(st)?;
+        let rows = stmt
+            .query_map(params![cohort_key, limit], |r| {
+                Ok(Exemplar {
+                    title: r.get(0)?,
+                    difficulty: r.get(1)?,
+                    predicted_secs: r.get(2)?,
+                    actual_secs: r.get(3)?,
+                })
+            })
+            .map_err(st)?
+            .collect::<rusqlite::Result<_>>()
+            .map_err(st)?;
+        Ok(rows)
+    }
 }
 
 /// The `kv` key holding this node's sync secret seed (hex).
@@ -2206,6 +2495,41 @@ fn map_agent_run(r: &rusqlite::Row) -> rusqlite::Result<AgentRun> {
         cost_usd: r.get(12)?,
         created_at: r.get(13)?,
     })
+}
+
+const CALIBRATION_COLS: &str =
+    "cohort_key, difficulty_bucket, median_secs, p25_secs, p75_secs, mean_secs, n, updated_at";
+
+fn map_calibration_cell(r: &rusqlite::Row) -> rusqlite::Result<CalibrationCell> {
+    Ok(CalibrationCell {
+        cohort_key: r.get(0)?,
+        difficulty_bucket: r.get(1)?,
+        median_secs: r.get(2)?,
+        p25_secs: r.get(3)?,
+        p75_secs: r.get(4)?,
+        mean_secs: r.get(5)?,
+        n: r.get(6)?,
+        updated_at: r.get(7)?,
+    })
+}
+
+/// Whole-second lead time from `created_at` to `merged_at` (both RFC3339).
+/// `None` on an unparseable timestamp or a merge that precedes creation
+/// (clock skew) — mirrors `gitstate_core::analytics::cycle_times`'s same
+/// "drop rather than emit a negative point" rule, kept in seconds instead of
+/// routing through that function's `f64` hours (see `recompute.rs`'s module
+/// doc in `gitstate-calibrate` for why staying in integer seconds avoids a
+/// needless float round-trip for a value this store persists as an integer).
+fn lead_time_secs(created_at: &str, merged_at: &str) -> Option<i64> {
+    use time::format_description::well_known::Rfc3339;
+    let a = time::OffsetDateTime::parse(created_at, &Rfc3339).ok()?;
+    let b = time::OffsetDateTime::parse(merged_at, &Rfc3339).ok()?;
+    let secs = (b - a).whole_seconds();
+    if secs < 0 {
+        None
+    } else {
+        Some(secs)
+    }
 }
 
 #[cfg(test)]
@@ -3194,5 +3518,254 @@ mod tests {
         assert_eq!(all[0].id, run.id);
         assert_eq!(all[0].repo_id, None, "repo_id nulled by ON DELETE SET NULL");
         assert_eq!(all[0].pr_id, None, "pr_id nulled by ON DELETE SET NULL");
+    }
+
+    // ── effort calibration (T11 port plan, wave 2) ──
+
+    fn cell(cohort_key: &str, bucket: i64, median: i64, n: i64) -> CalibrationCell {
+        CalibrationCell {
+            cohort_key: cohort_key.into(),
+            difficulty_bucket: bucket,
+            median_secs: median,
+            p25_secs: median - 100,
+            p75_secs: median + 100,
+            mean_secs: median,
+            n,
+            updated_at: now_rfc3339(),
+        }
+    }
+
+    #[test]
+    fn calibration_cell_upsert_get_and_list_roundtrip() {
+        let s = store();
+        s.upsert_calibration_cell(&cell("repo:r1", 5, 1000, 3))
+            .unwrap();
+        s.upsert_calibration_cell(&cell("global", 5, 2000, 10))
+            .unwrap();
+        s.upsert_calibration_cell(&cell("global", 3, 500, 4))
+            .unwrap();
+
+        // get_calibration_cells narrows by bucket AND the requested key set —
+        // a key present at a DIFFERENT bucket must not leak in.
+        let got = s
+            .get_calibration_cells(&["repo:r1".to_string(), "global".to_string()], 5)
+            .unwrap();
+        assert_eq!(got.len(), 2);
+        assert_eq!(got["repo:r1"].median_secs, 1000);
+        assert_eq!(got["repo:r1"].n, 3);
+        assert_eq!(got["global"].median_secs, 2000);
+
+        // A key not asked for is absent, not an error.
+        let narrow = s
+            .get_calibration_cells(&["repo:r1".to_string()], 5)
+            .unwrap();
+        assert_eq!(narrow.len(), 1);
+        assert!(!narrow.contains_key("global"));
+
+        // Re-upserting the SAME (cohort_key, difficulty_bucket) replaces the
+        // cell in place rather than duplicating it.
+        s.upsert_calibration_cell(&cell("repo:r1", 5, 1234, 9))
+            .unwrap();
+        let updated = s
+            .get_calibration_cells(&["repo:r1".to_string()], 5)
+            .unwrap();
+        assert_eq!(updated["repo:r1"].median_secs, 1234);
+        assert_eq!(updated["repo:r1"].n, 9);
+
+        let all = s.list_calibration().unwrap();
+        assert_eq!(all.len(), 3, "one row per distinct (cohort_key, bucket)");
+        // ORDER BY cohort_key, difficulty_bucket: "global" sorts before "repo:r1".
+        assert_eq!(all[0].cohort_key, "global");
+        assert_eq!(all[0].difficulty_bucket, 3);
+        assert_eq!(all[1].cohort_key, "global");
+        assert_eq!(all[1].difficulty_bucket, 5);
+        assert_eq!(all[2].cohort_key, "repo:r1");
+    }
+
+    #[test]
+    fn accuracy_upsert_and_list_roundtrip() {
+        let s = store();
+        s.upsert_accuracy(&AccuracyRow {
+            cohort_key: "repo:r1".into(),
+            n: 3,
+            mae_secs: 400,
+            bias_ratio: 1.1,
+            updated_at: now_rfc3339(),
+        })
+        .unwrap();
+        s.upsert_accuracy(&AccuracyRow {
+            cohort_key: "global".into(),
+            n: 10,
+            mae_secs: 900,
+            bias_ratio: 0.9,
+            updated_at: now_rfc3339(),
+        })
+        .unwrap();
+
+        // most-sampled first
+        let all = s.list_accuracy().unwrap();
+        assert_eq!(all.len(), 2);
+        assert_eq!(all[0].cohort_key, "global");
+        assert_eq!(all[0].n, 10);
+        assert_eq!(all[1].cohort_key, "repo:r1");
+
+        // Re-upserting the same cohort replaces it, not duplicates it.
+        s.upsert_accuracy(&AccuracyRow {
+            cohort_key: "repo:r1".into(),
+            n: 5,
+            mae_secs: 300,
+            bias_ratio: 1.05,
+            updated_at: now_rfc3339(),
+        })
+        .unwrap();
+        let all2 = s.list_accuracy().unwrap();
+        assert_eq!(all2.len(), 2);
+        let r1 = all2.iter().find(|r| r.cohort_key == "repo:r1").unwrap();
+        assert_eq!(r1.n, 5);
+        assert_eq!(r1.mae_secs, 300);
+    }
+
+    /// A merged PR + its effort row, wired up through `update_effort_calibration`
+    /// and `backfill_actual_secs` — the write path `list_cohort_samples`,
+    /// `list_estimate_outcomes`, and `list_exemplars` all read from.
+    fn merged_pr_with_effort(
+        s: &SqliteStore,
+        repo: &RepoId,
+        id: &str,
+        title: &str,
+        created_at: &str,
+        merged_at: &str,
+        difficulty: f64,
+    ) -> WorkItemId {
+        let wid = WorkItemId(id.into());
+        s.save_work_items(&[WorkItem {
+            id: wid.clone(),
+            repo_id: repo.clone(),
+            kind: WorkKind::Pr,
+            external_ref: format!("#{id}"),
+            title: title.into(),
+            body: String::new(),
+            state: WorkState::Merged,
+            author_login: None,
+            labels: vec![],
+            created_at: created_at.into(),
+            updated_at: merged_at.into(),
+            merged_at: Some(merged_at.into()),
+            closed_at: Some(merged_at.into()),
+            files_touched: vec![],
+        }])
+        .unwrap();
+        s.save_effort(&[EffortEstimate {
+            item_id: wid.clone(),
+            difficulty,
+            method: EffortMethod::Heuristic,
+            rationale: "t".into(),
+            confidence: 0.5,
+        }])
+        .unwrap();
+        wid
+    }
+
+    #[test]
+    fn backfill_update_and_outcome_reads_roundtrip() {
+        let s = store();
+        let repo = seed_repo(&s, "r1");
+        let item = merged_pr_with_effort(
+            &s,
+            &repo,
+            "pr1",
+            "fix the thing",
+            "2026-01-01T00:00:00Z",
+            "2026-01-01T00:16:40Z", // +1000s
+            5.0,
+        );
+
+        // Before backfill, actual_secs is NULL, so this item is invisible to
+        // both read paths (they require a non-null actual_secs).
+        assert!(s.list_cohort_samples().unwrap().is_empty());
+        assert!(s.list_estimate_outcomes().unwrap().is_empty());
+
+        let n = s.backfill_actual_secs().unwrap();
+        assert_eq!(n, 1);
+        // Idempotent: nothing changed, so a second call updates zero rows.
+        assert_eq!(s.backfill_actual_secs().unwrap(), 0);
+
+        // cohort_key/predicted_secs still unset until update_effort_calibration runs.
+        let samples = s.list_cohort_samples().unwrap();
+        assert_eq!(samples.len(), 1);
+        assert_eq!(
+            samples[0].cohort_key, "",
+            "unset cohort_key reads as empty string"
+        );
+        assert_eq!(samples[0].actual_secs, 1000);
+        assert_eq!(samples[0].difficulty, 5.0);
+
+        s.update_effort_calibration(&item, 1200.0, "repo:r1", "s", "fix")
+            .unwrap();
+
+        let outcomes = s.list_estimate_outcomes().unwrap();
+        assert_eq!(outcomes.len(), 1);
+        assert_eq!(outcomes[0].item_id, item);
+        assert_eq!(outcomes[0].cohort_key, "repo:r1");
+        assert_eq!(outcomes[0].predicted_secs, Some(1200.0));
+        assert_eq!(outcomes[0].actual_secs, Some(1000));
+
+        let samples2 = s.list_cohort_samples().unwrap();
+        assert_eq!(samples2[0].cohort_key, "repo:r1");
+    }
+
+    #[test]
+    fn list_exemplars_orders_newest_first_and_caps_at_limit() {
+        let s = store();
+        let repo = seed_repo(&s, "r1");
+        // Three merged PRs in the same cohort, merged at three different times.
+        let old = merged_pr_with_effort(
+            &s,
+            &repo,
+            "pr-old",
+            "oldest",
+            "2026-01-01T00:00:00Z",
+            "2026-01-01T01:00:00Z",
+            3.0,
+        );
+        let mid = merged_pr_with_effort(
+            &s,
+            &repo,
+            "pr-mid",
+            "middle",
+            "2026-02-01T00:00:00Z",
+            "2026-02-01T01:00:00Z",
+            3.0,
+        );
+        let new = merged_pr_with_effort(
+            &s,
+            &repo,
+            "pr-new",
+            "newest",
+            "2026-03-01T00:00:00Z",
+            "2026-03-01T01:00:00Z",
+            3.0,
+        );
+        for id in [&old, &mid, &new] {
+            s.update_effort_calibration(id, 1000.0, "repo:r1", "s", "feature")
+                .unwrap();
+        }
+        s.backfill_actual_secs().unwrap();
+
+        // No cohort_key match => empty, not an error.
+        assert!(s.list_exemplars("repo:nonexistent", 10).unwrap().is_empty());
+
+        let all = s.list_exemplars("repo:r1", 10).unwrap();
+        assert_eq!(all.len(), 3);
+        assert_eq!(all[0].title, "newest");
+        assert_eq!(all[1].title, "middle");
+        assert_eq!(all[2].title, "oldest");
+
+        // limit=0 defaults to 3 (mirrors the Go store's default), and an
+        // explicit smaller limit caps the result.
+        let capped = s.list_exemplars("repo:r1", 2).unwrap();
+        assert_eq!(capped.len(), 2);
+        assert_eq!(capped[0].title, "newest");
+        assert_eq!(capped[1].title, "middle");
     }
 }
