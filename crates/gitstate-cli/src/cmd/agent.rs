@@ -1,8 +1,9 @@
-//! `gitstate agent log-run | runs | whoami` — the agent-native surface Go's
-//! `gittrack` shipped as a standalone binary (`log-run`/`runs`/`whoami`), now
-//! folded into `gitstate-cli` (T11 port plan, wave 1). `gittrack context`/
-//! `pr`/`issues` are NOT here: those are the `context_bundle` domain, a later
-//! wave — this file only carries what `store/agent_runs.go` covers.
+//! `gitstate agent log-run | runs | whoami | context | pr` — the agent-native
+//! surface Go's `gittrack` shipped as a standalone binary, now folded into
+//! `gitstate-cli` (T11 port plan). `log-run`/`runs`/`whoami` landed in wave 1
+//! (`store/agent_runs.go`); `context`/`pr` land here in wave 3
+//! (`store/context_bundle.go`) — `gittrack issues` is not ported (it lists
+//! plain work items, a different, already-covered surface, not this domain).
 //!
 //! Like every other `gitstate` subcommand, these call `gitstate_daemon::ops`
 //! directly against the local SQLite file — no HTTP, no token. `gittrack` was
@@ -10,10 +11,15 @@
 //! server over `GITSTATE_URL`/`GITSTATE_TOKEN`; there is no separate server
 //! to reach here, so there is nothing left for a bearer token to gate. See
 //! `whoami` below for what replaces token validation in a single-user app.
+//!
+//! `context`/`pr` deliberately sit under `agent`, not as new top-level
+//! commands: `gitstate context` already names the CRDT saved-working-set
+//! feature (T8) — same word, unrelated feature — so `gitstate agent context
+//! <issue-id>` avoids the collision while keeping Go's own wording.
 
 use clap::Subcommand;
 
-use gitstate_core::AgentDiffSummary;
+use gitstate_core::{AgentDiffSummary, EstimateBrief, IssueContextBundle, PrContextBundle};
 use gitstate_daemon::dto::{AgentRunQuery, NewAgentRun};
 use gitstate_daemon::ops;
 
@@ -88,6 +94,22 @@ pub enum AgentCmd {
     /// agent host can tell at a glance whether it would need a bearer token
     /// if it ever spoke to this daemon over HTTP instead of in-process.
     Whoami,
+    /// Fetch the curated context bundle for an issue: the issue itself,
+    /// related PRs, recent commits, historically-touched code areas, a
+    /// calibrated effort estimate, and similar past issues — trimmed to fit
+    /// an agent's context window (`store/context_bundle.go`'s
+    /// `BuildIssueContext`, ported T11 wave 3).
+    Context {
+        /// The issue's id (see `gitstate repo <id> ...` output, or a forge sync).
+        issue_id: String,
+    },
+    /// Fetch the curated context bundle for a pull request: diff shape,
+    /// cycle time, and a calibrated effort estimate (`store/context_bundle.go`'s
+    /// `BuildPRContext`, ported T11 wave 3).
+    Pr {
+        /// The PR's id.
+        id: String,
+    },
 }
 
 pub async fn run(ctx: &Ctx, cmd: AgentCmd) -> anyhow::Result<()> {
@@ -199,8 +221,191 @@ pub async fn run(ctx: &Ctx, cmd: AgentCmd) -> anyhow::Result<()> {
                 println!("admin_auth  {posture}");
             }
         }
+        AgentCmd::Context { issue_id } => {
+            let bundle = ops::build_issue_context(&state, &issue_id.into())?;
+            if ctx.json {
+                ctx.print_json(&bundle)?;
+            } else {
+                print_issue_context(&bundle);
+            }
+        }
+        AgentCmd::Pr { id } => {
+            let bundle = ops::build_pr_context(&state, &id.into())?;
+            if ctx.json {
+                ctx.print_json(&bundle)?;
+            } else {
+                print_pr_context(&bundle);
+            }
+        }
     }
     Ok(())
+}
+
+/// A stable "#N" label, falling back to the bare id for a native item with no
+/// platform number. Mirrors `gittrack`'s `issueRef`.
+fn issue_ref(number: Option<i64>, id: &str) -> String {
+    match number {
+        Some(n) if n > 0 => format!("#{n}"),
+        _ => id.to_string(),
+    }
+}
+
+/// Renders a seconds count as a compact human duration (e.g. "2d 3h").
+/// Mirrors `gittrack`'s `fmtDuration`; zero/negative renders as "—" (usually
+/// "not yet measurable", e.g. an unmerged PR has no lead time).
+fn fmt_duration(secs: i64) -> String {
+    if secs <= 0 {
+        return "—".to_string();
+    }
+    let days = secs / 86400;
+    let rem = secs % 86400;
+    let hours = rem / 3600;
+    let mins = (rem % 3600) / 60;
+
+    let mut parts = Vec::new();
+    if days > 0 {
+        parts.push(format!("{days}d"));
+    }
+    if hours > 0 {
+        parts.push(format!("{hours}h"));
+    }
+    if mins > 0 && days == 0 {
+        parts.push(format!("{mins}m"));
+    }
+    if parts.is_empty() {
+        format!("{secs}s")
+    } else {
+        parts.join(" ")
+    }
+}
+
+fn print_estimate(est: &EstimateBrief) {
+    print!("estimate: difficulty {:.1}", est.difficulty);
+    if let Some(secs) = est.predicted_secs {
+        print!("  ~{}", fmt_duration(secs.round() as i64));
+    }
+    match (&est.size_bucket, &est.change_type) {
+        (Some(sb), Some(ct)) if !sb.is_empty() || !ct.is_empty() => print!("  ({sb} {ct})"),
+        _ => {}
+    }
+    println!();
+}
+
+/// Renders the human-readable issue bundle summary. Mirrors `gittrack`'s
+/// `renderIssueContext`.
+fn print_issue_context(b: &IssueContextBundle) {
+    let iss = &b.issue;
+    println!("{}  {}", issue_ref(iss.number, &iss.id.0), iss.title);
+
+    print!("state: {}", iss.state);
+    if !iss.labels.is_empty() {
+        print!("   labels: {}", iss.labels.join(", "));
+    }
+    println!();
+
+    if !iss.body.trim().is_empty() {
+        println!("\n{}", iss.body.trim());
+    }
+
+    if let Some(est) = &b.estimate {
+        println!();
+        print_estimate(est);
+    }
+
+    if !b.related_prs.is_empty() {
+        println!("\nRelated PRs ({}):", b.related_prs.len());
+        for pr in &b.related_prs {
+            let merged = if pr.merged {
+                format!(
+                    " merged in {}",
+                    pr.lead_time_secs
+                        .map(fmt_duration)
+                        .unwrap_or_else(|| "—".into())
+                )
+            } else {
+                String::new()
+            };
+            println!(
+                "  {} [{}]{}  {}",
+                issue_ref(pr.number, &pr.id.0),
+                pr.state,
+                merged,
+                pr.title
+            );
+        }
+    }
+
+    if !b.recent_commits.is_empty() {
+        println!("\nRecent commits ({}):", b.recent_commits.len());
+        for c in &b.recent_commits {
+            let agent = if c.is_agent { "  [agent]" } else { "" };
+            println!("  {:<10} {}{}", c.sha, c.subject, agent);
+        }
+    }
+
+    if !b.code_areas.is_empty() {
+        println!("\nHistorically-touched areas ({}):", b.code_areas.len());
+        for a in &b.code_areas {
+            println!("  {a}");
+        }
+    }
+
+    if !b.similar_issues.is_empty() {
+        println!("\nSimilar past issues ({}):", b.similar_issues.len());
+        for s in &b.similar_issues {
+            println!(
+                "  {} [{}] {}",
+                issue_ref(s.number, &s.id.0),
+                s.state,
+                s.title
+            );
+            if let Some(pr) = &s.resolved_by_pr {
+                println!(
+                    "      resolved by {} [{}]",
+                    issue_ref(pr.number, &pr.id.0),
+                    pr.state
+                );
+            }
+        }
+    }
+}
+
+/// Renders the human-readable PR bundle summary. Mirrors `gittrack`'s
+/// `renderPRContext`.
+fn print_pr_context(b: &PrContextBundle) {
+    let pr = &b.pr;
+    println!("{}  {}", issue_ref(pr.number, &pr.id.0), pr.title);
+
+    let state = if pr.merged {
+        format!("{} (merged)", pr.state)
+    } else {
+        pr.state.clone()
+    };
+    print!("state: {state}");
+    if let Some(a) = &pr.author_login {
+        print!("   author: {a}");
+    }
+    let d = &b.diff_summary;
+    println!(
+        "   +{}/-{} across {} files",
+        d.additions, d.deletions, d.changed_files
+    );
+
+    match b.cycle_time_secs {
+        Some(secs) => print!("cycle time: {}", fmt_duration(secs)),
+        None => print!("cycle time: —"),
+    }
+    if let Some(est) = &b.estimate {
+        if let Some(secs) = est.predicted_secs {
+            print!("   estimated effort: {}", fmt_duration(secs.round() as i64));
+            if let Some(sb) = &est.size_bucket {
+                if !sb.is_empty() {
+                    print!(" ({sb})");
+                }
+            }
+        }
+    }
+    println!();
 }
 
 /// Human-readable form of the daemon's management-API posture (never reveals
