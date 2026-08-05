@@ -9,12 +9,13 @@
 use crate::migrations;
 use crate::schema::*;
 use gitstate_core::{
-    ids::now_rfc3339, CatField, Category, CategorySource, Classification, Commit, Context,
-    ContextPrRef, Contribution, Contributor, CtxField, DimensionRaw, Dimensions, EffortEstimate,
-    EffortMethod, Error, Forge, Hlc, PeerId, ProjectState, Repo, Result, Store, SyncOp, WorkItem,
-    WorkKind, WorkState, HLC_SKEW_MS,
+    ids::now_rfc3339, AgentDiffSummary, AgentRun, AgentRunFilter, CatField, Category,
+    CategorySource, Classification, Commit, Context, ContextPrRef, Contribution, Contributor,
+    CtxField, DimensionRaw, Dimensions, EffortEstimate, EffortMethod, Error, Forge, HumanAction,
+    Hlc, PeerId, ProjectState, Repo, Result, Store, SyncOp, WorkItem, WorkKind, WorkState,
+    AGENT_RUN_DEFAULT_LIMIT, AGENT_RUN_MAX_LIMIT, HLC_SKEW_MS,
 };
-use gitstate_core::{CategoryId, ContextId, ContributorId, RepoId, WorkItemId};
+use gitstate_core::{AgentRunId, CategoryId, ContextId, ContributorId, RepoId, WorkItemId};
 use gitstate_core::{NodeIdentity, SignedOp, SyncPeer};
 use rusqlite::{params, Connection, OptionalExtension};
 use std::path::{Path, PathBuf};
@@ -2089,6 +2090,80 @@ impl Store for SqliteStore {
         .map_err(st)?;
         Ok(())
     }
+
+    fn create_agent_run(&self, run: &AgentRun) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO agent_runs
+                (id, repo_id, pr_id, issue_id, supervisor_id, goal, agent_name, branch,
+                 diff_summary, tests_passed, human_action, iterations, cost_usd, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+            params![
+                run.id.0,
+                run.repo_id.as_ref().map(|r| r.0.as_str()),
+                run.pr_id.as_ref().map(|w| w.0.as_str()),
+                run.issue_id.as_ref().map(|w| w.0.as_str()),
+                run.supervisor_id,
+                run.goal,
+                run.agent_name,
+                run.branch,
+                json_str(&run.diff_summary),
+                run.tests_passed,
+                run.human_action.map(|a| a.as_str()),
+                run.iterations,
+                run.cost_usd,
+                run.created_at,
+            ],
+        )
+        .map_err(st)?;
+        Ok(())
+    }
+
+    fn list_agent_runs(&self, filter: &AgentRunFilter) -> Result<Vec<AgentRun>> {
+        let conn = self.conn.lock().unwrap();
+
+        // Mirrors the Go store's clamp: an absent/zero limit gets the default,
+        // and no caller — however it asks — can make this materialize more
+        // than AGENT_RUN_MAX_LIMIT rows in one response.
+        let limit: u32 = filter
+            .limit
+            .filter(|&n| n > 0)
+            .unwrap_or(AGENT_RUN_DEFAULT_LIMIT)
+            .min(AGENT_RUN_MAX_LIMIT);
+
+        let mut where_sql = String::from("1 = 1");
+        let mut args: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+        if let Some(r) = &filter.repo_id {
+            where_sql.push_str(" AND repo_id = ?");
+            args.push(Box::new(r.0.clone()));
+        }
+        if let Some(pr) = &filter.pr_id {
+            where_sql.push_str(" AND pr_id = ?");
+            args.push(Box::new(pr.0.clone()));
+        }
+        if let Some(issue) = &filter.issue_id {
+            where_sql.push_str(" AND issue_id = ?");
+            args.push(Box::new(issue.0.clone()));
+        }
+        if let Some(agent) = filter.agent_name.as_deref().filter(|a| !a.is_empty()) {
+            where_sql.push_str(" AND agent_name = ?");
+            args.push(Box::new(agent.to_string()));
+        }
+        args.push(Box::new(limit));
+
+        let sql = format!(
+            "SELECT {AGENT_RUN_COLS} FROM agent_runs WHERE {where_sql} \
+             ORDER BY created_at DESC, id DESC LIMIT ?"
+        );
+        let mut stmt = conn.prepare(&sql).map_err(st)?;
+        let params_ref: Vec<&dyn rusqlite::ToSql> = args.iter().map(|b| b.as_ref()).collect();
+        let rows = stmt
+            .query_map(params_ref.as_slice(), map_agent_run)
+            .map_err(st)?
+            .collect::<rusqlite::Result<_>>()
+            .map_err(st)?;
+        Ok(rows)
+    }
 }
 
 /// The `kv` key holding this node's sync secret seed (hex).
@@ -2103,6 +2178,33 @@ fn map_sync_peer(r: &rusqlite::Row) -> rusqlite::Result<SyncPeer> {
         label: r.get(3)?,
         added_at: r.get(4)?,
         last_pull_hlc: cursor.and_then(|s| Hlc::decode(&s).ok()),
+    })
+}
+
+const AGENT_RUN_COLS: &str = "id, repo_id, pr_id, issue_id, supervisor_id, goal, agent_name, \
+    branch, diff_summary, tests_passed, human_action, iterations, cost_usd, created_at";
+
+fn map_agent_run(r: &rusqlite::Row) -> rusqlite::Result<AgentRun> {
+    let diff_raw: String = r.get(8)?;
+    let human_action_raw: Option<String> = r.get(10)?;
+    Ok(AgentRun {
+        id: AgentRunId(r.get(0)?),
+        repo_id: r.get::<_, Option<String>>(1)?.map(RepoId),
+        pr_id: r.get::<_, Option<String>>(2)?.map(WorkItemId),
+        issue_id: r.get::<_, Option<String>>(3)?.map(WorkItemId),
+        supervisor_id: r.get(4)?,
+        goal: r.get(5)?,
+        agent_name: r.get(6)?,
+        branch: r.get(7)?,
+        diff_summary: parse_json::<AgentDiffSummary>(&diff_raw),
+        tests_passed: r.get(9)?,
+        // An unrecognised value (should never happen — only `create_agent_run`
+        // via the validated `HumanAction` writes this column) degrades to
+        // "no verdict" rather than failing the whole row's read.
+        human_action: human_action_raw.and_then(|s| HumanAction::parse(&s).ok()),
+        iterations: r.get(11)?,
+        cost_usd: r.get(12)?,
+        created_at: r.get(13)?,
     })
 }
 
@@ -2754,6 +2856,30 @@ mod tests {
         rid
     }
 
+    /// A minimal `WorkItem` (PR or issue), inserted so agent_runs' `pr_id`/
+    /// `issue_id` FKs are satisfiable.
+    fn seed_work_item(s: &SqliteStore, repo: &RepoId, id: &str, kind: WorkKind) -> WorkItemId {
+        let wid = WorkItemId(id.into());
+        s.save_work_items(&[WorkItem {
+            id: wid.clone(),
+            repo_id: repo.clone(),
+            kind,
+            external_ref: format!("#{id}"),
+            title: "t".into(),
+            body: String::new(),
+            state: WorkState::Open,
+            author_login: None,
+            labels: vec![],
+            created_at: now_rfc3339(),
+            updated_at: now_rfc3339(),
+            merged_at: None,
+            closed_at: None,
+            files_touched: vec![],
+        }])
+        .unwrap();
+        wid
+    }
+
     fn commit_at(repo: &RepoId, sha: &str, at: &str) -> Commit {
         Commit {
             sha: sha.into(),
@@ -2877,5 +3003,196 @@ mod tests {
         let w = Weights::default_weights().normalized();
         let sum = w.shipped + w.review + w.effort + w.quality + w.ownership + w.durability;
         assert!((sum - 1.0).abs() < 1e-9);
+    }
+
+    // ── agent runs ──
+
+    fn agent_run(id: &str, created_at: &str) -> AgentRun {
+        AgentRun {
+            id: AgentRunId(id.into()),
+            repo_id: None,
+            pr_id: None,
+            issue_id: None,
+            supervisor_id: None,
+            goal: format!("goal for {id}"),
+            agent_name: None,
+            branch: None,
+            diff_summary: AgentDiffSummary::default(),
+            tests_passed: None,
+            human_action: None,
+            iterations: None,
+            cost_usd: None,
+            created_at: created_at.into(),
+        }
+    }
+
+    #[test]
+    fn agent_run_create_and_list_roundtrip() {
+        let s = store();
+        let repo = seed_repo(&s, "r1");
+        let pr = seed_work_item(&s, &repo, "pr1", WorkKind::Pr);
+        let issue = seed_work_item(&s, &repo, "issue1", WorkKind::Issue);
+
+        let mut run1 = agent_run("run1", "2026-06-01T00:00:01Z");
+        run1.repo_id = Some(repo.clone());
+        run1.pr_id = Some(pr.clone());
+        run1.issue_id = Some(issue.clone());
+        run1.supervisor_id = Some("alice".into());
+        run1.goal = "fix the login bug".into();
+        run1.agent_name = Some("claude-code".into());
+        run1.branch = Some("fix/login".into());
+        run1.diff_summary = AgentDiffSummary {
+            additions: 12,
+            deletions: 3,
+            changed_files: 2,
+        };
+        run1.tests_passed = Some(true);
+        run1.human_action = Some(HumanAction::Accepted);
+        run1.iterations = Some(3);
+        run1.cost_usd = Some(0.42);
+        s.create_agent_run(&run1).unwrap();
+
+        let mut run2 = agent_run("run2", "2026-06-01T00:00:02Z");
+        run2.agent_name = Some("cursor".into());
+        s.create_agent_run(&run2).unwrap();
+
+        // ── list all: both rows, newest-first. ──
+        let all = s.list_agent_runs(&AgentRunFilter::default()).unwrap();
+        assert_eq!(all.len(), 2);
+        assert_eq!(all[0].id, run2.id, "run2 has the later created_at");
+        assert_eq!(all[1].id, run1.id);
+
+        // ── round-trip fidelity on the fully-populated row. ──
+        let got1 = all.iter().find(|r| r.id == run1.id).unwrap();
+        assert_eq!(got1.repo_id, Some(repo.clone()));
+        assert_eq!(got1.pr_id, Some(pr.clone()));
+        assert_eq!(got1.issue_id, Some(issue.clone()));
+        assert_eq!(got1.supervisor_id.as_deref(), Some("alice"));
+        assert_eq!(got1.diff_summary.additions, 12);
+        assert_eq!(got1.diff_summary.deletions, 3);
+        assert_eq!(got1.diff_summary.changed_files, 2);
+        assert_eq!(got1.tests_passed, Some(true));
+        assert_eq!(got1.human_action, Some(HumanAction::Accepted));
+        assert_eq!(got1.iterations, Some(3));
+        assert_eq!(got1.cost_usd, Some(0.42));
+
+        // ── the minimal row round-trips its absences as `None`, not zeros. ──
+        let got2 = all.iter().find(|r| r.id == run2.id).unwrap();
+        assert_eq!(got2.repo_id, None);
+        assert_eq!(got2.pr_id, None);
+        assert_eq!(got2.human_action, None);
+        assert_eq!(got2.tests_passed, None);
+        assert_eq!(got2.cost_usd, None);
+        assert_eq!(got2.diff_summary, AgentDiffSummary::default());
+
+        // ── filters ──
+        let by_repo = s
+            .list_agent_runs(&AgentRunFilter {
+                repo_id: Some(repo.clone()),
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(by_repo.len(), 1);
+        assert_eq!(by_repo[0].id, run1.id);
+
+        let by_pr = s
+            .list_agent_runs(&AgentRunFilter {
+                pr_id: Some(pr.clone()),
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(by_pr.len(), 1);
+        assert_eq!(by_pr[0].id, run1.id);
+
+        let by_issue = s
+            .list_agent_runs(&AgentRunFilter {
+                issue_id: Some(issue.clone()),
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(by_issue.len(), 1);
+        assert_eq!(by_issue[0].id, run1.id);
+
+        let by_agent = s
+            .list_agent_runs(&AgentRunFilter {
+                agent_name: Some("cursor".into()),
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(by_agent.len(), 1);
+        assert_eq!(by_agent[0].id, run2.id);
+
+        // an agent name nobody logged under matches nothing, not everything.
+        let by_unknown_agent = s
+            .list_agent_runs(&AgentRunFilter {
+                agent_name: Some("nonesuch".into()),
+                ..Default::default()
+            })
+            .unwrap();
+        assert!(by_unknown_agent.is_empty());
+    }
+
+    #[test]
+    fn agent_run_list_defaults_and_caps_the_limit() {
+        let s = store();
+        // AGENT_RUN_MAX_LIMIT + 5 rows with strictly increasing created_at, so
+        // "newest N" is unambiguous both for the default and for the cap.
+        let total = AGENT_RUN_MAX_LIMIT + 5;
+        for i in 0..total {
+            let created_at = format!("2026-06-01T00:{:02}:{:02}Z", i / 60, i % 60);
+            s.create_agent_run(&agent_run(&format!("run{i}"), &created_at))
+                .unwrap();
+        }
+
+        // No limit set at all ⇒ AGENT_RUN_DEFAULT_LIMIT, not the max.
+        let default = s.list_agent_runs(&AgentRunFilter::default()).unwrap();
+        assert_eq!(default.len(), AGENT_RUN_DEFAULT_LIMIT as usize);
+        // Newest-first: the very last row created (run{total-1}) leads.
+        assert_eq!(default[0].id.0, format!("run{}", total - 1));
+
+        // An explicit limit narrower than the default is honoured exactly.
+        let narrow = s
+            .list_agent_runs(&AgentRunFilter {
+                limit: Some(3),
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(narrow.len(), 3);
+
+        // An explicit limit beyond the max is clamped down to it, not honoured
+        // — the whole point of AGENT_RUN_MAX_LIMIT is that no caller, however
+        // it asks, can make this materialize more than that many rows.
+        let over = s
+            .list_agent_runs(&AgentRunFilter {
+                limit: Some(total + 1000),
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(over.len(), AGENT_RUN_MAX_LIMIT as usize);
+    }
+
+    #[test]
+    fn agent_run_survives_its_linked_repo_and_work_item_being_deleted() {
+        let s = store();
+        let repo = seed_repo(&s, "r1");
+        let pr = seed_work_item(&s, &repo, "pr1", WorkKind::Pr);
+
+        let mut run = agent_run("run1", now_rfc3339().as_str());
+        run.repo_id = Some(repo.clone());
+        run.pr_id = Some(pr.clone());
+        s.create_agent_run(&run).unwrap();
+
+        // Deleting the repo CASCADEs to its work_items (pr included), which in
+        // turn SET NULLs agent_runs.pr_id; repo_id SET NULLs directly. The run
+        // row itself — the historical fact "an agent worked on this" — must
+        // survive both: deleting what a run once pointed at must not erase
+        // that the run happened.
+        s.delete_repo(&repo).unwrap();
+
+        let all = s.list_agent_runs(&AgentRunFilter::default()).unwrap();
+        assert_eq!(all.len(), 1, "the run row itself must survive");
+        assert_eq!(all[0].id, run.id);
+        assert_eq!(all[0].repo_id, None, "repo_id nulled by ON DELETE SET NULL");
+        assert_eq!(all[0].pr_id, None, "pr_id nulled by ON DELETE SET NULL");
     }
 }
