@@ -26,14 +26,15 @@ pub use analytics::Analytics;
 // The domain vocabulary is re-exported flat so adapter crates can
 // `use gitstate_core::{Repo, WorkItem, ...}`.
 pub use domain::{
-    AuthorSurvival, BugIntroduction, CatField, Category, CategorySource, Classification, Commit,
-    Context, ContextPrRef, Contribution, Contributor, CtxField, DiffSummary, DimensionRaw,
-    Dimensions, EffortEstimate, EffortMethod, Forge, ProjectState, Repo, SyncOp, Weights, WorkItem,
-    WorkKind, WorkState,
+    AgentDiffSummary, AgentRun, AuthorSurvival, BugIntroduction, CatField, Category,
+    CategorySource, Classification, Commit, Context, ContextPrRef, Contribution, Contributor,
+    CtxField, DiffSummary, DimensionRaw, Dimensions, EffortEstimate, EffortMethod, Forge,
+    HumanAction, ProjectState, Repo, SyncOp, Weights, WorkItem, WorkKind, WorkState,
+    AGENT_RUN_DEFAULT_LIMIT, AGENT_RUN_MAX_LIMIT,
 };
 pub use ids::{
-    now_rfc3339, now_wall_ms, CategoryId, ContextId, ContributorId, Hlc, PeerId, RepoId,
-    WorkItemId, HLC_SKEW_MS,
+    now_rfc3339, now_wall_ms, AgentRunId, CategoryId, ContextId, ContributorId, Hlc, PeerId,
+    RepoId, WorkItemId, HLC_SKEW_MS,
 };
 pub use peer::{
     normalize_peer_url, normalize_pubkey, op_preimage, request_token_preimage, response_preimage,
@@ -42,5 +43,6 @@ pub use peer::{
 };
 pub use taxonomy::{Taxonomy, TaxonomyCategory, DEFAULT_TAXONOMY_PUBKEY};
 pub use traits::{
-    Classifier, ClassifierCapability, ForgeClient, MergeOutcome, Store, SyncEngine, SyncStatus,
+    AgentRunFilter, Classifier, ClassifierCapability, ForgeClient, MergeOutcome, Store, SyncEngine,
+    SyncStatus,
 };

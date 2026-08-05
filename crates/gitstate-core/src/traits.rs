@@ -158,6 +158,29 @@ pub trait Store: Send + Sync {
     fn delete_sync_peer(&self, id: &PeerId) -> Result<bool>;
     /// Record how far this node has pulled from a peer.
     fn set_sync_peer_cursor(&self, id: &PeerId, hlc: &Hlc) -> Result<()>;
+
+    // ── agent runs (the AI-agent write path — see `domain::AgentRun`) ──
+    /// Persist one agent run. `run.id` must already be minted by the caller
+    /// (the same convention `upsert_context`/`upsert_category` use) — this is
+    /// insert-only, there is no update path, matching the Go store (a logged
+    /// run is a fact about the past, not a mutable record).
+    fn create_agent_run(&self, run: &AgentRun) -> Result<()>;
+    /// Agent runs newest-first (`created_at` desc, then `id` desc so same-
+    /// instant rows still order deterministically), narrowed by `filter`.
+    /// `filter.limit` defaults to [`crate::domain::AGENT_RUN_DEFAULT_LIMIT`]
+    /// and is capped at [`crate::domain::AGENT_RUN_MAX_LIMIT`].
+    fn list_agent_runs(&self, filter: &AgentRunFilter) -> Result<Vec<AgentRun>>;
+}
+
+/// Optional narrowing for [`Store::list_agent_runs`]. Every field left `None`
+/// means "no filter on that column".
+#[derive(Debug, Clone, Default)]
+pub struct AgentRunFilter {
+    pub repo_id: Option<RepoId>,
+    pub pr_id: Option<WorkItemId>,
+    pub issue_id: Option<WorkItemId>,
+    pub agent_name: Option<String>,
+    pub limit: Option<u32>,
 }
 
 /// The outcome of merging a batch of remote ops.
