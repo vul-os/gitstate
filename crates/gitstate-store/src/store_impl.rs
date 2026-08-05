@@ -3810,10 +3810,7 @@ mod tests {
         assert_eq!(row2.change_type.as_deref(), Some("fix"));
 
         // No effort row at all for an un-judged item.
-        assert!(s
-            .get_effort(&WorkItemId("nope".into()))
-            .unwrap()
-            .is_none());
+        assert!(s.get_effort(&WorkItemId("nope".into())).unwrap().is_none());
     }
 
     #[test]

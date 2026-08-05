@@ -913,6 +913,7 @@ name = "gitstate-daemon"
 version = "0.1.0"
 dependencies = [
  "axum",
+ "gitstate-calibrate",
  "gitstate-classify",
  "gitstate-core",
  "gitstate-forge",

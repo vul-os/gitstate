@@ -16,6 +16,7 @@ axum = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true }
+gitstate-calibrate = { workspace = true }
 gitstate-core = { workspace = true }
 gitstate-git = { workspace = true }
 gitstate-forge = { workspace = true }
