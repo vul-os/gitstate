@@ -767,6 +767,24 @@ mod tests {
     }
 
     #[test]
+    fn lead_time_secs_measures_whole_seconds_and_drops_negatives_or_bad_input() {
+        assert_eq!(
+            lead_time_secs("2026-01-01T00:00:00Z", "2026-01-01T00:16:40Z"),
+            Some(1000)
+        );
+        assert_eq!(
+            lead_time_secs("2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z"),
+            Some(0)
+        );
+        // Merged before created is not measurable, same as `cycle_times`.
+        assert_eq!(
+            lead_time_secs("2026-01-05T00:00:00Z", "2026-01-01T00:00:00Z"),
+            None
+        );
+        assert_eq!(lead_time_secs("not a date", "2026-01-01T00:00:00Z"), None);
+    }
+
+    #[test]
     fn throughput_buckets_by_iso_week() {
         let items = vec![
             pr("#1", "2026-06-01T00:00:00Z", Some("2026-06-03T00:00:00Z")),
