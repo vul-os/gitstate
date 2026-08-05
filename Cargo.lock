@@ -954,6 +954,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "gitstate-search"
+version = "0.1.0"
+dependencies = [
+ "gitstate-core",
+ "gitstate-store",
+]
+
+[[package]]
 name = "gitstate-store"
 version = "0.1.0"
 dependencies = [

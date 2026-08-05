@@ -2563,7 +2563,7 @@ impl Store for SqliteStore {
             out.push(SearchHit {
                 kind,
                 id,
-                number: parse_number(&external_ref),
+                number: gitstate_core::parse_ref_number(&external_ref),
                 title,
                 snippet,
                 rank,
@@ -2653,18 +2653,6 @@ impl Store for SqliteStore {
             .map_err(st)?;
         Ok(rows)
     }
-}
-
-/// Best-effort platform number recovered from an `external_ref` like `"#123"`
-/// or `"!45"`; `None` for no leading digits. A small, deliberate duplicate of
-/// `gitstate_daemon::ops`'s private `bundle_parse_number` — keeping this
-/// store-internal (rather than a shared dependency) avoids `gitstate-store`
-/// taking on a dependency on `gitstate-search` or `gitstate-daemon` just for
-/// one four-line helper.
-fn parse_number(external_ref: &str) -> Option<i64> {
-    let rest = external_ref.trim_start_matches(|c: char| !c.is_ascii_digit());
-    let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
-    digits.parse::<i64>().ok().filter(|n| *n > 0)
 }
 
 /// Turns free user text into a safe FTS5 MATCH expression: lowercase

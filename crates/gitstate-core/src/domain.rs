@@ -908,7 +908,7 @@ pub struct PrChangeShape {
 
 /// Search result entity kinds. Mirrors Go's `SearchTypeIssue`/`SearchTypePR`/
 /// `SearchTypeCommit` string constants as a real enum.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum SearchKind {
     Issue,
@@ -971,4 +971,20 @@ pub struct PendingEmbedding {
     pub id: WorkItemId,
     pub title: String,
     pub body: String,
+}
+
+/// Best-effort platform number recovered from an `external_ref` like
+/// `"#123"` or `"!45"`; `None` for no leading digits. `WorkItem` (wave 0's
+/// schema) stores only the ref string, not a separate numeric column the
+/// way Go's `issues`/`pull_requests` tables did (`docs/PORT-PLAN.md` §3), so
+/// every reader that wants a display number re-derives it from the string.
+/// Shared by `gitstate-store`'s and `gitstate-search`'s search paths, both of
+/// which need this; `gitstate_daemon::ops`'s context_bundle assembly (T11
+/// wave 3) predates this and keeps its own private copy of the same four
+/// lines rather than being refactored onto this one here, out of caution
+/// about touching a prior wave's file for a non-functional dedupe.
+pub fn parse_ref_number(external_ref: &str) -> Option<i64> {
+    let rest = external_ref.trim_start_matches(|c: char| !c.is_ascii_digit());
+    let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+    digits.parse::<i64>().ok().filter(|n| *n > 0)
 }
