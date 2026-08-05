@@ -94,3 +94,89 @@ the real ledger (git), which is exactly the point.
 Progress is tracked phase-by-phase in [ROADMAP.md](../ROADMAP.md) (Phase 4 — *Staged port of the
 legacy Go domains*) and live in [PROGRESS.md](../PROGRESS.md). Each ported domain gets a parity check
 against the Go reference before the Go source is retired.
+
+## T11 closure (2026-08-05) — the final cleanup wave: the Go tree is gone
+
+Wave 6 of 6. With all five remaining domains ported (waves 1–5, above), this wave deleted the Go tree
+in dependency order — leaves inward — committing after every step and using `go build ./...`/
+`go vet ./...` as live proof of deadness at each one (the compiler signal only exists while `go.mod` is
+still present, so it was used for every step but the last).
+
+**Deletion order, and what `go build` proved dead at each step:**
+
+1. `cmd/gittrack` — no importer anywhere in the tree (it was already a standalone client with zero
+   `internal/` imports); its `context`/`pr`/`log-run`/`runs`/`whoami` subcommands were folded into
+   `gitstate-cli` in waves 1 and 3.
+2. `cmd/gitstate-mcp` — same: zero `internal/` imports, superseded by `gitstate-cli mcp`.
+3. `internal/report` — zero remaining importers now that wave 5 shipped `gitstate-report`.
+4. `internal/calibration` — zero remaining importers now that wave 2 shipped `gitstate-calibrate`.
+5. `internal/llm` — **the whole package**, not just the `catalog.go`/`gateway.go` reselling dead
+   weight the 2026-08-04 sweep and `docs/PORT-PLAN.md` flagged. With `internal/report` gone (step 3),
+   `grep` found zero remaining importers of `internal/llm` at all: `complete.go`, `service.go`,
+   `openai.go`, `provider.go`, `org.go` were all dead too, confirmed by `go build` staying clean when
+   the entire package was removed in one commit. The plan's prediction ("that import edge should be
+   gone") held, and held for more of the package than the plan itself scoped.
+6. `internal/store` (whole package, 18,774 lines / 62 files) — zero remaining importers outside the
+   package itself. This is where `store/planning.go` and `internal/crypto`'s droppability were actually
+   tested, not just argued:
+   - **`store/planning.go`** — the plan named it a zero-live-caller drop candidate. Confirmed: it went
+     with the rest of `internal/store` in one commit and `go build ./...` stayed clean. It really was
+     dead, exactly as the plan said, and needed no separate handling.
+   - **`internal/crypto`** — the plan flagged this explicitly as a *judgement*, not a proven zero: its
+     importers (`llm/org.go`, `store/calendar.go`/`connections.go`/`repo_tokens.go`/`llm_settings.go`)
+     were "already-classified SaaS-only files inside packages kept whole", a claim, not a measurement.
+     Tested by deletion, per instruction: `internal/llm` was deleted first (step 5), `internal/store`
+     second (step 6, this one), and only *then* was `internal/crypto` deleted (step 9, below) — by
+     which point `grep` found zero importers and `go build`/`go vet` confirmed it. **The judgement was
+     correct.**
+7. `internal/embed` — zero remaining importers (only ever used by `internal/store`, gone in step 6).
+8. `internal/gitanalysis` — zero remaining importers (only tenant was `store/gitanalysis.go`, gone).
+9. `internal/crypto` — zero remaining importers, per the trap write-up in step 6 above.
+10. `internal/db` — zero remaining importers (every package that used it — `llm`, `calibration`,
+    `report`, `embed` — was already gone).
+11. `internal/config` — zero remaining importers outside its own test files; `internal/` is now empty.
+12. Final commit, all together (so the repo was never in a state referencing a toolchain it lacks):
+    `cmd/migrate`, root `migrations/` (11 files, 1,643 lines SQL), `go.mod`, `go.sum`,
+    `scripts/go-gate.sh`, and `scripts/provision-db.sh` (Postgres role/RLS provisioning for the now-gone
+    `gitstate_test` database — not on the plan's original list, found during this wave to have no
+    remaining caller once `go-gate.sh`'s `go:` CI job was removed, and deleted alongside it as the same
+    class of dead Postgres tooling). The CI `go:` job was removed from `.github/workflows/ci.yml` in
+    the same commit.
+
+**Nothing was found to be NOT dead.** Every deletion step's `go build ./...`/`go vet ./...` stayed
+clean; no package had to be restored.
+
+**`go-gate.sh` floor ratchet** (`MIN_PKGS`/`MIN_TESTED_PKGS`/`MIN_GO_FILES`, plus
+`EXPECTED_DB_SKIPPED_TESTS`), one commit per step, tracking the tree exactly:
+
+| After deleting | Packages | Tested pkgs | .go files | DB-skips |
+|---|---|---|---|---|
+| (start, wave 5 baseline) | 12 | 10 | 105 | 46 |
+| `cmd/gittrack` | 11 | 9 | 99 | 46 |
+| `cmd/gitstate-mcp` | 10 | 8 | 94 | 46 |
+| `internal/report` | 9 | 7 | 92 | 46 |
+| `internal/calibration` | 8 | 6 | 86 | 44 |
+| `internal/llm` | 7 | 5 | 76 | 44 |
+| `internal/store` | 6 | 4 | 14 | 0 |
+| `internal/embed` | 5 | 3 | 11 | 0 |
+| `internal/gitanalysis` + `internal/crypto` | 3 | 1 | 6 | 0 |
+| `internal/db` | 2 | 1 | 5 | 0 |
+| `internal/config` (PKGS narrowed to `./cmd/...`, `internal/` now empty) | 1 | 0 | 1 | 0 |
+
+`scripts/go-gate.sh` itself was deleted in the final combined commit (step 12), alongside `go.mod`, so
+the gate never had to assert a floor of zero against a tree it no longer had a job watching.
+
+**Result:** zero `.go` files anywhere in the repo (`find . -name '*.go' -not -path './target/*' -not
+-path '*/node_modules/*'` → 0; the one hit inside `web/node_modules` is a vendored, gitignored
+third-party sample file, not part of this repo). `cargo build --workspace`, `cargo clippy --workspace
+--all-targets -- -D warnings`, `cargo fmt --all -- --check` all clean. `cargo test --workspace` — still
+**311** (unchanged; nothing deleted this wave was load-bearing for a Rust test). `web/`'s
+`eslint`/`check:lint-config`/`tsc --noEmit`/`npm run build` all still exit 0 — `web/` was not touched,
+and the `/api/*` contract is unchanged. The daemon (`cargo run -p gitstate-cli -- serve`) still starts
+and serves `/health` and `/api/repos`. Docs/CI/Makefile/README/CONTRIBUTING/ROADMAP/PROGRESS/
+CHANGELOG/SECURITY were updated to stop describing a Go tree that no longer exists (see decisions.md's
+matching T11 closure entry for the full list).
+
+T11 is now closed for the whole tree, not just the partial removal the 2026-08-04 resolution described:
+every domain either had a Rust equivalent shipped and parity-checked (waves 1–5) or was confirmed to
+have zero remaining callers before deletion (this wave). gitstate is pure Rust + TypeScript.

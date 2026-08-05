@@ -182,11 +182,10 @@ every analytics rollup treat them exactly like native ones. Ids are derived from
 ## Quick start
 
 > **Status: v0.1, built in the open.** The Rust core, the daemon, the CLI, the desktop shell and every
-> screen above work today. Packaged installers are still to come, a few analytics domains are still
-> being ported from the legacy Go implementation under `internal/` (kept in-tree as the reference for a
-> staged port — see [docs/MIGRATION-NOTES.md](docs/MIGRATION-NOTES.md)), and P2P sync stays behind its
-> feature flag until the transport settles. [ROADMAP.md](ROADMAP.md) and [PROGRESS.md](PROGRESS.md) say
-> which is which.
+> screen above work today. The staged port from the legacy Go+Postgres implementation is complete — the
+> Go tree is gone (see [docs/MIGRATION-NOTES.md](docs/MIGRATION-NOTES.md) for what moved where).
+> Packaged installers are still to come, and P2P sync stays behind its feature flag until the transport
+> settles. [ROADMAP.md](ROADMAP.md) and [PROGRESS.md](PROGRESS.md) say which is which.
 
 ### Prerequisites
 
@@ -315,7 +314,7 @@ belongs to an optional coordinator; everything a git tool is for is local + P2P.
 - [Deployment](docs/DEPLOYMENT.md) — running a node on a routable address: the bind-time guard, TLS,
   systemd and Docker, enrolment, backup, and what the deployment does *not* give you.
 - [Forge setup](docs/FORGE-SETUP.md) — `gh`/`glab` and token configuration.
-- [Migration notes](docs/MIGRATION-NOTES.md) — why the legacy Go server is still in-tree, and the staged port.
+- [Migration notes](docs/MIGRATION-NOTES.md) — what the legacy Go+Postgres server was, and how the staged port to Rust retired it.
 - [Security model](docs/security.md) · [Roadmap](ROADMAP.md) · [Decisions](decisions.md) · [Changelog](CHANGELOG.md)
 
 The full documentation site — including the derivation model, analytics, the HTTP API and the threat

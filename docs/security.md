@@ -7,9 +7,9 @@ boundaries (tenant isolation, session tokens, payment webhooks, cross-org admin)
 a much smaller surface centered on *keeping your data on your machine*.
 
 > The legacy Go server's security properties (RLS tenancy, JWT auth, Paystack webhook verification,
-> at-rest token encryption) are documented at the end of this file for provenance. That server is
-> **kept in-tree** for a staged port ([MIGRATION-NOTES.md](MIGRATION-NOTES.md)) but is **not** part of
-> the standalone app's runtime.
+> at-rest token encryption) are documented at the end of this file for provenance. That server's
+> staged port is complete and its source is gone ([MIGRATION-NOTES.md](MIGRATION-NOTES.md)); it was
+> never part of the standalone app's runtime.
 
 ---
 
@@ -134,10 +134,10 @@ own device. Back it up by copying the folder.
 
 ## Appendix — legacy SaaS security (provenance only)
 
-The pre-transform Go server, still in-tree under `internal/`/`cmd/`/`migrations/`, enforced:
-multi-tenant isolation via PostgreSQL Row-Level Security (`SET LOCAL app.current_org` per request tx,
-proven by `internal/store/rls_test.go` returning zero cross-org rows); audited super-admin access
-(`audit_log`, never ambient); env-only secrets; Paystack webhook HMAC-SHA512 verification with
-idempotency; per-IP rate limiting; and AES-256-GCM at-rest encryption of repo tokens. These properties
-apply to the legacy code during the staged port and are being retired as each domain is ported to
-Rust; they are **not** part of the local-first app described above.
+The pre-transform Go server (deleted; the staged port is complete, see
+[MIGRATION-NOTES.md](MIGRATION-NOTES.md)) enforced: multi-tenant isolation via PostgreSQL Row-Level
+Security (`SET LOCAL app.current_org` per request tx, proven by its own `internal/store/rls_test.go`
+returning zero cross-org rows); audited super-admin access (`audit_log`, never ambient); env-only
+secrets; Paystack webhook HMAC-SHA512 verification with idempotency; per-IP rate limiting; and
+AES-256-GCM at-rest encryption of repo tokens. These properties applied only to the legacy code, none
+of which shipped in the local-first app described above, and none of which exists in the tree anymore.

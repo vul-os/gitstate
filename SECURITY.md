@@ -48,7 +48,7 @@ the residual hardening checklist live in [docs/security.md](docs/security.md). I
 
 ## Scope note
 
-The legacy multi-tenant Go server (RLS tenancy, JWT auth, Paystack webhooks) remains **in-tree** under
-`internal/`, `cmd/`, and `migrations/` for a staged port, but is **not** part of the standalone app's
-runtime. Its security properties are documented for provenance in [docs/security.md](docs/security.md)
-and are being retired domain-by-domain as the Rust port lands.
+The legacy multi-tenant Go server (RLS tenancy, JWT auth, Paystack webhooks) has been fully retired —
+the staged port is complete and `internal/`, `cmd/`, and `migrations/` no longer exist in the tree. Its
+security properties are documented for provenance in [docs/security.md](docs/security.md); none of it
+is part of the standalone app's runtime.

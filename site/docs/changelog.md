@@ -64,8 +64,8 @@ effort, contribution, and classification from your own git + forge) and flipping
 
 ### Notes
 
-- The Go `internal/` and `cmd/` trees remain in-tree, untouched, for a staged port — they are not built
-  by the Rust workspace.
+- The staged port is complete: the Go `internal/` and `cmd/` trees, root `migrations/`, `go.mod` and
+  `go.sum` have been deleted. gitstate is pure Rust + TypeScript.
 - The default taxonomy is signed with a development key; production re-signs with the release key.
 
 Next: [Roadmap](roadmap.md) · [Getting started](getting-started.md)
