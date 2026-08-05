@@ -2,6 +2,7 @@
 //! contributes a `Router<AppState>`; [`crate::router`] merges them, adds the
 //! static fallback + CORS, and installs the shared state.
 
+mod agent_runs;
 mod categories;
 mod classify;
 mod contexts;
@@ -18,6 +19,7 @@ use serde::Serialize;
 
 use gitstate_core::Error;
 
+pub use agent_runs::agent_run_routes;
 pub use categories::category_routes;
 pub use classify::classify_routes;
 pub use contexts::context_routes;

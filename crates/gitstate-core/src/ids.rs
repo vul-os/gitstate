@@ -79,6 +79,10 @@ id_type!(
     /// Identity of a sync peer (this node or a remote one).
     PeerId
 );
+id_type!(
+    /// Identity of one logged agent run (the agent-native write path).
+    AgentRunId
+);
 
 /// How far ahead of local wall time a remote clock may be and still be folded
 /// forward by [`Hlc::observe`]: ±120 s, the same skew bound the shared DMTAP

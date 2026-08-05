@@ -490,3 +490,30 @@ export interface HealthResp {
   sync: boolean
   classifier: string
 }
+
+// ── Agent runs (the AI-agent write path) ────────────────────────────────────
+
+export type HumanAction = 'accepted' | 'edited' | 'reverted'
+
+export interface AgentDiffSummary {
+  additions: number
+  deletions: number
+  changed_files: number
+}
+
+export interface AgentRun {
+  id: string
+  repo_id: string | null
+  pr_id: string | null
+  issue_id: string | null
+  supervisor_id: string | null
+  goal: string
+  agent_name: string | null
+  branch: string | null
+  diff_summary: AgentDiffSummary
+  tests_passed: boolean | null
+  human_action: HumanAction | null
+  iterations: number | null
+  cost_usd: number | null
+  created_at: string
+}

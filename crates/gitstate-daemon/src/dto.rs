@@ -5,7 +5,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use gitstate_core::{Hlc, ProjectState, RepoId};
+use gitstate_core::{AgentDiffSummary, Hlc, ProjectState, RepoId};
 
 /// `POST /api/repos` body: exactly one of `path` / `remote_url`.
 #[derive(Debug, Deserialize)]
@@ -119,6 +119,37 @@ pub struct FeedbackReq {
 pub struct VerifyResp {
     pub valid: bool,
     pub id: String,
+}
+
+/// `POST /api/agent-runs` body. Only `goal` is required; every other field is
+/// left at its store absence (`None`) when omitted — `ops::log_agent_run`
+/// applies no defaults beyond that (mirrors the Go `AgentRunInput`).
+#[derive(Debug, Default, Deserialize)]
+pub struct NewAgentRun {
+    pub goal: String,
+    pub repo_id: Option<String>,
+    pub pr_id: Option<String>,
+    pub issue_id: Option<String>,
+    pub supervisor_id: Option<String>,
+    pub agent_name: Option<String>,
+    pub branch: Option<String>,
+    pub diff_summary: Option<AgentDiffSummary>,
+    pub tests_passed: Option<bool>,
+    /// Raw string, validated against the closed `HumanAction` set in
+    /// `ops::log_agent_run` (empty/absent both mean "no verdict yet").
+    pub human_action: Option<String>,
+    pub iterations: Option<u32>,
+    pub cost_usd: Option<f64>,
+}
+
+/// `GET /api/agent-runs` query. Every field narrows; all are optional.
+#[derive(Debug, Default, Deserialize)]
+pub struct AgentRunQuery {
+    pub repo_id: Option<String>,
+    pub pr_id: Option<String>,
+    pub issue_id: Option<String>,
+    pub agent_name: Option<String>,
+    pub limit: Option<u32>,
 }
 
 /// `POST /api/sync/publish` body.

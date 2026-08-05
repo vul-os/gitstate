@@ -569,3 +569,97 @@ impl SyncOp {
         }
     }
 }
+
+// ── agent runs (the AI-agent write path) ──
+//
+// Ported from the Go `store/agent_runs.go` (T11 wave 1). The Go table was
+// `org_id`-scoped and read/written under Postgres RLS (`db.WithOrg`); this node
+// is single-user and single-machine, so there is exactly one tenant and the
+// row simply has no `org_id` at all — see `crates/gitstate-store/migrations/
+// 0003_agent_runs.sql` for the full reasoning. Everything else — the fields,
+// the closed `human_action` set, the create+filtered-list shape — ports
+// directly.
+
+/// The closed set `human_action` accepts. `None` means "no human verdict yet"
+/// (the Go column allowed empty-string for the same meaning; here it is
+/// genuinely absent instead of an empty variant).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HumanAction {
+    Accepted,
+    Edited,
+    Reverted,
+}
+
+impl HumanAction {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            HumanAction::Accepted => "accepted",
+            HumanAction::Edited => "edited",
+            HumanAction::Reverted => "reverted",
+        }
+    }
+
+    /// Parse a human_action value. Unlike the other `parse`s in this module,
+    /// an empty string is not an unknown value — it is the caller's job to
+    /// treat "no action yet" as `None` rather than calling this with "".
+    pub fn parse(s: &str) -> crate::Result<Self> {
+        match s {
+            "accepted" => Ok(HumanAction::Accepted),
+            "edited" => Ok(HumanAction::Edited),
+            "reverted" => Ok(HumanAction::Reverted),
+            other => Err(crate::Error::invalid(format!(
+                "human_action must be one of accepted, edited, reverted (got {other:?})"
+            ))),
+        }
+    }
+}
+
+/// The shape of the change one agent run produced. Deliberately smaller than
+/// [`DiffSummary`] (which also carries a work item's title/body/paths for
+/// effort judging): an agent run may not correspond to any single work item,
+/// so this is just the size an agent reports about its own diff.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
+pub struct AgentDiffSummary {
+    pub additions: u32,
+    pub deletions: u32,
+    pub changed_files: u32,
+}
+
+/// One logged agent run — the agent-native mirror of a human commit: what an
+/// AI agent set out to do, the shape of what it changed, whether its own
+/// tests passed, and (once a human has looked) their verdict. Feeds
+/// attribution + estimation the same way human commits do.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentRun {
+    pub id: AgentRunId,
+    /// The repo this run worked in, if the caller named one.
+    pub repo_id: Option<RepoId>,
+    /// The PR this run produced, if any. References `work_items(id)` — PRs
+    /// and issues are both `WorkItem`s in this schema, not two separate
+    /// tables (see §3 of the port plan), so `pr_id`/`issue_id` share a target.
+    pub pr_id: Option<WorkItemId>,
+    /// The issue this run addressed, if any. See `pr_id`.
+    pub issue_id: Option<WorkItemId>,
+    /// Free-text local identity of whoever supervised the run, if the caller
+    /// gave one. No FK: there is no `users` table in a single-user app (the
+    /// Go column referenced one), so this is a label, not a join key.
+    pub supervisor_id: Option<String>,
+    pub goal: String,
+    pub agent_name: Option<String>,
+    pub branch: Option<String>,
+    pub diff_summary: AgentDiffSummary,
+    pub tests_passed: Option<bool>,
+    pub human_action: Option<HumanAction>,
+    pub iterations: Option<u32>,
+    pub cost_usd: Option<f64>,
+    pub created_at: String,
+}
+
+/// Default page size for [`crate::traits::Store::list_agent_runs`] when the
+/// filter sets no `limit` (mirrors the Go store's `agentRunDefaultLimit`).
+pub const AGENT_RUN_DEFAULT_LIMIT: u32 = 50;
+/// Hard cap regardless of what the caller asks for (mirrors the Go store's
+/// `agentRunMaxLimit`) — an unbounded `list_agent_runs` call must not be able
+/// to make the daemon materialize its entire log in one response.
+pub const AGENT_RUN_MAX_LIMIT: u32 = 200;

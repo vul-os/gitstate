@@ -140,6 +140,24 @@ generator. → No payment provider, no exchange-rate service, no charging path.
 > and the embedder already have a Rust home or a dependency-free path), and the recommended six-wave
 > order (agent_runs/MCP → calibration → context_bundle → search/embeddings → report/NL→report →
 > final `internal`/`migrations`/`go.mod` cleanup).
+>
+> **Wave 1 shipped (2026-08-05, branch `port-agent-runs`): `store/agent_runs.go` + `cmd/gitstate-mcp`
+> + `cmd/gittrack`'s `log-run`/`runs`/`whoami`.** `org_id`/RLS dropped — one tenant, nothing left to
+> scope (see the new `agent_runs` table's migration comment for the full reasoning). `gittrack` and
+> `gitstate-mcp` are folded into `gitstate-cli` as planned, not shipped as new standalone binaries:
+> `gitstate agent log-run`/`runs`/`whoami` and `gitstate mcp`. Both call `gitstate_daemon::ops`
+> **in-process** against the local SQLite file — the same pattern every other `gitstate` subcommand
+> already uses — rather than over HTTP with a token, which is *also* the resolution to the wave's
+> flagged MCP auth-scope spike: there is no second tenant for a token to distinguish, and gating one
+> local subprocess while every sibling subcommand stays open would be theater. The daemon still grew
+> `/api/agent-runs` (create + list) for parity with every other domain's dual CLI+HTTP exposure (the
+> web dashboard has no agent-runs screen yet, but the route exists and is gated by the same
+> `AdminAuth` posture as `/api/repos` — no new scope). `gittrack`'s `context`/`pr`/`issues`
+> subcommands are **not** included — those read the `context_bundle` domain, a separate wave, still
+> not yet ported despite being listed alongside `whoami` in `gittrack`'s own six-subcommand binary.
+> Go's `internal/store/agent_runs.go` stays in-tree unchanged; nothing is deleted until the final
+> cleanup wave. `cargo test --workspace` 218 → 227 (+9: 3 in `gitstate-store`, 5 in `gitstate-daemon`,
+> 1 in `gitstate-cli`).
 
 ---
 

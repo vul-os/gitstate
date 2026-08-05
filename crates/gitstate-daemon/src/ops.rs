@@ -7,16 +7,17 @@ use std::path::Path;
 use gitstate_classify::Personalizer;
 use gitstate_core::analytics as analytics_lib;
 use gitstate_core::{
-    now_rfc3339, now_wall_ms, Category, CategorySource, Classification, Context, ContextId,
-    ContextPrRef, Contribution, Contributor, EffortEstimate, Error, Forge, Hlc, PeerId,
-    ProjectState, Repo, RepoId, Result, Store, SyncStatus, Taxonomy, Weights, WorkItem, WorkItemId,
+    now_rfc3339, now_wall_ms, AgentRun, AgentRunFilter, AgentRunId, Category, CategorySource,
+    Classification, Context, ContextId, ContextPrRef, Contribution, Contributor, EffortEstimate,
+    Error, Forge, Hlc, HumanAction, PeerId, ProjectState, Repo, RepoId, Result, Store, SyncStatus,
+    Taxonomy, Weights, WorkItem, WorkItemId,
 };
 use gitstate_git::{
     blame_survival, collect_contributors, default_branch, derive_contributions,
     derive_project_state, head_sha, open_repo, szz_bug_intros, walk_commits, WalkOpts,
 };
 
-use crate::dto::{ContextPatch, NewCategory, NewContext, ScanResult};
+use crate::dto::{AgentRunQuery, ContextPatch, NewAgentRun, NewCategory, NewContext, ScanResult};
 use crate::state::AppState;
 
 /// All-time window bounds. Contributions are persisted under this one window so
@@ -610,6 +611,62 @@ pub fn delete_category(state: &AppState, id: &str) -> Result<()> {
     let mut cat = find_category_by_id(state, id)?;
     cat.deleted = true;
     state.store.upsert_category(&cat)
+}
+
+// ──────────────────────────── agent runs ────────────────────────────
+//
+// Ported from Go's `store/agent_runs.go` (T11 port plan, wave 1). The Go
+// version validated `human_action` and org-scoped every read/write inside a
+// `db.WithOrg` RLS transaction; there is no second tenant on one person's own
+// machine, so the org scoping is simply gone (see `AgentRun`'s doc comment
+// and migration 0003 for the full reasoning) — the validation still applies
+// verbatim.
+
+/// Record one agent run. `req.goal` is the only required field; every other
+/// field is optional and left absent when the caller doesn't supply it.
+///
+/// Returns [`Error::Invalid`] if `goal` is blank or `human_action` is set to
+/// anything outside the closed set (`accepted`/`edited`/`reverted`) — the
+/// same rejection Go's `CreateAgentRun` returned as `ErrInvalidHumanAction`.
+pub fn log_agent_run(state: &AppState, req: NewAgentRun) -> Result<AgentRun> {
+    if req.goal.trim().is_empty() {
+        return Err(Error::invalid("goal is required"));
+    }
+    let human_action = match req.human_action.as_deref() {
+        None => None,
+        Some(s) if s.trim().is_empty() => None,
+        Some(s) => Some(HumanAction::parse(s)?),
+    };
+    let run = AgentRun {
+        id: AgentRunId::new(),
+        repo_id: req.repo_id.filter(|s| !s.is_empty()).map(RepoId::from),
+        pr_id: req.pr_id.filter(|s| !s.is_empty()).map(WorkItemId::from),
+        issue_id: req.issue_id.filter(|s| !s.is_empty()).map(WorkItemId::from),
+        supervisor_id: req.supervisor_id.filter(|s| !s.is_empty()),
+        goal: req.goal,
+        agent_name: req.agent_name.filter(|s| !s.is_empty()),
+        branch: req.branch.filter(|s| !s.is_empty()),
+        diff_summary: req.diff_summary.unwrap_or_default(),
+        tests_passed: req.tests_passed,
+        human_action,
+        iterations: req.iterations,
+        cost_usd: req.cost_usd,
+        created_at: now_rfc3339(),
+    };
+    state.store.create_agent_run(&run)?;
+    Ok(run)
+}
+
+/// Agent runs newest-first, narrowed by whichever of `q`'s fields are set.
+pub fn list_agent_runs(state: &AppState, q: AgentRunQuery) -> Result<Vec<AgentRun>> {
+    let filter = AgentRunFilter {
+        repo_id: q.repo_id.filter(|s| !s.is_empty()).map(RepoId::from),
+        pr_id: q.pr_id.filter(|s| !s.is_empty()).map(WorkItemId::from),
+        issue_id: q.issue_id.filter(|s| !s.is_empty()).map(WorkItemId::from),
+        agent_name: q.agent_name.filter(|s| !s.is_empty()),
+        limit: q.limit,
+    };
+    state.store.list_agent_runs(&filter)
 }
 
 // ──────────────────────────── taxonomy ────────────────────────────

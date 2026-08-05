@@ -12,6 +12,11 @@ const MIGRATIONS: &[(&str, &str, &str)] = &[
         "sync_peers",
         include_str!("../migrations/0002_sync_peers.sql"),
     ),
+    (
+        "0003",
+        "agent_runs",
+        include_str!("../migrations/0003_agent_runs.sql"),
+    ),
 ];
 
 /// Apply every pending migration to `conn`.
