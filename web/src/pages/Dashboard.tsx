@@ -160,6 +160,7 @@ export default function Dashboard() {
           icon={<FolderGit2 size={22} />}
           title="Add your first repo"
           description="gitstate derives true project state, effort and contribution directly from your git history and forge — no server, no upload."
+          // eslint-disable-next-line @typescript-eslint/no-misused-promises -- navigate()'s type is `void | Promise<void>` (react-router view-transitions); it never rejects on a plain path change with no transition configured.
           action={<Button onClick={() => navigate('/repos')} rightIcon={<ArrowRight size={15} />}>Add a repo</Button>}
         />
       </div>
@@ -177,6 +178,7 @@ export default function Dashboard() {
         actions={
           <>
             <SegmentedControl options={RANGES} value={days} onChange={setDays} label="Time range" />
+            {/* eslint-disable-next-line @typescript-eslint/no-misused-promises -- navigate()'s type is `void | Promise<void>` (react-router view-transitions); it never rejects on a plain path change with no transition configured. */}
             <Button variant="outline" size="sm" onClick={() => navigate('/repos')}>
               Manage repos
             </Button>
@@ -254,6 +256,7 @@ export default function Dashboard() {
           action={
             <button
               type="button"
+              // eslint-disable-next-line @typescript-eslint/no-misused-promises -- navigate()'s type is `void | Promise<void>` (react-router view-transitions); it never rejects on a plain path change with no transition configured.
               onClick={() => navigate('/insights')}
               className="inline-flex items-center gap-1 font-mono text-[11px] text-[var(--text-faint)] transition-colors hover:text-[var(--brand-teal)]"
             >
@@ -271,6 +274,7 @@ export default function Dashboard() {
           action={
             <button
               type="button"
+              // eslint-disable-next-line @typescript-eslint/no-misused-promises -- navigate()'s type is `void | Promise<void>` (react-router view-transitions); it never rejects on a plain path change with no transition configured.
               onClick={() => navigate('/insights')}
               className="inline-flex items-center gap-1 font-mono text-[11px] text-[var(--text-faint)] transition-colors hover:text-[var(--brand-teal)]"
             >
@@ -309,6 +313,7 @@ export default function Dashboard() {
             key={repo.id}
             repo={repo}
             state={state}
+            // eslint-disable-next-line @typescript-eslint/no-misused-promises -- navigate()'s type is `void | Promise<void>` (react-router view-transitions); it never rejects on a plain path change with no transition configured.
             onOpen={() => navigate(`/repos/${repo.id}`)}
           />
         ))}
