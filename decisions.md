@@ -307,6 +307,61 @@ generator. → No payment provider, no exchange-rate service, no charging path.
 > unchanged; nothing is deleted until the final cleanup wave. `cargo test --workspace` 259 → 294
 > (+35: 6 in `gitstate-store`, 26 in the new `gitstate-search` crate [21 unit + 5 real-store
 > integration], 3 in `gitstate-daemon`).
+>
+> **Wave 5 shipped (2026-08-05, branch `port-report`): `internal/report` — the last of the five
+> domains.** Verified before writing anything: the 2026-08-04 sweep's "no Rust equivalent exists
+> anywhere" for `internal/report` was already corrected by `docs/PORT-PLAN.md`, and re-checked here by
+> reading `gitstate_core::analytics` directly — it already computed throughput, per-PR cycle-time
+> trend, and issue/PR state counts, all already served at `GET /api/analytics`. What was genuinely
+> missing, and all that this wave added: **burndown**, a **recent-activity feed**, **LLM status
+> synthesis**, and **NL→report**. `burndown`/`recent_activity` landed as two new pure functions in
+> `gitstate_core::analytics`, beside `throughput` — not a new crate, since this is the same rollup
+> math wave 1–4 already established the shape for, not a new domain algorithm. `burndown` improves on
+> Go's own version rather than copying it: Go's Postgres schema had no issue-close timestamp, so
+> `store.BurndownSeries`'s own comment calls its `updated_at`-proxy a best-effort stand-in for "a
+> proper point-in-time snapshot, which would require a history table"; `WorkItem` already carries a
+> real `closed_at` (wave 3 already relied on it), so this port's burndown is exact, not approximated.
+> No new migration — both functions read already-persisted `work_items`/`commits`. Status synthesis
+> reuses Go's own prompt near-verbatim via `gitstate_classify::LlmClassifier::chat`, promoted from
+> `pub(crate)` to `pub` (`docs/PORT-PLAN.md` §5's recommendation, taken — no second HTTP client).
+>
+> **NL→report is the security-relevant redesign the plan flagged from the start, and it is not a
+> port.** Go's `report.AnswerQuery` had an LLM write a raw PostgreSQL `SELECT`, then validated it with
+> a regex/keyword blocklist plus a positive table allowlist (`validateSQL`) inside a `db.WithOrg`
+> read-only transaction — a defence shaped entirely around a multi-tenant RLS threat model ("stop the
+> LLM from reading another org's row") that gitstate, single-user and single-SQLite-file, no longer
+> has. Porting `validateSQL` verbatim would carry forward a defence tuned for a threat that is gone
+> while leaving the threat that replaced it — **the LLM emits text that gets executed as a query
+> against your only database file** — defended by nothing more durable than "the regexes catch every
+> dangerous keyword forever". The new `gitstate-report` crate's `nl` module does not rebuild that
+> allowlist, narrower or otherwise: it eliminates SQL generation entirely. The LLM's job narrows to
+> picking one of seven named `ReportIntent` variants (`state_counts`, `throughput`, `cycle_time`,
+> `burndown`, `recent_activity`, `top_contributors`, `label_breakdown` — a smaller, more aggregate-only
+> surface than Go's own allowlist, which also named `effort_estimates`/`agent_runs`/`involvement` and
+> could `SELECT` free-text columns like `issues.title`/`commits.message` verbatim; this port
+> deliberately does not expose either) and filling in a handful of bounded scalar parameters (`repo_id`,
+> `days`, `weeks`, `limit`). `serde`'s internally-tagged, `#[serde(deny_unknown_fields)]` enum
+> deserializer either fully resolves LLM output to one of seven statically-dispatched Rust function
+> calls or produces nothing (`Err`) — there is no code path anywhere in the crate from LLM text to a
+> SQL string, so a destructive statement is not a value the enum can hold, structurally rather than by
+> policy. `parse_intent`'s refusal path is tested for malformed JSON, an unrecognized intent tag, a
+> smuggled extra field (an attempted `"sql"` key), an out-of-bounds numeric parameter, and the model's
+> own scripted "unanswerable" escape hatch — plus a containment test showing a hostile `repo_id`
+> (`'; DROP TABLE work_items; --`) is just an id that matches no repo, never executed as anything.
+> **Both guards were mutation-tested**: `#[serde(deny_unknown_fields)]` and the bounds-check call were
+> each temporarily removed in turn and the corresponding refusal test confirmed to **fail** (the
+> smuggled field / the oversized limit were silently accepted) before being restored — matching wave
+> 1's admin-gate standard. `repo_id` is never interpolated into anything; it flows through `Store`'s
+> existing parameterised `list_work_items(repo)` lookup exactly like every other domain's repo-scoped
+> read, so an unmatched value degrades to an empty result, not an error and certainly not a query.
+> **No daemon HTTP route**: grepped `web/src` for `burndown`/`synthesize`/`AnswerQuery`/`nl_report` and
+> found only `/api/analytics`, already served and unchanged — CLI-only (`gitstate report
+> burndown|activity|status|ask`), the same evidence-based call waves 2–4 made for their own domains.
+> `internal/report` stays in-tree unchanged; nothing is deleted until the final cleanup wave (wave 6).
+> `cargo test --workspace` 294 → 311 (+17: 6 in `gitstate-core::analytics`, 11 in the new
+> `gitstate-report` crate). `go build ./...`, `go vet ./...`, `scripts/go-gate.sh` (12/105/106/46
+> unchanged), and `web/`'s `eslint`/`check:lint-config`/`tsc --noEmit`/`npm run build` all re-verified
+> clean, since none of `internal/`, `cmd/`, `migrations/`, `go.mod`, or `web/` were touched.
 
 ---
 

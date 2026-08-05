@@ -31,7 +31,7 @@
 //! bounded scalar parameters (`repo_id`, `days`, `weeks`, `limit`)". There is
 //! no code path anywhere in this crate that takes LLM output and hands it to
 //! a SQL engine, a query builder, or string interpolation into anything
-//! executable. [`parse_intent`] either produces one of nine known,
+//! executable. [`parse_intent`] either produces one of seven known,
 //! statically-dispatched Rust function calls ([`dispatch`]) or it produces
 //! nothing — an `Err`. This is not "a narrower allowlist"; it is a different
 //! *kind* of mechanism, one that is structurally incapable of expressing a
@@ -53,7 +53,7 @@
 //!
 //! [`SYSTEM_PROMPT`] is this design's equivalent of Go's `allowedTablesCatalog`
 //! — the complete, authoritative list of what the LLM may ask for, injected
-//! verbatim into its system prompt. Nine intents, each named after the
+//! verbatim into its system prompt. Seven intents, each named after the
 //! `gitstate_core::analytics` function or `Store` read it resolves to:
 //! `state_counts`, `throughput`, `cycle_time`, `burndown`, `recent_activity`,
 //! `top_contributors`, `label_breakdown`. (Go's allowlist also named
