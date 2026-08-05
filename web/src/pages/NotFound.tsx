@@ -69,6 +69,7 @@ export default function NotFound() {
         {/* Actions */}
         <div className="flex flex-col sm:flex-row gap-3 w-full">
           <button
+            // eslint-disable-next-line @typescript-eslint/no-misused-promises -- navigate()'s type is `void | Promise<void>` (react-router view-transitions); it never rejects on a plain history-delta move with no transition configured.
             onClick={() => navigate(-1)}
             className="flex-1 px-5 py-2.5 rounded-xl text-sm font-semibold text-[var(--text-muted)] transition-all duration-150 hover:text-[var(--text)] hover:border-[var(--border2)]"
             style={{ border: '1px solid var(--border)' }}
