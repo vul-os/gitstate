@@ -113,7 +113,13 @@ fn error_response(id: Value, code: i64, message: impl Into<String>) -> Value {
 async fn handle_line(state: &AppState, line: &str) -> Option<Value> {
     let req: RpcRequest = match serde_json::from_str(line) {
         Ok(r) => r,
-        Err(e) => return Some(error_response(Value::Null, PARSE_ERROR, format!("parse error: invalid JSON: {e}"))),
+        Err(e) => {
+            return Some(error_response(
+                Value::Null,
+                PARSE_ERROR,
+                format!("parse error: invalid JSON: {e}"),
+            ))
+        }
     };
 
     let is_notification = req.id.is_none();
@@ -188,7 +194,10 @@ fn log_agent_run_schema() -> Value {
 /// convention — never as a JSON-RPC protocol error, so the host can show the
 /// message to the model instead of treating the whole call as transport-dead.
 async fn handle_call_tool(state: &AppState, id: Value, params: Value) -> Value {
-    let name = params.get("name").and_then(Value::as_str).unwrap_or_default();
+    let name = params
+        .get("name")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
     let args = params.get("arguments").cloned().unwrap_or(json!({}));
 
     if name != "log_agent_run" {
@@ -204,7 +213,10 @@ async fn handle_call_tool(state: &AppState, id: Value, params: Value) -> Value {
     }
 }
 
-async fn call_log_agent_run(state: &AppState, args: &Value) -> anyhow::Result<gitstate_core::AgentRun> {
+async fn call_log_agent_run(
+    state: &AppState,
+    args: &Value,
+) -> anyhow::Result<gitstate_core::AgentRun> {
     let goal = args
         .get("goal")
         .and_then(Value::as_str)
@@ -273,9 +285,12 @@ mod tests {
         assert_eq!(resp["error"]["code"], PARSE_ERROR);
 
         // ── a notification (no id) gets no response at all, valid or not. ──
-        assert!(handle_line(&state, r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#)
-            .await
-            .is_none());
+        assert!(handle_line(
+            &state,
+            r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#
+        )
+        .await
+        .is_none());
 
         // ── initialize / tools/list / ping — the protocol envelope. ──
         let resp = handle_line(&state, r#"{"jsonrpc":"2.0","id":1,"method":"initialize"}"#)
@@ -348,8 +363,8 @@ mod tests {
         assert_eq!(run["diff_summary"]["additions"], 12);
 
         // ── and it actually persisted — visible through the ordinary list path. ──
-        let logged = ops::list_agent_runs(&state, gitstate_daemon::dto::AgentRunQuery::default())
-            .unwrap();
+        let logged =
+            ops::list_agent_runs(&state, gitstate_daemon::dto::AgentRunQuery::default()).unwrap();
         assert_eq!(logged.len(), 1);
         assert_eq!(logged[0].goal, "fix the login bug");
 

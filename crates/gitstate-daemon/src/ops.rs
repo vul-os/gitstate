@@ -641,10 +641,7 @@ pub fn log_agent_run(state: &AppState, req: NewAgentRun) -> Result<AgentRun> {
         id: AgentRunId::new(),
         repo_id: req.repo_id.filter(|s| !s.is_empty()).map(RepoId::from),
         pr_id: req.pr_id.filter(|s| !s.is_empty()).map(WorkItemId::from),
-        issue_id: req
-            .issue_id
-            .filter(|s| !s.is_empty())
-            .map(WorkItemId::from),
+        issue_id: req.issue_id.filter(|s| !s.is_empty()).map(WorkItemId::from),
         supervisor_id: req.supervisor_id.filter(|s| !s.is_empty()),
         goal: req.goal,
         agent_name: req.agent_name.filter(|s| !s.is_empty()),

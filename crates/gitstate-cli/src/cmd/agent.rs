@@ -158,7 +158,10 @@ pub async fn run(ctx: &Ctx, cmd: AgentCmd) -> anyhow::Result<()> {
             } else if runs.is_empty() {
                 println!("no agent runs logged");
             } else {
-                println!("{:<38} {:<20} {:<12} {:<9} goal", "id", "agent", "action", "tests");
+                println!(
+                    "{:<38} {:<20} {:<12} {:<9} goal",
+                    "id", "agent", "action", "tests"
+                );
                 for r in &runs {
                     let action = r.human_action.map(|a| a.as_str()).unwrap_or("-");
                     let tests = match r.tests_passed {
