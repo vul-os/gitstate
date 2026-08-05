@@ -919,6 +919,7 @@ dependencies = [
  "gitstate-core",
  "gitstate-forge",
  "gitstate-git",
+ "gitstate-report",
  "gitstate-search",
  "gitstate-store",
  "gitstate-sync",

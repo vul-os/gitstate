@@ -21,6 +21,7 @@ gitstate-core = { workspace = true }
 gitstate-git = { workspace = true }
 gitstate-forge = { workspace = true }
 gitstate-classify = { workspace = true }
+gitstate-report = { workspace = true }
 gitstate-search = { workspace = true }
 gitstate-store = { workspace = true }
 gitstate-sync = { workspace = true }
