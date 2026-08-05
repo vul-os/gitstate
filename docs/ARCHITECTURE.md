@@ -182,4 +182,5 @@ Disjoint write sets keep parallel agents collision-free: **rust-domain** owns th
 `gitstate-git`/`gitstate-forge`/`gitstate-daemon`/`gitstate-cli`/`gitstate-sync` + `apps/desktop`;
 **web** owns `web/`; **narrative** owns the docs and license; **site** owns `site/`; **cloud-gh** owns
 `.github/` and the vulos.org site registration. The domain crate's public API is the shared, read-only
-contract; the legacy Go tree (`internal/`, `cmd/`, `migrations/`, `go.mod`, `go.sum`) is untouchable.
+contract. (The legacy Go tree — `internal/`, `cmd/`, `migrations/`, `go.mod`, `go.sum` — was retired in
+the T11 staged port and no longer exists; see [MIGRATION-NOTES.md](MIGRATION-NOTES.md).)

@@ -9,11 +9,12 @@ architecture rationale lives in [decisions.md](decisions.md); live build status 
 [PROGRESS.md](PROGRESS.md). The interface contract lives in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 The old multi-tenant Go+Postgres stack — the RLS tenancy model, the super-admin console, the fly.io
-deploy — lives on **in git history and, for the staged port, still in-tree** under `internal/`, `cmd/`,
-and `migrations/`, as the source we port from. The billing/invoicing/accounting/COGS layer (Paystack
-charging, client invoices, accounting-provider sync, cloud cost reconciliation) had no path forward in
-a local-first single-tenant app and has been removed outright rather than staged; it lives on only in
-git history. See [docs/MIGRATION-NOTES.md](docs/MIGRATION-NOTES.md).
+deploy — lives on **in git history only**. The staged port (T11) is complete: every domain with a
+Rust equivalent was ported one wave at a time against the Go source as reference, then the Go tree
+(`internal/`, `cmd/`, `migrations/`, `go.mod`, `go.sum`) was deleted. The billing/invoicing/accounting/
+COGS layer (Paystack charging, client invoices, accounting-provider sync, cloud cost reconciliation)
+had no path forward in a local-first single-tenant app and was removed outright rather than staged; it
+also lives on only in git history. See [docs/MIGRATION-NOTES.md](docs/MIGRATION-NOTES.md).
 
 ---
 
@@ -45,7 +46,7 @@ vulos suite style (`slipscan` / `diwan` / `wede`).
 - [x] Tauri shell (`apps/desktop`) that boots the daemon and reuses the React `web/` UI.
 - [x] Repoint `web/` at the daemon JSON API; remove the multi-tenant auth/org/billing surfaces.
 - [x] New static marketing/docs site (`site/`) published at `vulos.org/projects/gitstate/`.
-- [x] Keep `internal/`, `cmd/`, `migrations/`, `go.mod`, `go.sum` compiling for the staged port; the billing/invoicing/accounting/COGS layer was cut outright (no port planned).
+- [x] Keep `internal/`, `cmd/`, `migrations/`, `go.mod`, `go.sum` compiling for the staged port (see Phase 4 — now deleted, the port is complete); the billing/invoicing/accounting/COGS layer was cut outright (no port planned).
 
 Live status: [PROGRESS.md](PROGRESS.md).
 
@@ -92,16 +93,21 @@ Share the smarts (working sets and labels), never the code.
 
 ---
 
-## Phase 4 — Staged port of the legacy Go domains
+## Phase 4 — Staged port of the legacy Go domains ✅
 
-Retire the in-tree Go server by porting its still-valuable logic to Rust, one domain at a time. Until
-a domain is ported, the Go source stays in-tree as the reference (never edited).
+Retired the in-tree Go server by porting its still-valuable logic to Rust, one domain at a time, then
+deleting the Go tree once nothing depended on it. This checklist predated the finer six-wave breakdown
+in [docs/PORT-PLAN.md](docs/PORT-PLAN.md) (2026-08-05); see that plan and
+[docs/MIGRATION-NOTES.md](docs/MIGRATION-NOTES.md) for the full per-domain record.
 
 - [x] **DORA parity** — cycle-time p50/p90 and a labelled change-failure proxy derived in `gitstate-git` + `gitstate-core::health`, alongside bus factor, review coverage and quality signals.
-- [x] **Effort/estimation parity** — diff-difficulty judging in `gitstate-classify` (LLM + deterministic heuristic). Open follow-up: resolve real per-PR add/delete counts against the worktree so the heuristic has more than path signal.
+- [x] **Effort/estimation parity** — diff-difficulty judging in `gitstate-classify` (LLM + deterministic heuristic), plus empirical-Bayes effort *calibration* in `gitstate-calibrate` (wave 2).
 - [x] **Involvement parity** — per-repo and per-person involvement plus the six-dimension model with tunable weights and a cross-repo rollup.
-- [ ] **Reporting / NL→report** — port the SELECT-only queryable report path against the local SQLite store.
-- [ ] Once a domain's Rust port passes parity, remove the corresponding Go source in a dedicated commit.
+- [x] **Agent-native write path + MCP bridge** — `agent_runs` table, `/api/agent-runs`, and `gitstate-cli`'s `agent log-run`/`runs`/`whoami` + `mcp` subcommands, folding both `cmd/gittrack` and `cmd/gitstate-mcp` in (wave 1).
+- [x] **Context bundle** — token-efficient issue/PR agent context (`gitstate agent context`/`agent pr`, two MCP tools), reusing calibration's estimate (wave 3).
+- [x] **Search + embeddings** — local semantic + FTS5/trigram-fuzzy search over issues in `gitstate-search` (wave 4).
+- [x] **Reporting / NL→report** — dashboard rollups (burndown, recent-activity, LLM status synthesis) plus NL→report as fixed-intent dispatch (not SQL generation) in `gitstate-report` (wave 5).
+- [x] **Final cleanup (wave 6)** — `internal/`, `cmd/gittrack`, `cmd/gitstate-mcp`, `cmd/migrate`, root `migrations/`, `go.mod`, `go.sum`, and `scripts/go-gate.sh` all deleted; the CI `go:` job removed. Zero `.go` files remain in the repo.
 
 ---
 

@@ -19,7 +19,7 @@ and rationale: [ROADMAP.md](ROADMAP.md), [decisions.md](decisions.md).
 | **cloud-gh** | CI (rust + web, no Postgres); register `gitstate` in the vulos.org site collection | 🔄 in progress |
 | **packaging** | signed installers: macOS `.dmg`, Linux `.AppImage`/`.deb`, Windows `.msi` | ⬜ not started |
 | **sync transport** | HTTP peer transport, manual enrolment, per-op signatures, mutual request auth; driven between two nodes over a non-loopback address | ✅ done |
-| **Go retirement** | port the remaining legacy domains, then delete `internal/`, `cmd/`, root `migrations/` | 🔄 in progress |
+| **Go retirement** | port the remaining legacy domains, then delete `internal/`, `cmd/`, root `migrations/` | ✅ done |
 
 ## What works today
 
@@ -53,12 +53,14 @@ and rationale: [ROADMAP.md](ROADMAP.md), [decisions.md](decisions.md).
   re-enrolling with every peer by hand, and removing an enrolment does not retract ops already
   replicated.
 
-## Kept in-tree (staged port — do NOT edit)
+## Go tree — retired
 
-`internal/`, `cmd/`, `migrations/`, `go.mod`, `go.sum` are retained **byte-for-byte** as the reference
-source for porting the remaining Go domains (evidence-invoice-as-local-report, NL→report) into the Rust
-crates. Each Go domain is removed only once its Rust replacement passes parity. See
-[docs/MIGRATION-NOTES.md](docs/MIGRATION-NOTES.md).
+`internal/`, `cmd/`, root `migrations/`, `go.mod` and `go.sum` were kept in-tree byte-for-byte as the
+reference source for a staged port and are now **deleted** — every domain that had a Rust equivalent
+was ported first and parity-checked against the Go reference before its source was removed; the rest
+was either already superseded or SaaS-only-and-dropped. gitstate is pure Rust + TypeScript now. See
+[docs/MIGRATION-NOTES.md](docs/MIGRATION-NOTES.md) and [docs/PORT-PLAN.md](docs/PORT-PLAN.md) for the
+full domain-by-domain record.
 
 ## Contract (so parallel agents stay compatible)
 

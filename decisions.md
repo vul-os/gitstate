@@ -362,6 +362,43 @@ generator. → No payment provider, no exchange-rate service, no charging path.
 > `gitstate-report` crate). `go build ./...`, `go vet ./...`, `scripts/go-gate.sh` (12/105/106/46
 > unchanged), and `web/`'s `eslint`/`check:lint-config`/`tsc --noEmit`/`npm run build` all re-verified
 > clean, since none of `internal/`, `cmd/`, `migrations/`, `go.mod`, or `web/` were touched.
+>
+> **T11 closure (2026-08-05, branch `remove-all-go`): wave 6 of 6 — the Go tree is gone.** With all
+> five domains ported (waves 1–5), this wave deleted `internal/`, `cmd/gittrack`, `cmd/gitstate-mcp`,
+> `cmd/migrate`, root `migrations/` (1,643 lines SQL), `go.mod`, `go.sum`, `scripts/go-gate.sh`, and
+> `scripts/provision-db.sh` (Postgres role/RLS provisioning found, during this wave, to have no
+> remaining caller once the CI `go:` job was gone — not on the plan's original list, same class of
+> dead Postgres tooling, deleted alongside it) — in dependency order, leaves inward, one commit per
+> step, `go build ./...`/`go vet ./...` proving deadness at every step but the last: `cmd/gittrack` →
+> `cmd/gitstate-mcp` → `internal/report` → `internal/calibration` → `internal/llm` → `internal/store`
+> → `internal/embed` → `internal/gitanalysis` + `internal/crypto` → `internal/db` → `internal/config`
+> → (final commit) `cmd/migrate`/`migrations/`/`go.mod`/`go.sum`/`go-gate.sh` + the CI `go:` job.
+> **Both flagged traps were tested by deletion, not argued from the plan**: `store/planning.go` went
+> with the rest of `internal/store` and `go build` stayed clean — it really had zero callers, as the
+> plan said. `internal/crypto` was deleted only after its claimed-dead tenants (`internal/llm`,
+> `internal/store`) were themselves gone, and only then did `grep`/`go build` confirm zero remaining
+> importers — the plan's judgement held. **One thing turned out to be more dead than the plan scoped**:
+> `internal/llm` was only flagged for its `catalog.go`/`gateway.go` reselling dead weight, but with
+> `internal/report` gone the whole package (`complete.go`, `service.go`, `openai.go`, `provider.go`,
+> `org.go` included) had zero importers, confirmed by deleting it whole in one commit with `go build`
+> staying clean. Nothing was found to be NOT dead; no restoration was needed at any step.
+> `scripts/go-gate.sh`'s coverage floors were ratcheted down at every intermediate step (12/10/105/46 →
+> 1/0/1/0 by the last Go-only commit) so the gate stayed meaningful instead of asserting stale numbers,
+> then deleted in the same commit as `go.mod` per the plan's instruction. Full before/after floor table
+> in [docs/MIGRATION-NOTES.md](docs/MIGRATION-NOTES.md)'s matching T11 closure entry. Final state:
+> zero `.go` files anywhere in the repo outside a gitignored `web/node_modules` vendor file; `cargo
+> build --workspace`/`cargo clippy --workspace --all-targets -- -D warnings`/`cargo fmt --all --check`
+> all clean; `cargo test --workspace` unchanged at **311** (nothing deleted was load-bearing for a Rust
+> test); `web/` untouched, its `eslint`/`check:lint-config`/`tsc --noEmit`/`npm run build` all still
+> exit 0 and the `/api/*` contract is unchanged; the daemon (`gitstate serve`) still starts and answers
+> `/health` and `/api/repos`. `.github/workflows/ci.yml`'s `go:` job removed; no Go reference remains
+> anywhere under `.github/workflows/`. `README.md`, `CONTRIBUTING.md`, `Makefile`, `ROADMAP.md`,
+> `PROGRESS.md`, `CHANGELOG.md`, `SECURITY.md`, `docs/ARCHITECTURE.md`, `docs/security.md`, and the
+> `site/docs/` mirrors of architecture/roadmap/changelog were updated to stop describing an in-tree Go
+> reference that no longer exists. T11 is now closed for the whole tree — every domain either shipped a
+> Rust equivalent and passed parity (waves 1–5) or was confirmed to have zero remaining callers before
+> deletion (this wave) — not the partial removal the 2026-08-04 resolution note described. gitstate is
+> pure Rust + TypeScript.
 
 ---
 

@@ -171,16 +171,17 @@ billing-collection cloud. It runs on your machine.
 - SaaS deploy artifacts: `Dockerfile`, `docker-compose.yml`, `deploy/` (fly.toml + systemd unit), and
   the SaaS `config.example.yaml`. gitstate no longer targets a hosted deployment.
 - The AGPL `LICENSE` file (replaced by the dual MIT/Apache licenses).
-
-### Kept (staged port)
-- `internal/`, `cmd/`, `migrations/`, `go.mod`, `go.sum` are retained **byte-for-byte** as the
-  reference source for a staged port of the remaining Go domains (evidence-invoice-as-local-report and
-  NL→report; DORA, effort and involvement have since been ported) into the Rust crates. See
-  [docs/MIGRATION-NOTES.md](docs/MIGRATION-NOTES.md). Nothing under those paths is edited until its
-  Rust replacement passes parity.
+- **The staged port is complete; the legacy Go tree is gone.** `internal/`, `cmd/gittrack`,
+  `cmd/gitstate-mcp`, `cmd/migrate`, root `migrations/`, `go.mod`, `go.sum` and
+  `scripts/go-gate.sh` were retained byte-for-byte as the reference source while each domain
+  (DORA/effort/involvement, then agent_runs+MCP, calibration, context bundle, search/embeddings,
+  report+NL→report) was ported to Rust one wave at a time; once nothing depended on a Go package,
+  it was deleted (proven by `go build`/`go vet` staying clean at every step). See
+  [docs/MIGRATION-NOTES.md](docs/MIGRATION-NOTES.md) and [docs/PORT-PLAN.md](docs/PORT-PLAN.md).
+  Zero `.go` files remain in the repo; gitstate is pure Rust + TypeScript.
 
 ---
 
 _Prior to the transform, gitstate shipped as a multi-tenant Go+Postgres SaaS with Row-Level Security
 tenancy, JWT auth, Paystack billing (EE), and a server-rendered super-admin console. That history is
-preserved in the git log and in the still-in-tree Go source._
+preserved in the git log._

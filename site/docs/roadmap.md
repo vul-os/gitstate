@@ -31,7 +31,8 @@ by that line, not by a subscription funnel.
 ## Phase 2 — Ship it like an app (current)
 
 - [ ] Packaged installers (macOS `.dmg`, Linux `.AppImage`/`.deb`, Windows `.msi`) and signed releases.
-- [ ] Finish the [staged port](architecture.md) of the remaining legacy Go domains, then delete them.
+- [x] Finish the [staged port](architecture.md) of the legacy Go domains, then delete them — the Go
+  tree is gone; gitstate is pure Rust + TypeScript.
 - [ ] First-run experience: add a repo, scan, and land on a populated dashboard without touching a
   terminal.
 - [ ] Effort judging that resolves real diff stats per PR against the local worktree, so the heuristic

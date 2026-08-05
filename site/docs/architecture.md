@@ -84,12 +84,11 @@ transform kept the *essence* — derive truth from git — and flipped the deliv
 - No multi-tenant server, no Postgres, no billing-collection cloud, no org/seat model. The billing,
   invoicing and accounting layer was removed outright rather than staged — it had no role in a
   single-tenant local app.
-- The Go `internal/` and `cmd/` trees remain in-tree, untouched, as the reference for a staged port of
-  the domains still being moved to Rust. They are **not** built by the Rust workspace, and each one is
-  deleted only once its Rust replacement passes parity.
-- Two migration sets coexist and must not be confused: the legacy Postgres migrations at the repo root
-  (kept, unread by Rust) and the SQLite migrations inside `crates/gitstate-store/migrations/` — the
-  only place the store looks.
+- The Go `internal/` and `cmd/` trees were kept in-tree, untouched, as the reference for a staged port
+  of each domain to Rust, one wave at a time — never built by the Rust workspace. The port is now
+  complete and the Go tree (plus the legacy Postgres `migrations/`, `go.mod`, `go.sum`) has been
+  deleted; it lives on only in git history.
+- SQLite migrations live inside `crates/gitstate-store/migrations/` — the only place the store looks.
 - Licensing moved from AGPL-3.0 + a commercial EE tier to the suite standard **MIT OR Apache-2.0**.
 
 Next: [Derivation model](derivation.md) · [HTTP API](api.md) · [Contexts & P2P sync](contexts-sync.md)

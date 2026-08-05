@@ -1,8 +1,9 @@
 # Contributing to gitstate
 
 gitstate is a **standalone, local-first, peer-to-peer** desktop app — a Rust core over SQLite, a Tauri
-shell, a headless daemon, and a React UI. It is being transformed from a legacy Go+Postgres SaaS; the
-old Go server stays in-tree for a staged port (see [docs/MIGRATION-NOTES.md](docs/MIGRATION-NOTES.md)).
+shell, a headless daemon, and a React UI. It was transformed from a legacy Go+Postgres SaaS; the staged
+port is complete and the Go tree is gone (see [docs/MIGRATION-NOTES.md](docs/MIGRATION-NOTES.md) for
+what moved where).
 
 ## Dev setup
 
@@ -40,8 +41,6 @@ crates/
 apps/desktop          Tauri shell; frontendDist -> ../../web/dist
 web/                  React + Vite UI, repointed at the daemon JSON API
 docs/                 architecture, getting-started, classification, p2p, forge, migration notes
-internal/ cmd/        KEPT legacy Go server (staged port — do NOT edit)
-migrations/           KEPT legacy Go Postgres migrations (Rust migrations live in the store crate)
 ```
 
 ## Conventions
@@ -56,9 +55,6 @@ migrations/           KEPT legacy Go Postgres migrations (Rust migrations live i
 - **One API surface.** The daemon serves both the desktop shell and headless mode. No domain logic
   crosses the Tauri IPC boundary — data flows over HTTP to the daemon in both modes. All web calls go
   through `web/src/lib/api.js`; no component calls `fetch` directly.
-- **Do NOT edit the legacy Go code** under `internal/`, `cmd/`, or `migrations/`, nor `go.mod`/`go.sum`.
-  It is kept verbatim as the reference for the staged port; a Go domain is removed only once its Rust
-  replacement passes parity, in a dedicated commit.
 - **Store aggregates, not source.** Commit summaries are first-line only; diffs are summarized as
   shapes (counts, languages, paths). Never persist or transmit file contents.
 - **Fail closed on the taxonomy.** Signature/hash/pinned-key mismatches must fall back to local-only

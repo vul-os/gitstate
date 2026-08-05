@@ -2,8 +2,8 @@
 #
 # gitstate is a Rust Cargo workspace (crates/*) + a React web UI (web/) + a
 # Tauri desktop shell (apps/desktop). It runs on your machine: no server, no
-# Postgres, no billing cloud. The Go code under internal/ and cmd/ is kept
-# in-tree for a staged port and is NOT built here.
+# Postgres, no billing cloud. The legacy Go+Postgres implementation this was
+# ported from is gone — see docs/MIGRATION-NOTES.md.
 #
 # Prerequisites: Rust 1.85+ (cargo), Node 22+ (npm). Tauri targets additionally
 # need the platform webview + toolchain (see tauri.app/start/prerequisites).
