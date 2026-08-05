@@ -37,7 +37,10 @@ function DaemonPill() {
   useEffect(() => {
     let alive = true
     const check = () => health().then(() => alive && setOk(true)).catch(() => alive && setOk(false))
-    check()
+    // check() already terminates its own chain in .catch(), so it never
+    // rejects — `void` marks the discard as deliberate rather than an
+    // unhandled rejection (@typescript-eslint/no-floating-promises).
+    void check()
     const t = setInterval(check, 15000)
     return () => { alive = false; clearInterval(t) }
   }, [])
