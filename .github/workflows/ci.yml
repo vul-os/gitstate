@@ -235,6 +235,15 @@ jobs:
         run: npm ci
       - name: Lint
         run: npm run lint
+      # `npm run lint` exiting 0 is not evidence the type-aware rules ran at
+      # all — that is exactly how this repo's TS migration briefly enforced
+      # nothing while reporting full coverage. This gate runs the tools
+      # against a fixture with a genuine floating promise and asserts the
+      # type-aware rule actually fires, checks typescript is pinned exactly
+      # (a caret let typescript-eslint silently fail to load once before),
+      # and asserts a real file-coverage floor.
+      - name: Lint config gate (type-awareness, TS pin, coverage floor)
+        run: npm run check:lint-config
       - name: Build
         run: npm run build
 
