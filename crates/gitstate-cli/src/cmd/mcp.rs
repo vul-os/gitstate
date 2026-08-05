@@ -43,20 +43,34 @@
 //! (`store/agent_runs.go`) covered. Wave 3 (`store/context_bundle.go`) adds
 //! `get_issue` and `get_pr_context`, the exact surface `context_bundle` was
 //! missing — both call `gitstate_daemon::ops::build_issue_context`/
-//! `build_pr_context` in-process, same as every other tool here.
+//! `build_pr_context` in-process, same as every other tool here. Wave 4
+//! (`store/search.go` + `internal/embed`) adds `search_issues`, calling
+//! `gitstate_daemon::ops::search` in-process — the same shape, and the exact
+//! tool wave 3's doc named as blocked on "a later wave". Four of Go's six
+//! MCP tools are now real.
 //!
-//! Go's three remaining tools still depend on domains out of scope here:
-//! `search_issues` needs search/embeddings (a later wave); `list_issues` and
-//! `update_issue_state` need plain work-item listing/mutation, a different
-//! domain from `context_bundle` entirely. They stay unstubbed — `tools/list`
-//! must never advertise a tool that would immediately fail every call.
+//! Go's two remaining tools still depend on a domain out of scope here:
+//! `list_issues` and `update_issue_state` need plain work-item
+//! listing/mutation, a different domain from search/context_bundle/agent_runs
+//! entirely (report/NL→report territory, wave 5). They stay unstubbed —
+//! `tools/list` must never advertise a tool that would immediately fail
+//! every call.
+//!
+//! `search_issues`'s schema is ported from Go's `cmd/gitstate-mcp/tools.go`
+//! almost verbatim (`query` required, `type` a single-value enum of
+//! `issues`/`prs`/`commits`, `limit` an integer) — Go's `type` filter was
+//! never an array, so this port keeps it a single optional value rather than
+//! inventing a multi-select the original tool never offered, even though
+//! `ops::search` itself accepts a `Vec<SearchKind>` (the CLI's `--type` flag
+//! IS repeatable, since it isn't bound by the Go schema the way this MCP
+//! tool is).
 
 use std::io::{self, BufRead, Write};
 
 use serde::Deserialize;
 use serde_json::{json, Value};
 
-use gitstate_core::WorkItemId;
+use gitstate_core::{SearchKind, WorkItemId};
 use gitstate_daemon::dto::NewAgentRun;
 use gitstate_daemon::{ops, AppState};
 
@@ -154,9 +168,18 @@ async fn handle_line(state: &AppState, line: &str) -> Option<Value> {
                 "serverInfo": { "name": SERVER_NAME, "version": env!("CARGO_PKG_VERSION") },
             }),
         ),
+        // Order is append-only across waves (wave 1's log_agent_run first,
+        // wave 3's pair, now wave 4's search_issues last) rather than
+        // reshuffled to match Go's original registry order, so an existing
+        // MCP host's tool list doesn't reorder underneath it wave to wave.
         "tools/list" => result_response(
             id,
-            json!({ "tools": [log_agent_run_schema(), get_issue_schema(), get_pr_context_schema()] }),
+            json!({ "tools": [
+                log_agent_run_schema(),
+                get_issue_schema(),
+                get_pr_context_schema(),
+                search_issues_schema(),
+            ] }),
         ),
         "tools/call" => handle_call_tool(state, id, req.params).await,
         "ping" => result_response(id, json!({})),
@@ -213,6 +236,29 @@ fn get_issue_schema() -> Value {
     })
 }
 
+fn search_issues_schema() -> Value {
+    json!({
+        "name": "search_issues",
+        "description": "Hybrid full-text + semantic + fuzzy search across gitstate issues, pull \
+            requests, and commits. Returns matching records as JSON, ranked by relevance. Use \
+            this to find work items by keyword or meaning before starting a task. Runs entirely \
+            locally — no network call.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "query": { "type": "string", "description": "Search query string (keywords)." },
+                "type": {
+                    "type": "string",
+                    "enum": ["issues", "prs", "commits"],
+                    "description": "Restrict results to one record kind. Omit to search all three."
+                },
+                "limit": { "type": "integer", "description": "Max results to return (server-capped at 100)." }
+            },
+            "required": ["query"]
+        }
+    })
+}
+
 fn get_pr_context_schema() -> Value {
     json!({
         "name": "get_pr_context",
@@ -249,6 +295,8 @@ async fn handle_call_tool(state: &AppState, id: Value, params: Value) -> Value {
             .map(|b| serde_json::to_string_pretty(&b).unwrap_or_else(|_| "{}".to_string())),
         "get_pr_context" => call_get_pr_context(state, &args)
             .map(|b| serde_json::to_string_pretty(&b).unwrap_or_else(|_| "{}".to_string())),
+        "search_issues" => call_search_issues(state, &args)
+            .map(|o| serde_json::to_string_pretty(&o).unwrap_or_else(|_| "{}".to_string())),
         other => return result_response(id, tool_error(format!("unknown tool: {other}"))),
     };
 
@@ -286,6 +334,34 @@ fn call_get_pr_context(
         state,
         &WorkItemId::from(pr_id.to_string()),
     )?)
+}
+
+/// `search_issues`'s `type` argument is a single string (matching Go's own
+/// schema — see the module doc), parsed to zero-or-one [`SearchKind`]; an
+/// empty/unrecognised value falls through to `ops::search`'s own "empty
+/// means every kind" rule rather than being rejected outright, matching
+/// Go's `normalizeSearchTypes`' forgiving behaviour for an unknown type.
+fn call_search_issues(
+    state: &AppState,
+    args: &Value,
+) -> anyhow::Result<gitstate_search::SearchOutcome> {
+    let query = args
+        .get("query")
+        .and_then(Value::as_str)
+        .filter(|s| !s.trim().is_empty())
+        .ok_or_else(|| anyhow::anyhow!("missing required argument \"query\""))?;
+    let kinds: Vec<SearchKind> = args
+        .get("type")
+        .and_then(Value::as_str)
+        .and_then(SearchKind::parse)
+        .into_iter()
+        .collect();
+    let limit = args
+        .get("limit")
+        .and_then(Value::as_u64)
+        .map(|n| n as u32)
+        .unwrap_or(0);
+    Ok(ops::search(state, query, &kinds, limit)?)
 }
 
 async fn call_log_agent_run(
@@ -380,14 +456,24 @@ mod tests {
         let tools = resp["result"]["tools"].as_array().unwrap();
         assert_eq!(
             tools.len(),
-            3,
-            "log_agent_run (wave 1) + get_issue/get_pr_context (wave 3) are wired"
+            4,
+            "log_agent_run (wave 1) + get_issue/get_pr_context (wave 3) \
+             + search_issues (wave 4) are wired; 2 of Go's 6 remain (wave 5)"
         );
         let names: Vec<&str> = tools.iter().map(|t| t["name"].as_str().unwrap()).collect();
-        assert_eq!(names, vec!["log_agent_run", "get_issue", "get_pr_context"]);
+        assert_eq!(
+            names,
+            vec![
+                "log_agent_run",
+                "get_issue",
+                "get_pr_context",
+                "search_issues"
+            ]
+        );
         assert_eq!(tools[0]["inputSchema"]["required"][0], "goal");
         assert_eq!(tools[1]["inputSchema"]["required"][0], "issue_id");
         assert_eq!(tools[2]["inputSchema"]["required"][0], "pr_id");
+        assert_eq!(tools[3]["inputSchema"]["required"][0], "query");
 
         let resp = handle_line(&state, r#"{"jsonrpc":"2.0","id":3,"method":"ping"}"#)
             .await
@@ -551,6 +637,53 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(resp["result"]["isError"], true);
+
+        // ── search_issues: missing `query` is an in-band error. ──
+        let resp = handle_line(
+            &state,
+            r#"{"jsonrpc":"2.0","id":14,"method":"tools/call","params":{"name":"search_issues","arguments":{}}}"#,
+        )
+        .await
+        .unwrap();
+        assert_eq!(resp["result"]["isError"], true);
+        assert!(resp["result"]["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("query"));
+
+        // ── search_issues: finds the issue saved for get_issue above by
+        // keyword, ranked, and reports which ranker found it (fts here — no
+        // embedding pass has run). ──
+        let resp = handle_line(
+            &state,
+            r#"{"jsonrpc":"2.0","id":15,"method":"tools/call",
+                "params":{"name":"search_issues","arguments":{"query":"flaky test","type":"issues"}}}"#,
+        )
+        .await
+        .unwrap();
+        assert_eq!(resp["result"]["isError"], false);
+        let text = resp["result"]["content"][0]["text"].as_str().unwrap();
+        let outcome: Value = serde_json::from_str(text).unwrap();
+        assert_eq!(outcome["semantic"], false);
+        assert_eq!(outcome["fuzzy"], false);
+        let results = outcome["results"].as_array().unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0]["id"], "iss-1");
+        assert_eq!(results[0]["title"], "fix the flaky test");
+
+        // ── search_issues: a query with no match anywhere is an empty,
+        // non-error result. ──
+        let resp = handle_line(
+            &state,
+            r#"{"jsonrpc":"2.0","id":16,"method":"tools/call",
+                "params":{"name":"search_issues","arguments":{"query":"utterly unrelated zephyr"}}}"#,
+        )
+        .await
+        .unwrap();
+        assert_eq!(resp["result"]["isError"], false);
+        let text = resp["result"]["content"][0]["text"].as_str().unwrap();
+        let outcome: Value = serde_json::from_str(text).unwrap();
+        assert!(outcome["results"].as_array().unwrap().is_empty());
 
         std::env::remove_var("GITSTATE_DATA_DIR");
         let _ = std::fs::remove_dir_all(&dir);

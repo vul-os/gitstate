@@ -22,6 +22,7 @@ time = { workspace = true }
 tokio = { workspace = true }
 gitstate-core = { workspace = true }
 gitstate-daemon = { workspace = true }
+gitstate-search = { workspace = true }
 gitstate-store = { workspace = true }
 
 [lints]

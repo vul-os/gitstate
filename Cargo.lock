@@ -883,6 +883,7 @@ dependencies = [
  "clap",
  "gitstate-core",
  "gitstate-daemon",
+ "gitstate-search",
  "gitstate-store",
  "hex",
  "serde",

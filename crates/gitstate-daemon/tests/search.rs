@@ -14,7 +14,9 @@
 
 use std::sync::Arc;
 
-use gitstate_core::{now_rfc3339, Forge, Repo, RepoId, SearchKind, WorkItem, WorkItemId, WorkKind, WorkState};
+use gitstate_core::{
+    now_rfc3339, Forge, Repo, RepoId, SearchKind, WorkItem, WorkItemId, WorkKind, WorkState,
+};
 use gitstate_daemon::{ops, AppState, ForgeRegistry};
 
 fn state() -> AppState {
