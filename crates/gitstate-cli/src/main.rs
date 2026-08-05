@@ -86,6 +86,11 @@ enum Command {
     /// `issues` are the separate `context_bundle` domain, not ported here).
     #[command(subcommand)]
     Agent(cmd::agent::AgentCmd),
+
+    /// Run a Model Context Protocol (MCP) stdio server exposing gitstate to
+    /// an agent host (Claude Code, Cursor, …). Folded from the standalone Go
+    /// `gitstate-mcp` binary; see `cmd::mcp` for the auth-scope reasoning.
+    Mcp,
 }
 
 #[tokio::main]
@@ -118,5 +123,6 @@ async fn run() -> anyhow::Result<()> {
         Command::Sync(c) => cmd::misc::sync(&ctx, c).await,
         Command::Data(c) => cmd::misc::data(&ctx, c),
         Command::Agent(c) => cmd::agent::run(&ctx, c).await,
+        Command::Mcp => cmd::mcp::run().await,
     }
 }

@@ -5,6 +5,7 @@ pub mod agent;
 pub mod category;
 pub mod context;
 pub mod insight;
+pub mod mcp;
 pub mod misc;
 pub mod repo;
 pub mod seed;
