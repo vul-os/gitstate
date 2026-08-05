@@ -41,6 +41,7 @@ function CreateForm({ onCreated }: { onCreated?: () => void }) {
   }
   return (
     <Card padding="md" className="mb-6">
+      {/* eslint-disable-next-line @typescript-eslint/no-misused-promises -- submit's rejection is caught by useAction(createContext) and rendered as `error` below; it never escapes unhandled. */}
       <form onSubmit={submit} className="flex flex-col gap-3">
         <input
           autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder="Context name (e.g. Q3 refactor)"
@@ -62,7 +63,7 @@ function CreateForm({ onCreated }: { onCreated?: () => void }) {
 
 function TagEditor({ ctx, onChanged }: { ctx: Context; onChanged?: () => void }) {
   const [value, setValue] = useState('')
-  const [patch] = useAction(patchContext)
+  const [patch, { error }] = useAction(patchContext)
 
   async function addTag(e: FormEvent<HTMLFormElement>) {
     e.preventDefault()
@@ -77,24 +78,29 @@ function TagEditor({ ctx, onChanged }: { ctx: Context; onChanged?: () => void })
   }
 
   return (
-    <div className="flex flex-wrap items-center gap-1.5">
-      {(ctx.tags || []).map((t) => (
-        <button key={t} type="button" onClick={() => removeTag(t)} title="Remove tag" className="group">
-          <Badge color="teal">{t}<X size={11} className="opacity-60 group-hover:opacity-100" /></Badge>
-        </button>
-      ))}
-      <form onSubmit={addTag} className="inline-flex">
-        <input
-          value={value} onChange={(e) => setValue(e.target.value)} placeholder="+ tag"
-          className="w-20 rounded-[var(--radius-badge)] border border-[var(--border2)] bg-[var(--bg)] px-2 py-0.5 text-xs text-[var(--text)] placeholder:text-[var(--text-faint)] focus:border-[var(--brand-teal)] focus:outline-none"
-        />
-      </form>
+    <div className="flex flex-col gap-1">
+      <div className="flex flex-wrap items-center gap-1.5">
+        {(ctx.tags || []).map((t) => (
+          // eslint-disable-next-line @typescript-eslint/no-misused-promises -- removeTag's rejection is caught by useAction(patchContext) and rendered as `error` below; it never escapes unhandled.
+          <button key={t} type="button" onClick={() => removeTag(t)} title="Remove tag" className="group">
+            <Badge color="teal">{t}<X size={11} className="opacity-60 group-hover:opacity-100" /></Badge>
+          </button>
+        ))}
+        {/* eslint-disable-next-line @typescript-eslint/no-misused-promises -- addTag's rejection is caught by useAction(patchContext) and rendered as `error` below; it never escapes unhandled. */}
+        <form onSubmit={addTag} className="inline-flex">
+          <input
+            value={value} onChange={(e) => setValue(e.target.value)} placeholder="+ tag"
+            className="w-20 rounded-[var(--radius-badge)] border border-[var(--border2)] bg-[var(--bg)] px-2 py-0.5 text-xs text-[var(--text)] placeholder:text-[var(--text-faint)] focus:border-[var(--brand-teal)] focus:outline-none"
+          />
+        </form>
+      </div>
+      {error && <span className="text-xs text-[var(--bad)]">{error.message}</span>}
     </div>
   )
 }
 
 function RepoAttacher({ ctx, repos, onChanged }: { ctx: Context; repos: Repo[]; onChanged?: () => void }) {
-  const [patch] = useAction(patchContext)
+  const [patch, { error }] = useAction(patchContext)
   async function toggle(repoId: string) {
     const cur = ctx.repo_ids || []
     const next = cur.includes(repoId) ? cur.filter((r) => r !== repoId) : [...cur, repoId]
@@ -103,23 +109,28 @@ function RepoAttacher({ ctx, repos, onChanged }: { ctx: Context; repos: Repo[]; 
   }
   if (!repos?.length) return null
   return (
-    <div className="flex flex-wrap gap-1.5">
-      {repos.map((r) => {
-        const on = (ctx.repo_ids || []).includes(r.id)
-        return (
-          <button
-            key={r.id} type="button" onClick={() => toggle(r.id)}
-            className={[
-              'rounded-[var(--radius-badge)] border px-2 py-0.5 text-xs font-mono transition-colors',
-              on
-                ? 'border-[#2DD4BF]/40 bg-[#2DD4BF]/10 text-[#2DD4BF]'
-                : 'border-[var(--border)] text-[var(--text-faint)] hover:text-[var(--text)]',
-            ].join(' ')}
-          >
-            {r.slug}
-          </button>
-        )
-      })}
+    <div className="flex flex-col gap-1">
+      <div className="flex flex-wrap gap-1.5">
+        {repos.map((r) => {
+          const on = (ctx.repo_ids || []).includes(r.id)
+          return (
+            <button
+              key={r.id} type="button"
+              // eslint-disable-next-line @typescript-eslint/no-misused-promises -- toggle's rejection is caught by useAction(patchContext) and rendered as `error` below; it never escapes unhandled.
+              onClick={() => toggle(r.id)}
+              className={[
+                'rounded-[var(--radius-badge)] border px-2 py-0.5 text-xs font-mono transition-colors',
+                on
+                  ? 'border-[#2DD4BF]/40 bg-[#2DD4BF]/10 text-[#2DD4BF]'
+                  : 'border-[var(--border)] text-[var(--text-faint)] hover:text-[var(--text)]',
+              ].join(' ')}
+            >
+              {r.slug}
+            </button>
+          )
+        })}
+      </div>
+      {error && <span className="text-xs text-[var(--bad)]">{error.message}</span>}
     </div>
   )
 }
@@ -127,7 +138,7 @@ function RepoAttacher({ ctx, repos, onChanged }: { ctx: Context; repos: Repo[]; 
 function NotesEditor({ ctx, onChanged }: { ctx: Context; onChanged?: () => void }) {
   const [notes, setNotes] = useState(ctx.notes || '')
   const [dirty, setDirty] = useState(false)
-  const [patch, { pending }] = useAction(patchContext)
+  const [patch, { pending, error }] = useAction(patchContext)
   async function save() {
     await patch(ctx.id, { notes })
     setDirty(false); onChanged?.()
@@ -141,16 +152,18 @@ function NotesEditor({ ctx, onChanged }: { ctx: Context; onChanged?: () => void 
         className="rounded-[var(--radius-btn)] border border-[var(--border2)] bg-[var(--bg)] px-3 py-2 text-sm text-[var(--text)] placeholder:text-[var(--text-faint)] focus:border-[var(--brand-teal)] focus:outline-none resize-y"
       />
       {dirty && (
+        // eslint-disable-next-line @typescript-eslint/no-misused-promises -- save's rejection is caught by useAction(patchContext) and rendered as `error` below; it never escapes unhandled.
         <Button size="sm" variant="outline" onClick={save} disabled={pending} leftIcon={<Save size={13} />}>
           {pending ? 'Saving…' : 'Save notes'}
         </Button>
       )}
+      {error && <span className="text-xs text-[var(--bad)]">{error.message}</span>}
     </div>
   )
 }
 
 function ContextCard({ ctx, repos, onChanged }: { ctx: Context; repos: Repo[]; onChanged?: () => void }) {
-  const [remove, { pending: removing }] = useAction(deleteContext)
+  const [remove, { pending: removing, error: removeErr }] = useAction(deleteContext)
   async function doDelete() {
     if (!window.confirm(`Delete context "${ctx.name}"?`)) return
     await remove(ctx.id)
@@ -165,7 +178,9 @@ function ContextCard({ ctx, repos, onChanged }: { ctx: Context; repos: Repo[]; o
             {ctx.name || 'Untitled'}
           </h3>
           {ctx.description && <p className="mt-1 text-sm text-[var(--text-faint)]">{ctx.description}</p>}
+          {removeErr && <p className="mt-1 text-xs text-[var(--bad)]">{removeErr.message}</p>}
         </div>
+        {/* eslint-disable-next-line @typescript-eslint/no-misused-promises -- doDelete's rejection is caught by useAction(deleteContext) and rendered as `removeErr` above; it never escapes unhandled. */}
         <Button variant="danger" size="sm" onClick={doDelete} disabled={removing} aria-label="Delete context">
           <Trash2 size={14} />
         </Button>
