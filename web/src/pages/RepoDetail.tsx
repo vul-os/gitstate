@@ -243,8 +243,8 @@ export default function RepoDetail() {
   const { data, loading, error, reload } = useAsync(() => loadRepo(repoId), [repoId])
 
   const [runScan, { pending: scanning, error: scanErr }] = useAction(scanRepo)
-  const [runClassify, { pending: classifying }] = useAction(classify)
-  const [runEffort, { pending: judging }] = useAction(effort)
+  const [runClassify, { pending: classifying, error: classifyErr }] = useAction(classify)
+  const [runEffort, { pending: judging, error: effortErr }] = useAction(effort)
 
   if (loading) return <div><PageHeader title="Repo" /><Spinner /></div>
   if (error) return <div><PageHeader title="Repo" /><ErrorState error={error} onRetry={reload} /></div>
@@ -252,6 +252,7 @@ export default function RepoDetail() {
     return (
       <div>
         <PageHeader title="Repo" />
+        {/* eslint-disable-next-line @typescript-eslint/no-misused-promises -- navigate()'s type is `void | Promise<void>` (react-router view-transitions); it never rejects on a plain path change with no transition configured. */}
         <EmptyState title="Repo not found" description="It may have been removed." action={<Button onClick={() => navigate('/repos')}>Back to repos</Button>} />
       </div>
     )
@@ -274,6 +275,7 @@ export default function RepoDetail() {
 
   return (
     <div>
+      {/* eslint-disable-next-line @typescript-eslint/no-misused-promises -- navigate()'s type is `void | Promise<void>` (react-router view-transitions); it never rejects on a plain path change with no transition configured. */}
       <button onClick={() => navigate('/repos')} className="mb-3 inline-flex items-center gap-1.5 text-sm text-[var(--text-faint)] hover:text-[var(--text)]">
         <ArrowLeft size={15} /> Repos
       </button>
@@ -283,12 +285,15 @@ export default function RepoDetail() {
         subtitle={repo.path}
         actions={
           <>
+            {/* eslint-disable-next-line @typescript-eslint/no-misused-promises -- doClassify's rejection is caught by useAction(classify) and rendered as `classifyErr` below; it never escapes unhandled. */}
             <Button variant="outline" size="sm" onClick={doClassify} disabled={classifying} leftIcon={<Sparkles size={14} />}>
               {classifying ? 'Classifying…' : 'Classify'}
             </Button>
+            {/* eslint-disable-next-line @typescript-eslint/no-misused-promises -- doEffort's rejection is caught by useAction(effort) and rendered as `effortErr` below; it never escapes unhandled. */}
             <Button variant="outline" size="sm" onClick={doEffort} disabled={judging} leftIcon={<Scale size={14} />}>
               {judging ? 'Judging…' : 'Judge effort'}
             </Button>
+            {/* eslint-disable-next-line @typescript-eslint/no-misused-promises -- doScan's rejection is caught by useAction(scanRepo) and rendered as `scanErr` below; it never escapes unhandled. */}
             <Button size="sm" onClick={doScan} disabled={scanning} leftIcon={<RefreshCw size={14} className={scanning ? 'animate-spin' : ''} />}>
               {scanning ? 'Scanning…' : 'Scan'}
             </Button>
@@ -296,6 +301,7 @@ export default function RepoDetail() {
         }
       />
       {scanErr && <p className="mb-4 text-sm text-[var(--bad)]">{scanErr.message}</p>}
+      {(classifyErr || effortErr) && <p className="mb-4 text-sm text-[var(--bad)]">{(classifyErr || effortErr)?.message}</p>}
 
       <section className="mb-8">
         <h2 className="mb-3 text-sm font-semibold text-[var(--text)]">Project state</h2>

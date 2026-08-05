@@ -26,6 +26,7 @@ function AddForm({ onAdded }: { onAdded?: () => void }) {
   }
   return (
     <Card padding="md" className="mb-6">
+      {/* eslint-disable-next-line @typescript-eslint/no-misused-promises -- submit's rejection is caught by useAction(createCategory) and rendered as `error` below (line 54); it never escapes unhandled. */}
       <form onSubmit={submit} className="flex flex-col gap-3 sm:flex-row sm:items-end sm:flex-wrap">
         <label className="flex flex-col gap-1">
           <span className="text-[10px] font-mono uppercase tracking-[0.14em] text-[var(--text-faint)]">Key</span>
@@ -57,7 +58,7 @@ function AddForm({ onAdded }: { onAdded?: () => void }) {
 }
 
 function CategoryRow({ cat, onChanged }: { cat: Category; onChanged?: () => void }) {
-  const [remove, { pending }] = useAction(deleteCategory)
+  const [remove, { pending, error }] = useAction(deleteCategory)
   const isLocal = cat.source === 'local'
   async function doDelete() {
     if (!window.confirm(`Delete category "${cat.key}"?`)) return
@@ -77,9 +78,11 @@ function CategoryRow({ cat, onChanged }: { cat: Category; onChanged?: () => void
             {cat.key}{cat.parent_key ? ` · ↳ ${cat.parent_key}` : ''}
             {cat.taxonomy_version ? ` · v${cat.taxonomy_version}` : ''}
           </span>
+          {error && <span className="block text-xs text-[var(--bad)]">{error.message}</span>}
         </div>
       </div>
       {isLocal && (
+        // eslint-disable-next-line @typescript-eslint/no-misused-promises -- doDelete's rejection is caught by useAction(deleteCategory) and rendered as `error` above (line 80); it never escapes unhandled.
         <Button variant="ghost" size="sm" onClick={doDelete} disabled={pending} aria-label="Delete category">
           <Trash2 size={14} />
         </Button>

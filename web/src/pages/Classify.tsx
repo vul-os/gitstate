@@ -30,7 +30,7 @@ interface ResultRowProps {
 
 function ResultRow({ item, result, effortRow, categories, onFeedback }: ResultRowProps) {
   const [chosen, setChosen] = useState(result?.category_key || '')
-  const [feedback, { pending }] = useAction(classifyFeedback)
+  const [feedback, { pending, error }] = useAction(classifyFeedback)
 
   async function pick(key: string) {
     setChosen(key)
@@ -70,6 +70,7 @@ function ResultRow({ item, result, effortRow, categories, onFeedback }: ResultRo
         <span className="text-[10px] font-mono uppercase tracking-[0.14em] text-[var(--text-faint)]">Correct label:</span>
         <select
           value={chosen}
+          // eslint-disable-next-line @typescript-eslint/no-misused-promises -- pick's rejection is caught by useAction(classifyFeedback) and rendered as `error` below; it never escapes unhandled.
           onChange={(e) => pick(e.target.value)}
           disabled={pending}
           className="rounded-[var(--radius-btn)] border border-[var(--border2)] bg-[var(--bg)] px-2 py-1 text-xs text-[var(--text)] focus:border-[var(--brand-teal)] focus:outline-none"
@@ -78,6 +79,7 @@ function ResultRow({ item, result, effortRow, categories, onFeedback }: ResultRo
           {categories.map((c) => <option key={c.id} value={c.key}>{c.key}</option>)}
         </select>
         {chosen && <Check size={14} className="text-[var(--ok)]" />}
+        {error && <span className="text-xs text-[var(--bad)]">{error.message}</span>}
       </div>
     </Card>
   )
@@ -137,15 +139,18 @@ export default function Classify() {
       <Card padding="md" className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-center">
         <select
           value={repoId}
+          // eslint-disable-next-line @typescript-eslint/no-misused-promises -- selectRepo awaits only .catch()-guarded promises (each leg falls back to []), so it never itself rejects.
           onChange={(e) => selectRepo(e.target.value)}
           className="flex-1 rounded-[var(--radius-btn)] border border-[var(--border2)] bg-[var(--bg)] px-3 py-2 text-sm text-[var(--text)] focus:border-[var(--brand-teal)] focus:outline-none"
         >
           <option value="">Select a repo…</option>
           {(repos || []).map((r) => <option key={r.id} value={r.id}>{r.slug}</option>)}
         </select>
+        {/* eslint-disable-next-line @typescript-eslint/no-misused-promises -- doClassify's rejection is caught by useAction(classify) and rendered as `clErr` below; it never escapes unhandled. */}
         <Button onClick={doClassify} disabled={!repoId || classifying} leftIcon={<Sparkles size={15} />}>
           {classifying ? 'Classifying…' : 'Classify items'}
         </Button>
+        {/* eslint-disable-next-line @typescript-eslint/no-misused-promises -- doEffort's rejection is caught by useAction(effort) and rendered as `efErr` below; it never escapes unhandled. */}
         <Button variant="outline" onClick={doEffort} disabled={!repoId || judging} leftIcon={<Scale size={15} />}>
           {judging ? 'Judging…' : 'Judge effort'}
         </Button>

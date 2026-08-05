@@ -18,7 +18,7 @@ import { Badge } from '../components/ui/Badge.tsx'
 import { StatCard } from '../components/ui/StatCard.tsx'
 import { PageHeader, Spinner, ErrorState, EmptyState } from '../components/common.tsx'
 import { useAsync, useAction } from '../lib/hooks.ts'
-import { contributionRollup, weights, saveWeights, resetWeights } from '../lib/api.ts'
+import { contributionRollup, weights, saveWeights, resetWeights, type ApiError } from '../lib/api.ts'
 import { compact } from '../lib/analyticsView.ts'
 import type { ContributionRollupRow, Dimensions, Weights } from '../lib/types.ts'
 
@@ -110,9 +110,10 @@ interface WeightTunerProps {
   onReset: () => void
   saving: boolean
   resetting: boolean
+  error: ApiError | null
 }
 
-function WeightTuner({ local, persisted, onChange, onSave, onReset, saving, resetting }: WeightTunerProps) {
+function WeightTuner({ local, persisted, onChange, onSave, onReset, saving, resetting, error }: WeightTunerProps) {
   const dirty = DIMS.some(([key]) => (local?.[key] ?? 0) !== (persisted?.[key] ?? 0))
   return (
     <Panel
@@ -125,6 +126,7 @@ function WeightTuner({ local, persisted, onChange, onSave, onReset, saving, rese
               unsaved changes
             </span>
           )}
+          {error && <span className="text-xs text-[var(--bad)]">{error.message}</span>}
           <Button
             variant="outline" size="xs" onClick={onReset} disabled={resetting}
             leftIcon={<RotateCcw size={13} />}
@@ -265,8 +267,8 @@ function ContributorTexture({ rows, localWeights }: { rows: ContributionRollupRo
 
 export default function Contribution() {
   const { data, loading, error, reload } = useAsync(load, [])
-  const [runSave, { pending: saving }] = useAction(saveWeights)
-  const [runReset, { pending: resetting }] = useAction(resetWeights)
+  const [runSave, { pending: saving, error: saveErr }] = useAction(saveWeights)
+  const [runReset, { pending: resetting, error: resetErr }] = useAction(resetWeights)
 
   // Local, editable copy of the weights — the slider state. Seeded from the
   // server once data lands; `null` means "not seeded yet".
@@ -351,10 +353,13 @@ export default function Contribution() {
           local={effective}
           persisted={persisted}
           onChange={setWeight}
+          // eslint-disable-next-line @typescript-eslint/no-misused-promises -- doSave's rejection is caught by useAction(saveWeights) and rendered as `saveErr` (passed down as `error`); it never escapes unhandled.
           onSave={doSave}
+          // eslint-disable-next-line @typescript-eslint/no-misused-promises -- doReset's rejection is caught by useAction(resetWeights) and rendered as `resetErr` (passed down as `error`); it never escapes unhandled.
           onReset={doReset}
           saving={saving}
           resetting={resetting}
+          error={saveErr || resetErr}
         />
       </div>
 

@@ -82,7 +82,7 @@ export function Heatmap({ days = [], metric = 'commits', onSelect }: HeatmapProp
     // Chunk into week columns. The first column is padded so its cells sit on
     // the correct weekday row even when the range starts mid-week.
     const cols: (DayBucket | null)[][] = []
-    let current: (DayBucket | null)[] = new Array(days[0].weekday).fill(null)
+    let current: (DayBucket | null)[] = Array.from({ length: days[0].weekday }, (): DayBucket | null => null)
     for (const day of days) {
       current.push(day)
       if (day.weekday === 6) {

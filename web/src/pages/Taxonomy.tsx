@@ -39,6 +39,7 @@ export default function Taxonomy() {
       <PageHeader
         title="Taxonomy"
         subtitle="A signed, versioned, content-addressed category tree shipped as data — not a service. It gives peers a shared label vocabulary without any central authority."
+        // eslint-disable-next-line @typescript-eslint/no-misused-promises -- doVerify wraps its whole body in try/catch and renders both outcomes via `result`; it never rejects.
         actions={<Button onClick={doVerify} disabled={pending} leftIcon={<ShieldCheck size={15} />}>{pending ? 'Verifying…' : 'Verify signature'}</Button>}
       />
 
