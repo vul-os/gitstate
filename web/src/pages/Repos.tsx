@@ -37,6 +37,7 @@ function AddRepoForm({ onAdded }: { onAdded?: () => void }) {
 
   return (
     <Card padding="md" className="mb-6">
+      {/* eslint-disable-next-line @typescript-eslint/no-misused-promises -- submit's rejection is caught by useAction(addRepo) and rendered as `error` below; it never escapes unhandled. */}
       <form onSubmit={submit} className="flex flex-col gap-3">
         <div className="flex items-center gap-1 rounded-[var(--radius-btn)] bg-[var(--bg-surface2)] p-1 w-fit">
           {(['path', 'remote'] as const).map((m) => (
@@ -79,7 +80,7 @@ function AddRepoForm({ onAdded }: { onAdded?: () => void }) {
 function RepoRow({ repo, onChanged }: { repo: Repo; onChanged?: () => void }) {
   const navigate = useNavigate()
   const [scan, { pending: scanning, error: scanErr }] = useAction(scanRepo)
-  const [remove, { pending: removing }] = useAction(deleteRepo)
+  const [remove, { pending: removing, error: removeErr }] = useAction(deleteRepo)
 
   async function doScan() {
     await scan(repo.id, { with_forge: repo.forge !== 'local' })
@@ -95,6 +96,7 @@ function RepoRow({ repo, onChanged }: { repo: Repo; onChanged?: () => void }) {
     <Card padding="md" hoverable className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
       <button
         type="button"
+        // eslint-disable-next-line @typescript-eslint/no-misused-promises -- navigate()'s type is `void | Promise<void>` (react-router view-transitions); it never rejects on a plain path change with no transition configured.
         onClick={() => navigate(`/repos/${repo.id}`)}
         className="flex min-w-0 items-center gap-3 text-left"
       >
@@ -116,17 +118,21 @@ function RepoRow({ repo, onChanged }: { repo: Repo; onChanged?: () => void }) {
         <span className="hidden text-xs text-[var(--text-faint)] sm:inline">
           {repo.last_scanned_at ? `scanned ${new Date(repo.last_scanned_at).toLocaleDateString()}` : 'never scanned'}
         </span>
+        {/* eslint-disable-next-line @typescript-eslint/no-misused-promises -- doScan's rejection is caught by useAction(scanRepo) and rendered as `scanErr` below; it never escapes unhandled. */}
         <Button variant="outline" size="sm" onClick={doScan} disabled={scanning} leftIcon={<RefreshCw size={14} className={scanning ? 'animate-spin' : ''} />}>
           {scanning ? 'Scanning…' : 'Scan'}
         </Button>
+        {/* eslint-disable-next-line @typescript-eslint/no-misused-promises -- navigate()'s type is `void | Promise<void>` (react-router view-transitions); it never rejects on a plain path change with no transition configured. */}
         <Button variant="ghost" size="sm" onClick={() => navigate(`/repos/${repo.id}`)} rightIcon={<ArrowRight size={14} />}>
           Open
         </Button>
+        {/* eslint-disable-next-line @typescript-eslint/no-misused-promises -- doDelete's rejection is caught by useAction(deleteRepo) and rendered as `removeErr` below; it never escapes unhandled. */}
         <Button variant="danger" size="sm" onClick={doDelete} disabled={removing} aria-label="Remove repo">
           <Trash2 size={14} />
         </Button>
       </div>
       {scanErr && <p className="w-full text-xs text-[var(--bad)]">{scanErr.message}</p>}
+      {removeErr && <p className="w-full text-xs text-[var(--bad)]">{removeErr.message}</p>}
     </Card>
   )
 }
