@@ -59,7 +59,13 @@ cd "$ROOT"
 # also matches any stray Go file vendored inside web/node_modules (the `flatted`
 # package ships one). Scoping to the real trees keeps the gate deterministic
 # whether or not the frontend has been installed.
-PKGS=(./cmd/... ./internal/...)
+#
+# `internal/` is gone as of the T11 final cleanup wave (2026-08-05) — every
+# domain and every piece of scaffolding under it has been ported or deleted.
+# Only cmd/migrate is left, and it goes away in the same commit as this
+# script, go.mod, go.sum and migrations/. PKGS is `./cmd/...` only for this
+# one intermediate commit.
+PKGS=(./cmd/...)
 
 # Coverage floors — re-measured 2026-08-04 after the SaaS-only and
 # fully-ported packages were removed (decisions.md T11 resolution note). The
@@ -68,9 +74,9 @@ PKGS=(./cmd/... ./internal/...)
 # internal/store's still-unported files) plus the scaffolding it needs
 # (config/db/crypto/llm/gitanalysis) and two standalone CLIs (gittrack,
 # gitstate-mcp).
-MIN_PKGS="${MIN_PKGS:-2}"          # packages under cmd/ + internal/
-MIN_TESTED_PKGS="${MIN_TESTED_PKGS:-1}"  # of those, ones carrying _test.go
-MIN_GO_FILES="${MIN_GO_FILES:-5}" # .go files handed to gofmt
+MIN_PKGS="${MIN_PKGS:-1}"          # packages under cmd/ (internal/ is gone)
+MIN_TESTED_PKGS="${MIN_TESTED_PKGS:-0}"  # of those, ones carrying _test.go
+MIN_GO_FILES="${MIN_GO_FILES:-1}" # .go files handed to gofmt
 
 # Exact, not a floor: how many top-level Go tests are expected to `t.Skip` when
 # no DATABASE_URL is set. Measured directly with `go test -v` across
@@ -156,14 +162,14 @@ echo "  ok"
 # handed no files at all, so count the files first and assert the count.
 step "gofmt"
 go_files=()
-while IFS= read -r f; do go_files+=("$f"); done < <(find cmd internal -type f -name '*.go' | sort)
+while IFS= read -r f; do go_files+=("$f"); done < <(find cmd -type f -name '*.go' | sort)
 echo "  ${#go_files[@]} .go files"
 [ "${#go_files[@]}" -ge "$MIN_GO_FILES" ] ||
   fail "expected >= $MIN_GO_FILES .go files to format-check, found ${#go_files[@]} (gofmt would have passed by checking nothing)"
 
 unformatted="$(gofmt -l "${go_files[@]}")"
 if [ -n "$unformatted" ]; then
-  fail "gofmt reports unformatted files (run: gofmt -w cmd internal):
+  fail "gofmt reports unformatted files (run: gofmt -w cmd):
 $unformatted"
 fi
 echo "  ok"
