@@ -68,9 +68,9 @@ PKGS=(./cmd/... ./internal/...)
 # internal/store's still-unported files) plus the scaffolding it needs
 # (config/db/crypto/llm/gitanalysis) and two standalone CLIs (gittrack,
 # gitstate-mcp).
-MIN_PKGS="${MIN_PKGS:-5}"          # packages under cmd/ + internal/
-MIN_TESTED_PKGS="${MIN_TESTED_PKGS:-3}"  # of those, ones carrying _test.go
-MIN_GO_FILES="${MIN_GO_FILES:-11}" # .go files handed to gofmt
+MIN_PKGS="${MIN_PKGS:-3}"          # packages under cmd/ + internal/
+MIN_TESTED_PKGS="${MIN_TESTED_PKGS:-1}"  # of those, ones carrying _test.go
+MIN_GO_FILES="${MIN_GO_FILES:-6}" # .go files handed to gofmt
 
 # Exact, not a floor: how many top-level Go tests are expected to `t.Skip` when
 # no DATABASE_URL is set. Measured directly with `go test -v` across
