@@ -43,6 +43,7 @@ Local edits and remote merges share one code path, so state is identical however
 order yields identical state. `updated_at` is the max HLC wall-time rendered as RFC3339.
 
 ```mermaid
+%%{init: {'theme':'base','themeVariables':{'fontFamily':'ui-monospace, SFMono-Regular, Menlo, monospace','actorBkg':'#1e293b','actorBorder':'#64748b','actorTextColor':'#e2e8f0','actorLineColor':'#64748b','signalColor':'#0d9488','signalTextColor':'#78838f','noteBkgColor':'#0f766e','noteBorderColor':'#5eead4','noteTextColor':'#f0fdfa','labelBoxBkgColor':'#1e293b','labelBoxBorderColor':'#64748b','labelTextColor':'#e2e8f0'}}}%%
 sequenceDiagram
   participant A as Peer A
   participant B as Peer B
