@@ -35,6 +35,7 @@ Product slug `gitstate`, served at `gitstate.<vulos-domain>`.
 | **gitstate-sync** | P2P replication of contexts + categories: merge algebra, signed ops, HTTP peer transport. | core |
 
 ```mermaid
+%%{init: {'theme':'base','themeVariables':{'fontFamily':'ui-monospace, SFMono-Regular, Menlo, monospace','primaryColor':'#334155','primaryBorderColor':'#94a3b8','primaryTextColor':'#e2e8f0','lineColor':'#0d9488','edgeLabelBackground':'#1e293b','clusterBkg':'transparent','clusterBorder':'#64748b'}}}%%
 flowchart TB
     core["gitstate-core<br/>(types + traits + derive)"]
     git["gitstate-git"] --> core
@@ -47,6 +48,13 @@ flowchart TB
     cli["gitstate-cli (clap)"] --> daemon
     tauri["apps/desktop (Tauri)"] --> daemon
     web["web/ (React)"] -->|"HTTP JSON"| daemon
+
+    classDef entry fill:#1e293b,stroke:#64748b,color:#e2e8f0
+    classDef subject fill:#0f766e,stroke:#5eead4,color:#f0fdfa
+    classDef downstream fill:#334155,stroke:#94a3b8,color:#e2e8f0
+    class cli,tauri,web entry
+    class daemon subject
+    class core,git,forge,classify,tracker,store,sync downstream
 ```
 
 ## The four traits (owned by gitstate-core)
