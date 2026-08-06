@@ -1,0 +1,312 @@
+name: Release
+
+# On tag vX.Y.Z:
+#   - gitstate-cli binary (the `gitstate` bin, which embeds `serve` — the
+#     headless daemon deploy/gitstated.service and docs/DEPLOYMENT.md
+#     describe) for linux/amd64, macos/arm64, macos/amd64 — three NATIVE
+#     builds, no cross toolchain involved.
+#   - the Tauri desktop app, macOS only (.dmg + .app.zip), UNSIGNED: no Apple
+#     signing identity or notarization secret is configured, so Gatekeeper
+#     will warn on first launch (right-click > Open).
+#   - one GitHub Release with every artifact + a SHA256SUMS manifest covering
+#     all of them, plus a sigstore build-provenance attestation.
+#
+# Deliberately NOT in this workflow, stated rather than silently absent:
+#   - Windows and Linux Tauri bundles (msi/nsis/appimage/deb). tauri.conf.json
+#     lists all five targets, but producing them needs a Windows runner and a
+#     Linux runner with webkit2gtk system packages, neither of which this
+#     change could verify actually produces a working bundle. Building them
+#     unverified and shipping whatever came out would be worse than not
+#     shipping them.
+#   - linux/arm64 for the CLI, for the same reason: no native arm64 Linux
+#     runner was exercised here, and cross-compiling rusqlite/git2's C
+#     dependencies is its own unverified thing to get wrong.
+#   - Any of the above being SIGNED. There is no code-signing identity or
+#     notarization credential wired into this repo.
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  # Fails closed: a tag whose value does not match every declared version is
+  # refused before anything is built, not discovered after a release is
+  # already public under the wrong number.
+  version-guard:
+    name: tag matches every declared version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check tag == VERSION == Cargo.toml == package.json(s) == tauri.conf.json
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME#v}"
+
+          file_ver="$(tr -d '[:space:]' < VERSION)"
+          cargo_ver="$(awk -F'"' '/^\[workspace\.package\]/{f=1} f && /^version *=/{print $2; exit}' Cargo.toml)"
+          web_ver="$(node -p "require('./web/package.json').version")"
+          desktop_pkg_ver="$(node -p "require('./apps/desktop/package.json').version")"
+          tauri_conf_ver="$(node -p "require('./apps/desktop/src-tauri/tauri.conf.json').version")"
+          desktop_cargo_ver="$(awk -F'"' '/^\[package\]/{f=1} f && /^version *=/{print $2; exit}' apps/desktop/src-tauri/Cargo.toml)"
+
+          echo "tag=$tag"
+          echo "VERSION=$file_ver"
+          echo "Cargo.toml [workspace.package]=$cargo_ver"
+          echo "web/package.json=$web_ver"
+          echo "apps/desktop/package.json=$desktop_pkg_ver"
+          echo "apps/desktop/src-tauri/tauri.conf.json=$tauri_conf_ver"
+          echo "apps/desktop/src-tauri/Cargo.toml=$desktop_cargo_ver"
+
+          fail=0
+          for pair in "VERSION:$file_ver" "Cargo.toml:$cargo_ver" "web/package.json:$web_ver" \
+                      "apps/desktop/package.json:$desktop_pkg_ver" \
+                      "apps/desktop/src-tauri/tauri.conf.json:$tauri_conf_ver" \
+                      "apps/desktop/src-tauri/Cargo.toml:$desktop_cargo_ver"; do
+            name="${pair%%:*}"
+            val="${pair#*:}"
+            if [ "$val" != "$tag" ]; then
+              echo "::error::$name declares '$val', tag v$tag declares '$tag' — refusing to release"
+              fail=1
+            fi
+          done
+          [ "$fail" -eq 0 ] || exit 1
+          echo "ok: tag v$tag matches every declared version"
+
+  test:
+    name: test (workspace + frontend, at the tagged commit)
+    needs: version-guard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Format
+        run: cargo fmt --all --check
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Test
+        run: cargo test --workspace
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: web install
+        working-directory: web
+        run: npm ci
+      - name: web lint + type-awareness gate
+        working-directory: web
+        run: |
+          npm run lint
+          npm run check:lint-config
+      - name: web typecheck
+        working-directory: web
+        run: |
+          npx tsc --noEmit
+          npm run typecheck:scripts
+      - name: web build
+        working-directory: web
+        run: npm run build
+
+  # Three NATIVE targets — no GOOS/GOARCH-style cross-compilation, which
+  # rusqlite's and git2's C dependencies make its own unverified project.
+  cli:
+    name: gitstate-cli ${{ matrix.name }}
+    needs: test
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            name: linux_x86_64
+          - os: macos-latest
+            name: macos_arm64
+          - os: macos-13
+            name: macos_x86_64
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: cli-${{ matrix.name }}
+      - name: Build
+        run: cargo build --release -p gitstate-cli
+      - name: Stage
+        shell: bash
+        run: |
+          set -euo pipefail
+          dir="dist/gitstate_${GITHUB_REF_NAME}_${{ matrix.name }}"
+          mkdir -p "$dir"
+          cp target/release/gitstate "$dir/gitstate"
+          cp deploy/gitstated.service "$dir/" 2>/dev/null || true
+          tar -C dist -czf "dist/gitstate_${GITHUB_REF_NAME}_${{ matrix.name }}.tar.gz" \
+            "gitstate_${GITHUB_REF_NAME}_${{ matrix.name }}"
+      # Only the runner's own binary can be executed here; the other two
+      # matrix legs are the same source built natively on their own runner,
+      # not cross-compiled, so this is a real (if per-leg) smoke test rather
+      # than one leg vouching for the others.
+      - name: smoke the built binary
+        run: |
+          set -euo pipefail
+          out="$(target/release/gitstate --version 2>&1 || true)"
+          echo "$out"
+          echo "$out" | grep -q "${GITHUB_REF_NAME#v}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cli-${{ matrix.name }}
+          path: dist/*.tar.gz
+          if-no-files-found: error
+
+  desktop-macos:
+    name: desktop app (macOS, unsigned)
+    needs: test
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop/src-tauri
+      - name: web install
+        working-directory: web
+        run: npm ci
+      - name: desktop install
+        working-directory: apps/desktop
+        run: npm ci
+      # No APPLE_SIGNING_IDENTITY / notarization secret is set anywhere in
+      # this repo, so Tauri produces an unsigned .app/.dmg. beforeBuildCommand
+      # in tauri.conf.json builds web/dist as part of this step.
+      - name: Tauri build
+        working-directory: apps/desktop
+        run: npx tauri build --bundles dmg
+      - name: Package bundles
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist-desktop
+          found=0
+          while IFS= read -r -d '' dmg; do
+            cp "$dmg" "dist-desktop/gitstate_${GITHUB_REF_NAME}_macos_$(uname -m).dmg"
+            found=1
+          done < <(find apps/desktop/src-tauri/target -type f -name '*.dmg' -path '*/bundle/*' -print0)
+          while IFS= read -r -d '' app; do
+            ditto -c -k --keepParent "$app" \
+              "dist-desktop/gitstate_${GITHUB_REF_NAME}_macos_$(uname -m).app.zip"
+            found=1
+          done < <(find apps/desktop/src-tauri/target -type d -name '*.app' -path '*/bundle/*' -print0)
+          if [ "$found" -eq 0 ]; then
+            echo "::error::no Tauri bundles found under apps/desktop/src-tauri/target"
+            exit 1
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desktop-macos
+          path: dist-desktop/*
+          if-no-files-found: error
+
+  # ===========================================================================
+  # RELEASE SIGNING. This job is the only thing that writes SHA256SUMS, and it
+  # verifies its own manifest before publishing, so the emit step and the
+  # check step cannot drift apart silently.
+  #
+  # WHY ATTESTATION AND NOT A DETACHED GPG SIGNATURE: a detached signature
+  # needs a private key — somewhere to live, an owner, a rotation story, and a
+  # public half users must obtain over some channel they already trust. If
+  # that channel is this same repo, the signature proves nothing the TLS
+  # fetch didn't already. actions/attest-build-provenance signs with a
+  # short-lived sigstore certificate minted from this job's OIDC token: no
+  # long-lived key, no new secret, no new hosted service.
+  # ===========================================================================
+  release:
+    name: publish GitHub release (checksummed + attested)
+    needs: [cli, desktop-macos]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write       # create the Release and upload assets
+      id-token: write       # mint the OIDC token the attestation is signed with
+      attestations: write   # record the attestation against this repo
+    steps:
+      - uses: actions/checkout@v4
+
+      # Everything published lands in release/ and nothing else does, so the
+      # manifest covers exactly the published set by construction.
+      - uses: actions/download-artifact@v4
+        with:
+          path: release
+          merge-multiple: true
+
+      - name: Emit SHA256SUMS
+        run: |
+          set -euo pipefail
+          cd release
+
+          mapfile -t ASSETS < <(find . -maxdepth 1 -type f ! -name SHA256SUMS -exec basename {} \; | LC_ALL=C sort)
+
+          # FAIL CLOSED. A build that produced nothing must be a red release,
+          # not a green one with an empty manifest.
+          if [ "${#ASSETS[@]}" -eq 0 ]; then
+            echo "::error::release/ contains no artifacts — refusing to publish a release whose manifest would vouch for nothing."
+            exit 1
+          fi
+
+          : > SHA256SUMS
+          for a in "${ASSETS[@]}"; do
+            sha256sum "$a" >> SHA256SUMS
+          done
+
+          # COVERAGE ASSERTION. Without this the step is trivially
+          # satisfiable: a one-line manifest "covers" a six-asset release and
+          # every later check still passes. Pin line count to asset count.
+          LINES="$(wc -l < SHA256SUMS | tr -d ' ')"
+          if [ "$LINES" -ne "${#ASSETS[@]}" ]; then
+            echo "::error::SHA256SUMS has ${LINES} line(s) for ${#ASSETS[@]} staged artifact(s) — the manifest does not cover the release."
+            exit 1
+          fi
+
+          echo "SHA256SUMS covers ${#ASSETS[@]} artifact(s):"
+          cat SHA256SUMS
+
+      - name: Verify SHA256SUMS covers every staged file, byte for byte
+        run: |
+          set -euo pipefail
+          cd release
+          sha256sum -c SHA256SUMS --strict
+
+      - name: Attest build provenance (sigstore via OIDC — no long-lived key)
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: "release/*"
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: release/*
+          generate_release_notes: true
+          body: |
+            The macOS desktop app is **unsigned** (no Apple signing identity is
+            configured): on first launch, right-click the app and choose Open.
+
+            This release does not include Windows or Linux desktop bundles, or
+            a linux/arm64 CLI binary — see the comment at the top of
+            `.github/workflows/release.yml` for why.
+
+            ### Verify before you run this
+
+            ```sh
+            curl -fsSLO https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/SHA256SUMS
+            sha256sum -c SHA256SUMS --ignore-missing
+            ```
+
+            `SHA256SUMS` covers every file attached to this release. This
+            release is additionally attested via sigstore build provenance
+            (see the "Attestations" tab on this repository, or `gh attestation
+            verify <file> --repo ${{ github.repository }}`).
