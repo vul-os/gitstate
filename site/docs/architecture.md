@@ -6,6 +6,7 @@ SQLite file, and a daemon that serves the same UI whether you run it headless or
 app.
 
 ```mermaid
+%%{init: {'theme':'base','themeVariables':{'fontFamily':'ui-monospace, SFMono-Regular, Menlo, monospace','primaryColor':'#334155','primaryBorderColor':'#94a3b8','primaryTextColor':'#e2e8f0','lineColor':'#0d9488','edgeLabelBackground':'#1e293b','clusterBkg':'transparent','clusterBorder':'#64748b'}}}%%
 flowchart TD
   subgraph Machine["Your machine — nothing leaves it unless you configure an endpoint"]
     UI["React web UI<br/>(web/dist)"]
@@ -31,6 +32,13 @@ flowchart TD
   Classify -->|optional| ExtLLM
   Tracker -->|your personal token, or an export file| ExtTracker
   Store <-->|CRDT ops, optional feature| Peer
+
+  classDef entry fill:#1e293b,stroke:#64748b,color:#e2e8f0
+  classDef subject fill:#0f766e,stroke:#5eead4,color:#f0fdfa
+  classDef downstream fill:#334155,stroke:#94a3b8,color:#e2e8f0
+  class UI,Tauri entry
+  class Daemon subject
+  class Git,Forge,Classify,Tracker,Store,Core,ExtForge,ExtLLM,ExtTracker,Peer downstream
 ```
 
 ---
