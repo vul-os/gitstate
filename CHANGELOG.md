@@ -7,7 +7,9 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
-## [Unreleased] — the transform to local-first
+## [Unreleased]
+
+## [0.1.0] - 2026-08-06 — the transform to local-first
 
 gitstate is being rebuilt from a multi-tenant Go+Postgres+React SaaS into a **standalone, local-first,
 peer-to-peer desktop app** in the vulos suite style (`slipscan` / `diwan` / `wede`). The product
