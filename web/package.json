@@ -8,6 +8,7 @@
     "build": "vite build",
     "lint": "eslint .",
     "check:lint-config": "node scripts/check-lint-config.mjs",
+    "typecheck:scripts": "tsc -p scripts/tsconfig.json --noEmit",
     "preview": "vite preview",
     "dev:api": "cd .. && cargo run -p gitstate-cli -- serve",
     "dev:full": "concurrently -k -n api,web -c blue,green \"npm:dev:api\" \"npm:dev\"",
