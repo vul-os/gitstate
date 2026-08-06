@@ -102,7 +102,7 @@ configured — your forge (`gh`/`glab` or a token), optionally your local LLM, a
 you import from. A plain scan of a local repo makes **zero** network calls.
 
 ```mermaid
-%%{init: {'theme':'base','themeVariables':{'fontFamily':'ui-monospace, SFMono-Regular, Menlo, monospace','primaryColor':'transparent','primaryBorderColor':'#14b8a6','primaryTextColor':'#8f969e','lineColor':'#8a8f98','nodeBorder':'#5f8f8a','edgeLabelBackground':'transparent','clusterBorder':'#3f8f86','clusterBkg':'transparent'}}}%%
+%%{init: {'theme':'base','themeVariables':{'fontFamily':'ui-monospace, SFMono-Regular, Menlo, monospace','primaryColor':'#334155','primaryBorderColor':'#94a3b8','primaryTextColor':'#e2e8f0','lineColor':'#0d9488','edgeLabelBackground':'#1e293b','clusterBkg':'transparent','clusterBorder':'#64748b'}}}%%
 flowchart LR
     subgraph machine["your machine"]
         direction LR
@@ -118,6 +118,13 @@ flowchart LR
         core <-.->|"classify (opt-in)"| llm
         app <-->|"HTTP :7473"| core
     end
+
+    classDef entry fill:#1e293b,stroke:#64748b,color:#e2e8f0
+    classDef subject fill:#0f766e,stroke:#5eead4,color:#f0fdfa
+    classDef downstream fill:#334155,stroke:#94a3b8,color:#e2e8f0
+    class app entry
+    class core subject
+    class git,forge,db,llm downstream
 ```
 
 The desktop app and the headless daemon serve the **same** JSON API — the Tauri shell just boots the
@@ -129,7 +136,7 @@ working set of repos, PRs, notes, tags) and **categories**, synced **peer-to-pee
 peers converge with no authority in the middle. Your commits, diffs, and code never leave your box.
 
 ```mermaid
-%%{init: {'theme':'base','themeVariables':{'fontFamily':'ui-monospace, SFMono-Regular, Menlo, monospace','primaryColor':'transparent','primaryBorderColor':'#14b8a6','primaryTextColor':'#8f969e','lineColor':'#8a8f98','nodeBorder':'#5f8f8a','edgeLabelBackground':'transparent','clusterBorder':'#3f8f86','clusterBkg':'transparent'}}}%%
+%%{init: {'theme':'base','themeVariables':{'fontFamily':'ui-monospace, SFMono-Regular, Menlo, monospace','primaryColor':'#334155','primaryBorderColor':'#94a3b8','primaryTextColor':'#e2e8f0','lineColor':'#0d9488','edgeLabelBackground':'#1e293b','clusterBkg':'transparent','clusterBorder':'#64748b'}}}%%
 flowchart TB
     a["Alice's node<br/>(desktop or headless peer)"]
     b["Ben's node"]
@@ -137,6 +144,9 @@ flowchart TB
     a <-->|"contexts + categories<br/>(CRDT ops, signed transport)"| b
     b <-->|"CRDT ops"| c
     a <-->|"CRDT ops"| c
+
+    classDef entry fill:#1e293b,stroke:#64748b,color:#e2e8f0
+    class a,b,c entry
 ```
 
 ---
