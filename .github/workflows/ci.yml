@@ -159,6 +159,8 @@ jobs:
         run: npm run check:lint-config
       - name: Typecheck
         run: npx tsc --noEmit
+      - name: Typecheck CI gate scripts
+        run: npm run typecheck:scripts
       - name: Build
         run: npm run build
 
