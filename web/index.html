@@ -16,16 +16,21 @@
     <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
     <link rel="manifest" href="/site.webmanifest" />
 
-    <!-- Canonical -->
-    <link rel="canonical" href="https://app.gitstate.dev/" />
+    <!-- No canonical. This file is the desktop app's shell, loaded from disk
+         inside a Tauri window — it is not a page on the web and has no
+         canonical URL. It used to declare one pointing at app.gitstate.dev,
+         a domain from the product's hosted-SaaS era that is no longer ours,
+         which told any crawler that reached it that the real page lived
+         somewhere we do not control. The project's page is
+         https://vulos.org/projects/gitstate; the og:url below says so. -->
 
     <!-- Open Graph -->
     <meta property="og:type" content="website" />
     <meta property="og:site_name" content="gitstate" />
     <meta property="og:title" content="gitstate — The ledger for your team's git activity" />
     <meta property="og:description" content="gitstate turns your team's git history into a living ledger: people, contributions, and review activity, all in one place." />
-    <meta property="og:url" content="https://app.gitstate.dev/" />
-    <meta property="og:image" content="https://app.gitstate.dev/og-image.png" />
+    <meta property="og:url" content="https://vulos.org/projects/gitstate" />
+    <meta property="og:image" content="https://vulos.org/projects/gitstate/og-image.png" />
     <meta property="og:image:width" content="1200" />
     <meta property="og:image:height" content="630" />
     <meta property="og:image:alt" content="gitstate — The ledger for your team's git activity" />
@@ -34,7 +39,7 @@
     <meta name="twitter:card" content="summary_large_image" />
     <meta name="twitter:title" content="gitstate — The ledger for your team's git activity" />
     <meta name="twitter:description" content="gitstate turns your team's git history into a living ledger: people, contributions, and review activity, all in one place." />
-    <meta name="twitter:image" content="https://app.gitstate.dev/og-image.png" />
+    <meta name="twitter:image" content="https://vulos.org/projects/gitstate/og-image.png" />
   </head>
   <body>
     <div id="root"></div>
