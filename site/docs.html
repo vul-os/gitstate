@@ -78,6 +78,11 @@ nav.links a:hover{color:var(--text)}
 @media (max-width:640px){.vulos-badge{display:none}}
 @media (max-width:900px){nav.links{display:none}}
 @media (max-width:560px){.brand .tag{display:none}}
+/* At 320 the bar's remaining items measure brand 122 + ghost link 92 + Vulos
+   mark 34 = 248, which with gaps and padding runs past the edge and pushed the
+   whole page sideways by 11px. The ghost link is the item to drop: it points
+   at the landing page, which the brand beside it already links to. */
+@media (max-width:380px){.bar .ghost-link{display:none}}
 
 /* ── Shell ────────────────────────────────────────────────────────────────── */
 /* Docs is a reading application, not a marketing page, so the shell does not
