@@ -74,6 +74,6 @@ pub fn blame_survival(repo: &GitRepo, _opts: &WalkOpts) -> Result<Vec<AuthorSurv
             authored_lines: surviving_lines,
         })
         .collect();
-    out.sort_by(|a, b| b.surviving_lines.cmp(&a.surviving_lines));
+    out.sort_by_key(|a| std::cmp::Reverse(a.surviving_lines));
     Ok(out)
 }

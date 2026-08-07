@@ -108,6 +108,6 @@ pub fn szz_bug_intros(repo: &GitRepo, opts: &WalkOpts) -> Result<Vec<BugIntroduc
             },
         )
         .collect();
-    out.sort_by(|a, b| b.lines.cmp(&a.lines));
+    out.sort_by_key(|a| std::cmp::Reverse(a.lines));
     Ok(out)
 }

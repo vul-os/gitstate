@@ -13,8 +13,20 @@ git2 = { workspace = true }
 regex = { workspace = true }
 time = { workspace = true }
 
-[target.'cfg(target_os = "macos")'.build-dependencies]
+[build-dependencies]
 # Compiles the iconv-name shim next to the vendored libgit2 (see build.rs).
+#
+# Declared unconditionally, not under [target.'cfg(target_os = "macos")'].
+# build.rs decides whether to build the shim at *run* time, by reading TARGET,
+# but its `cc::Build` reference has to resolve at *compile* time — so on a host
+# where the cfg was false the build script itself failed to compile with
+# "cannot find module or crate `cc`", which is what took CI down on Linux while
+# every macOS build stayed green.
+#
+# Keeping it unconditional also makes cross-compilation work: build scripts are
+# compiled for the host, so a Linux → macOS cross would have evaluated the cfg
+# against Linux, dropped cc, and skipped the shim on exactly the target that
+# needs it.
 cc = "1"
 
 [dev-dependencies]
